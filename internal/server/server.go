@@ -11,32 +11,54 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"songrequest/internal/app"
 	"songrequest/internal/config"
+	"songrequest/internal/logx"
+	"songrequest/internal/spotify"
 )
 
 //go:embed all:web
 var webFS embed.FS
 
+// Deps — всё, что панели нужно для работы. Отдельной структурой, чтобы
+// добавление Twitch и донатов не переписывало сигнатуру каждый раз.
+type Deps struct {
+	State   *app.State
+	Cfg     *config.File
+	Log     *logx.Logger
+	Spotify *spotify.Client
+	DataDir string
+	Version string
+}
+
 // Server — HTTP-сервер панели.
 type Server struct {
-	state *app.State
-	cfg   *config.File
-	log   *slog.Logger
+	state   *app.State
+	cfg     *config.File
+	log     *logx.Logger
+	spotify *spotify.Client
+	dataDir string
+	version string
 
 	http *http.Server
 	ln   net.Listener
 	addr string
+
+	// snapMu защищает снимок состояния Spotify. На этом этапе его снимают
+	// кнопкой из панели; дальше это будет делать очередь заказов.
+	snapMu sync.Mutex
+	snap   *spotify.Snapshot
 }
 
 // New поднимает слушатель на 127.0.0.1. Если желаемый порт занят, берём любой
 // свободный — приложение не должно отказываться стартовать из-за этого.
-func New(state *app.State, cfg *config.File, log *slog.Logger) (*Server, error) {
+func New(d Deps) (*Server, error) {
+	state, cfg, log := d.State, d.Cfg, d.Log
 	want := cfg.Get().Port
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", want))
@@ -49,11 +71,14 @@ func New(state *app.State, cfg *config.File, log *slog.Logger) (*Server, error) 
 	}
 
 	s := &Server{
-		state: state,
-		cfg:   cfg,
-		log:   log,
-		ln:    ln,
-		addr:  "http://" + ln.Addr().String(),
+		state:   state,
+		cfg:     cfg,
+		log:     log,
+		spotify: d.Spotify,
+		dataDir: d.DataDir,
+		version: d.Version,
+		ln:      ln,
+		addr:    "http://" + ln.Addr().String(),
 	}
 
 	sub, err := fs.Sub(webFS, "web")
@@ -69,6 +94,15 @@ func New(state *app.State, cfg *config.File, log *slog.Logger) (*Server, error) 
 	mux.HandleFunc("GET /api/state", s.handleState)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config", s.handleSetConfig)
+	mux.HandleFunc("POST /api/log/debug", s.handleDebugLog)
+	mux.HandleFunc("GET /api/diag/export", s.handleDiagExport)
+
+	mux.HandleFunc("POST /api/spotify/login", s.handleSpotifyLogin)
+	mux.HandleFunc("POST /api/spotify/logout", s.handleSpotifyLogout)
+	mux.HandleFunc("POST /api/spotify/check", s.handleSpotifyCheck)
+	mux.HandleFunc("POST /api/spotify/snapshot", s.handleSpotifySnapshot)
+	mux.HandleFunc("POST /api/spotify/restore", s.handleSpotifyRestore)
+	mux.HandleFunc("GET /callback", s.handleSpotifyCallback)
 
 	s.http = &http.Server{
 		Handler:           s.guard(mux),

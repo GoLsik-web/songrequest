@@ -44,10 +44,23 @@ type QueueItem struct {
 }
 
 // Notice — сообщение для стримера в панели.
+//
+// Code — короткий код вроде SP-04. Он нужен, чтобы стример мог назвать ошибку
+// голосом, не пересказывая текст и не выгружая лог ради одной строчки.
 type Notice struct {
 	Level string    `json:"level"` // info | warn | error
+	Code  string    `json:"code"`
 	Text  string    `json:"text"`
 	At    time.Time `json:"at"`
+}
+
+// SpotifyInfo — состояние Spotify для панели.
+type SpotifyInfo struct {
+	Connected    bool       `json:"connected"`
+	Account      string     `json:"account"`
+	Premium      bool       `json:"premium"`
+	SnapshotText string     `json:"snapshot_text"`
+	SnapshotAt   *time.Time `json:"snapshot_at"`
 }
 
 // Snapshot — вся картинка целиком, ровно то, что уходит в панель одним JSON.
@@ -58,6 +71,8 @@ type Snapshot struct {
 	Notices     []Notice    `json:"notices"`
 	Paused      bool        `json:"paused"` // приём заказов остановлен
 	Version     string      `json:"version"`
+	Spotify     SpotifyInfo `json:"spotify"`
+	DebugLog    bool        `json:"debug_log"`
 }
 
 // State — потокобезопасное состояние с уведомлением подписчиков об изменениях.
@@ -70,6 +85,8 @@ type State struct {
 	notices []Notice
 	paused  bool
 	version string
+	spotify SpotifyInfo
+	debug   bool
 
 	subs map[int]chan struct{}
 	next int
@@ -155,11 +172,40 @@ func (s *State) SetPaused(p bool) {
 	s.notify()
 }
 
-// Notify добавляет сообщение для стримера.
-func (s *State) Notify(level, text string) {
+// SetSpotify обновляет карточку Spotify в панели.
+func (s *State) SetSpotify(info SpotifyInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.notices = append(s.notices, Notice{Level: level, Text: text, At: time.Now()})
+	s.spotify = info
+	s.notify()
+}
+
+// UpdateSpotify меняет часть сведений о Spotify, не трогая остальные.
+func (s *State) UpdateSpotify(fn func(*SpotifyInfo)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn(&s.spotify)
+	s.notify()
+}
+
+// SetDebugLog запоминает, включён ли подробный лог (галочка в панели).
+func (s *State) SetDebugLog(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.debug = on
+	s.notify()
+}
+
+// Notify добавляет сообщение для стримера.
+func (s *State) Notify(level, text string) {
+	s.NotifyCode(level, "", text)
+}
+
+// NotifyCode добавляет сообщение с кодом ошибки.
+func (s *State) NotifyCode(level, code, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notices = append(s.notices, Notice{Level: level, Code: code, Text: text, At: time.Now()})
 	if len(s.notices) > maxNotices {
 		s.notices = s.notices[len(s.notices)-maxNotices:]
 	}
@@ -173,10 +219,12 @@ func (s *State) Snapshot() Snapshot {
 
 	// Пустые срезы, а не nil: панель ждёт массив и на null споткнётся.
 	snap := Snapshot{
-		Queue:   append(make([]QueueItem, 0, len(s.queue)), s.queue...),
-		Notices: append(make([]Notice, 0, len(s.notices)), s.notices...),
-		Paused:  s.paused,
-		Version: s.version,
+		Queue:    append(make([]QueueItem, 0, len(s.queue)), s.queue...),
+		Notices:  append(make([]Notice, 0, len(s.notices)), s.notices...),
+		Paused:   s.paused,
+		Version:  s.version,
+		Spotify:  s.spotify,
+		DebugLog: s.debug,
 	}
 	for _, name := range s.order {
 		snap.Connections = append(snap.Connections, s.conns[name])
