@@ -4,3 +4,4 @@ songrequest
 *.db-wal
 *.db-shm
 *.log
+*.exe~
