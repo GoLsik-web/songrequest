@@ -24,7 +24,7 @@ go test ./...                 # тесты
 ## Сборка релиза
 
 ```powershell
-.uild.ps1
+.\build.ps1
 ```
 
 Прогоняет тесты, кладёт `dist\songrequest.exe` и собирает архив с инструкцией
