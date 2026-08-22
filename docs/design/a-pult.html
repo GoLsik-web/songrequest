@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вариант А — Пульт</title>
+<link rel="stylesheet" href="../../internal/server/web/fonts/fonts.css">
+<style>
+/* ВАРИАНТ А — «Пульт»
+   Одна краска: янтарь. Она означает «внимание сюда» и больше нигде не
+   встречается. Заголовки — узкий Oswald в верхнем регистре, интерфейс —
+   Golos Text. Сетка плотная, без карточек-плиток: блоки разделены линиями,
+   как на приборной панели. */
+
+:root {
+  --bg:        #0d0e10;
+  --panel:     #131518;
+  --panel-2:   #17191d;
+  --line:      #23262b;
+  --line-hot:  #2f3339;
+  --text:      #e8eaed;
+  --dim:       #7e8792;
+  --dimmer:    #545c66;
+  --amber:     #ffb03a;
+  --amber-dim: #7a5416;
+  --bad:       #ff5a52;
+  --ok:        #57cf7d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 "Golos Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.display { font-family: Oswald, "Golos Text", sans-serif; text-transform: uppercase; letter-spacing: .04em; }
+
+/* ── Шапка: слева марка, дальше — подключения ───────────────────────── */
+
+header {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 20px;
+  border-right: 1px solid var(--line);
+  font-family: Oswald, sans-serif;
+  font-size: 17px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.brand .mark {
+  width: 10px; height: 22px;
+  background: var(--amber);
+}
+
+/* Подключения — не кружки в ряд, а полосы-индикаторы: цветная засечка
+   слева, название, состояние. Ошибка заливает всю ячейку — её видно
+   боковым зрением, читать не нужно. */
+.rail { display: flex; flex: 1; }
+
+.slot {
+  flex: 1;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 9px 14px 9px 16px;
+  border-right: 1px solid var(--line);
+  position: relative;
+  min-width: 0;
+}
+.slot::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; background: var(--dimmer);
+}
+.slot.on::before { background: var(--ok); }
+.slot.off::before { background: var(--bad); }
+.slot.off { background: rgba(255,90,82,.09); }
+.slot.idle { opacity: .55; }
+
+.slot .who { font-size: 11px; font-weight: 600; letter-spacing: .09em; color: var(--dim); text-transform: uppercase; }
+.slot .what { font-size: 13px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slot.off .what { color: var(--bad); }
+.slot .code {
+  font-family: Oswald, sans-serif; font-size: 11px; letter-spacing: .1em;
+  background: var(--bad); color: #1a0605; padding: 0 4px; border-radius: 2px; margin-right: 5px;
+}
+
+.clock {
+  display: flex; align-items: center; padding: 0 18px;
+  font-family: Oswald, sans-serif; font-size: 15px; color: var(--dim); letter-spacing: .06em;
+}
+
+/* ── Сетка ──────────────────────────────────────────────────────────── */
+
+main {
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  min-height: calc(100vh - 53px);
+}
+.left { border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+
+/* ── Что играет: самый крупный блок на экране ───────────────────────── */
+
+.now {
+  padding: 26px 26px 22px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.section-label {
+  font-family: Oswald, sans-serif;
+  font-size: 11px; font-weight: 500; letter-spacing: .18em;
+  color: var(--dimmer); text-transform: uppercase;
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 16px;
+}
+.section-label .n {
+  margin-left: auto; color: var(--dim);
+  background: var(--panel-2); border: 1px solid var(--line);
+  padding: 1px 7px; border-radius: 2px; letter-spacing: .08em;
+}
+
+.now-row { display: flex; gap: 20px; }
+
+.cover {
+  width: 132px; height: 132px; flex: none;
+  background: linear-gradient(150deg, #2a2d33, #16181c);
+  border: 1px solid var(--line-hot);
+  position: relative;
+  display: grid; place-items: center;
+}
+.cover img { width: 100%; height: 100%; object-fit: cover; }
+.cover .src {
+  position: absolute; left: 0; bottom: 0;
+  background: var(--amber); color: #1a1204;
+  font-family: Oswald, sans-serif; font-size: 10px; font-weight: 600;
+  letter-spacing: .12em; padding: 2px 7px;
+}
+
+.now-title {
+  font-family: Oswald, sans-serif;
+  font-size: 34px; line-height: 1.08; font-weight: 600;
+  letter-spacing: .01em;
+  margin: -4px 0 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.now-artist { font-size: 17px; color: var(--dim); margin-bottom: 12px; }
+
+.by { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--dim); }
+.by b { color: var(--amber); font-weight: 500; }
+.by svg { width: 14px; height: 14px; color: var(--dimmer); }
+
+.progress { margin-top: 16px; }
+.track {
+  height: 3px; background: var(--line);
+  position: relative; overflow: hidden;
+}
+.track i {
+  position: absolute; inset: 0 auto 0 0;
+  background: var(--amber);
+  /* Единственная анимация здесь — движение самой полосы, и то потому,
+     что она отражает реальное время. */
+  transition: width .9s linear;
+}
+.times {
+  display: flex; justify-content: space-between;
+  font-family: Oswald, sans-serif; font-size: 12px; letter-spacing: .08em;
+  color: var(--dim); margin-top: 6px;
+}
+
+.controls { display: flex; gap: 1px; margin-top: 18px; }
+.ctl {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  color: var(--text); cursor: pointer;
+  font-family: Oswald, sans-serif; font-size: 13px; letter-spacing: .1em;
+  text-transform: uppercase; padding: 11px 10px;
+}
+.ctl:hover { background: #1f2227; border-color: var(--line-hot); }
+.ctl svg { width: 16px; height: 16px; }
+.ctl.hot { background: var(--amber); border-color: var(--amber); color: #191204; font-weight: 600; }
+.ctl.hot:hover { background: #ffbf5e; }
+.ctl.quiet { flex: none; padding: 11px 14px; color: var(--dim); }
+
+/* ── Очередь ────────────────────────────────────────────────────────── */
+
+.queue-wrap { padding: 22px 26px 26px; flex: 1; }
+
+.q { list-style: none; margin: 0; padding: 0; }
+.q li {
+  display: grid;
+  grid-template-columns: 26px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.q li:first-child { border-top: 1px solid var(--line); }
+.q .num {
+  font-family: Oswald, sans-serif; font-size: 15px; color: var(--dimmer);
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.q li:first-child .num { color: var(--amber); }
+.q .t { min-width: 0; }
+.q .t .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.q .t .meta { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 6px; margin-top: 1px; }
+.q .t .meta svg { width: 12px; height: 12px; }
+.q .dur { font-family: Oswald, sans-serif; font-size: 13px; color: var(--dim); letter-spacing: .06em; }
+.q .acts { display: flex; gap: 1px; opacity: 0; }
+.q li:hover .acts { opacity: 1; }
+.q .acts button {
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--dim);
+  width: 28px; height: 26px; display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.q .acts button:hover { color: var(--text); border-color: var(--line-hot); }
+.q .acts button.danger:hover { color: var(--bad); border-color: var(--bad); }
+.q .acts svg { width: 14px; height: 14px; }
+
+.tag {
+  font-family: Oswald, sans-serif; font-size: 10px; letter-spacing: .1em;
+  padding: 1px 5px; text-transform: uppercase;
+}
+.tag.don { background: var(--amber); color: #191204; }
+.tag.warn { border: 1px solid var(--amber-dim); color: var(--amber); }
+
+/* Появление нового заказа — короткая засветка строки, без пульсаций. */
+@keyframes arrive {
+  from { background: rgba(255,176,58,.14); }
+  to   { background: transparent; }
+}
+.q li.new { animation: arrive 1.2s ease-out; }
+
+/* ── Правая колонка ─────────────────────────────────────────────────── */
+
+.right { display: flex; flex-direction: column; }
+.block { padding: 22px 24px; border-bottom: 1px solid var(--line); }
+.block:last-child { border-bottom: none; flex: 1; }
+
+.log { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.log li { display: flex; gap: 9px; padding: 6px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+.log li:last-child { border: none; }
+.log .ts { font-family: Oswald, sans-serif; font-size: 11px; color: var(--dimmer); letter-spacing: .06em; flex: none; }
+.log .err { color: var(--bad); }
+.log .errcode {
+  font-family: Oswald, sans-serif; font-size: 10px; letter-spacing: .1em;
+  background: rgba(255,90,82,.16); color: var(--bad); padding: 0 4px; margin-right: 4px;
+}
+
+/* ── Пустые состояния: их стример видит чаще всего ──────────────────── */
+
+.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 34px 20px; color: var(--dimmer);
+}
+.empty svg { width: 30px; height: 30px; margin-bottom: 12px; color: var(--line-hot); }
+.empty .big {
+  font-family: Oswald, sans-serif; font-size: 16px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--dim); margin-bottom: 5px;
+}
+.empty .small { font-size: 13px; max-width: 260px; line-height: 1.5; }
+.empty.alarm svg { color: var(--bad); }
+.empty.alarm .big { color: var(--bad); }
+
+/* ── Переключатель состояний для этого макета ───────────────────────── */
+.demo {
+  position: fixed; right: 16px; bottom: 16px; display: flex; gap: 1px; z-index: 9;
+  border: 1px solid var(--line-hot);
+}
+.demo button {
+  background: var(--panel); border: none; color: var(--dim); cursor: pointer;
+  font: 11px/1 "Golos Text", sans-serif; padding: 9px 12px;
+}
+.demo button.sel { background: var(--amber); color: #191204; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+<!-- Иконки Lucide 1.33.0, лицензия ISC. Один набор на всю панель,
+     эмодзи вместо иконок не используем. -->
+<symbol id="i-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7" /> <path d="M12 19V5" /></symbol>
+<symbol id="i-ban" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /> <path d="M4.929 4.929 19.07 19.071" /></symbol>
+<symbol id="i-circle-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /> <path d="m9 12 2 2 4-4" /></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /> <path d="M12 6v6l4 2" /></symbol>
+<symbol id="i-coins" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.744 17.736a6 6 0 1 1-7.48-7.48" /> <path d="M15 6h1v4" /> <path d="m6.134 14.768.866-.5 2 3.464" /> <circle cx="16" cy="8" r="6" /></symbol>
+<symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3" /> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /> <path d="m7 10 5 5 5-5" /></symbol>
+<symbol id="i-gift" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14" /> <path d="M20 11v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8" /> <path d="M7.5 7a1 1 0 0 1 0-5A4.8 8 0 0 1 12 7a4.8 8 0 0 1 4.5-5 1 1 0 0 1 0 5" /> <rect x="3" y="7" width="18" height="4" rx="1" /></symbol>
+<symbol id="i-grip-vertical" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1" /> <circle cx="9" cy="5" r="1" /> <circle cx="9" cy="19" r="1" /> <circle cx="15" cy="12" r="1" /> <circle cx="15" cy="5" r="1" /> <circle cx="15" cy="19" r="1" /></symbol>
+<symbol id="i-list-music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 5H3" /> <path d="M11 12H3" /> <path d="M11 19H3" /> <path d="M21 16V5" /> <circle cx="18" cy="16" r="3" /></symbol>
+<symbol id="i-music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13" /> <circle cx="6" cy="18" r="3" /> <circle cx="18" cy="16" r="3" /></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="3" width="5" height="18" rx="1" /> <rect x="5" y="3" width="5" height="18" rx="1" /></symbol>
+<symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></symbol>
+<symbol id="i-plug-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z" /> <path d="m2 22 3-3" /> <path d="M7.5 13.5 10 11" /> <path d="M10.5 16.5 13 14" /> <path d="m18 3-4 4h6l-4 4" /></symbol>
+<symbol id="i-radio" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.247 7.761a6 6 0 0 1 0 8.478" /> <path d="M19.075 4.933a10 10 0 0 1 0 14.134" /> <path d="M4.925 19.067a10 10 0 0 1 0-14.134" /> <path d="M7.753 16.239a6 6 0 0 1 0-8.478" /> <circle cx="12" cy="12" r="2" /></symbol>
+<symbol id="i-rotate-cw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /></symbol>
+<symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34" /> <circle cx="11" cy="11" r="8" /></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /> <circle cx="12" cy="12" r="3" /></symbol>
+<symbol id="i-skip-forward" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4v16" /> <path d="M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z" /></symbol>
+<symbol id="i-trash-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6" /> <path d="M14 11v6" /> <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /> <path d="M3 6h18" /> <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></symbol>
+<symbol id="i-triangle-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /> <path d="M12 9v4" /> <path d="M12 17h.01" /></symbol>
+<symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /> <circle cx="12" cy="7" r="4" /></symbol>
+<symbol id="i-volume-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" /> <path d="M16 9a5 5 0 0 1 0 6" /> <path d="M19.364 18.364a9 9 0 0 0 0-12.728" /></symbol>
+<symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></symbol>
+</svg>
+
+
+<header>
+  <div class="brand"><i class="mark"></i>Заказ музыки</div>
+  <div class="rail">
+    <div class="slot on">
+      <div class="who">Spotify</div>
+      <div class="what">grenadeadmin · Premium</div>
+    </div>
+    <div class="slot on">
+      <div class="who">Twitch</div>
+      <div class="what">награда активна · 1000 ⌁</div>
+    </div>
+    <div class="slot off">
+      <div class="who">DonationAlerts</div>
+      <div class="what"><span class="code">DA-02</span>нет связи</div>
+    </div>
+    <div class="slot idle">
+      <div class="who">DonatePay</div>
+      <div class="what">выключено</div>
+    </div>
+  </div>
+  <div class="clock">21:47</div>
+</header>
+
+<main>
+  <div class="left">
+
+    <section class="now" id="now-block">
+      <div class="section-label">
+        <svg><use href="#i-volume-2"></use></svg>
+        Сейчас играет
+      </div>
+
+      <div class="now-row">
+        <div class="cover">
+          <svg style="width:38px;height:38px;color:#3a3f47"><use href="#i-music"></use></svg>
+          <span class="src">Spotify</span>
+        </div>
+        <div style="min-width:0;flex:1">
+          <div class="now-title">Bohemian Rhapsody</div>
+          <div class="now-artist">Queen</div>
+          <div class="by">
+            <svg><use href="#i-user"></use></svg>
+            заказал <b>xxNagibatorxx</b>
+            <span style="color:var(--dimmer)">·</span> за баллы
+          </div>
+          <div class="progress">
+            <div class="track"><i style="width:38%"></i></div>
+            <div class="times"><span>2:14</span><span>5:54</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="ctl hot">
+          <svg><use href="#i-skip-forward"></use></svg>
+          Скип
+        </button>
+        <button class="ctl">
+          <svg><use href="#i-pause"></use></svg>
+          Пауза
+        </button>
+        <button class="ctl">
+          <svg><use href="#i-rotate-cw"></use></svg>
+          Вернуть Spotify
+        </button>
+        <button class="ctl quiet" title="Настройки">
+          <svg><use href="#i-settings"></use></svg>
+        </button>
+      </div>
+    </section>
+
+    <section class="queue-wrap" id="queue-block">
+      <div class="section-label">
+        <svg><use href="#i-list-music"></use></svg>
+        Очередь
+        <span class="n">5 · 19 мин</span>
+      </div>
+
+      <ul class="q">
+        <li class="new">
+          <span class="num">1</span>
+          <span class="t">
+            <span class="name">Кино — Группа крови</span>
+            <span class="meta"><span class="tag don">Донат 500 ₽</span> mashka_1337</span>
+          </span>
+          <span class="dur">4:46</span>
+          <span class="acts">
+            <button title="Наверх"><svg><use href="#i-arrow-up"></use></svg></button>
+            <button class="danger" title="Удалить"><svg><use href="#i-trash-2"></use></svg></button>
+          </span>
+        </li>
+        <li>
+          <span class="num">2</span>
+          <span class="t">
+            <span class="name">Daft Punk — Around the World</span>
+            <span class="meta">za_rodinu</span>
+          </span>
+          <span class="dur">7:09</span>
+          <span class="acts">
+            <button title="Наверх"><svg><use href="#i-arrow-up"></use></svg></button>
+            <button class="danger" title="Удалить"><svg><use href="#i-trash-2"></use></svg></button>
+          </span>
+        </li>
+        <li>
+          <span class="num">3</span>
+          <span class="t">
+            <span class="name">Молчат Дома — Судно</span>
+            <span class="meta"><span class="tag warn">неточно</span> pivo_medved</span>
+          </span>
+          <span class="dur">3:41</span>
+          <span class="acts">
+            <button title="Наверх"><svg><use href="#i-arrow-up"></use></svg></button>
+            <button class="danger" title="Удалить"><svg><use href="#i-trash-2"></use></svg></button>
+          </span>
+        </li>
+        <li>
+          <span class="num">4</span>
+          <span class="t">
+            <span class="name">Radiohead — Creep</span>
+            <span class="meta">
+              <svg><use href="#i-radio"></use></svg>
+              YouTube · dimon228
+            </span>
+          </span>
+          <span class="dur">3:58</span>
+          <span class="acts">
+            <button title="Наверх"><svg><use href="#i-arrow-up"></use></svg></button>
+            <button class="danger" title="Удалить"><svg><use href="#i-trash-2"></use></svg></button>
+          </span>
+        </li>
+        <li>
+          <span class="num">5</span>
+          <span class="t">
+            <span class="name">Sigur Rós — Hoppípolla</span>
+            <span class="meta">tvoy_batya</span>
+          </span>
+          <span class="dur">4:28</span>
+          <span class="acts">
+            <button title="Наверх"><svg><use href="#i-arrow-up"></use></svg></button>
+            <button class="danger" title="Удалить"><svg><use href="#i-trash-2"></use></svg></button>
+          </span>
+        </li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="right">
+    <div class="block">
+      <div class="section-label">
+        <svg><use href="#i-clock"></use></svg>
+        Что происходит
+      </div>
+      <ul class="log">
+        <li><span class="ts">21:47</span><span>Заказ от <b style="color:var(--amber);font-weight:500">mashka_1337</b> — донат, наверх очереди</span></li>
+        <li><span class="ts">21:44</span><span class="err"><span class="errcode">SP-06</span>Spotify нигде не открыт — заказ подождёт</span></li>
+        <li><span class="ts">21:41</span><span>Мод <b style="color:var(--amber);font-weight:500">ilya_mod</b> скипнул «Rick Astley — Never Gonna…»</span></li>
+        <li><span class="ts">21:38</span><span>Отказ: «часовой луп», длиннее 8 минут — баллы вернули</span></li>
+        <li><span class="ts">21:35</span><span>Запомнил: Queen — Bohemian Rhapsody · плейлист · 2:14</span></li>
+      </ul>
+    </div>
+
+    <div class="block">
+      <div class="section-label">
+        <svg><use href="#i-coins"></use></svg>
+        Итоги стрима
+      </div>
+      <ul class="log">
+        <li><span class="ts">Заказов</span><span style="margin-left:auto">38</span></li>
+        <li><span class="ts">Скипнуто</span><span style="margin-left:auto">6</span></li>
+        <li><span class="ts">Отказов</span><span style="margin-left:auto">4</span></li>
+        <li><span class="ts">Донатами</span><span style="margin-left:auto">2 400 ₽</span></li>
+      </ul>
+    </div>
+  </div>
+</main>
+
+<div class="demo">
+  <button class="sel" data-view="full">заполнено</button>
+  <button data-view="empty">пусто</button>
+  <button data-view="down">нет связи</button>
+</div>
+
+<script>
+const nowBlock = document.getElementById("now-block");
+const queueBlock = document.getElementById("queue-block");
+const nowFull = nowBlock.innerHTML;
+const queueFull = queueBlock.innerHTML;
+const S = "../../internal/server/web/icons/sprite.svg";
+
+const views = {
+  empty: {
+    now: `<div class="section-label">Сейчас играет</div>
+      <div class="empty">
+        <svg><use href="${S}#i-music"></use></svg>
+        <div class="big">Тишина</div>
+        <div class="small">Заказов нет — в Spotify играет то, что ты включил сам.</div>
+      </div>`,
+    queue: `<div class="section-label">Очередь<span class="n">пусто</span></div>
+      <div class="empty">
+        <svg><use href="${S}#i-list-music"></use></svg>
+        <div class="big">Очередь пуста</div>
+        <div class="small">Зрители заказывают трек за 1000 баллов или донатом от 100 ₽.</div>
+      </div>`,
+  },
+  down: {
+    now: `<div class="section-label">Сейчас играет</div>
+      <div class="empty alarm">
+        <svg><use href="${S}#i-plug-zap"></use></svg>
+        <div class="big">SP-04 · Spotify отвалился</div>
+        <div class="small">Слетела авторизация. Нажми «Подключить заново» — заказы пока копятся в очереди.</div>
+        <button class="ctl hot" style="flex:none;margin-top:16px;padding:10px 20px">Подключить заново</button>
+      </div>`,
+    queue: queueFull,
+  },
+};
+
+document.querySelectorAll(".demo button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll(".demo button").forEach((x) => x.classList.remove("sel"));
+    b.classList.add("sel");
+    const v = b.dataset.view;
+    nowBlock.innerHTML = v === "full" ? nowFull : views[v].now;
+    queueBlock.innerHTML = v === "full" ? queueFull : views[v].queue;
+    document.querySelectorAll(".slot").forEach((s, i) => {
+      if (i === 0) s.className = v === "down" ? "slot off" : "slot on";
+    });
+    const first = document.querySelector(".slot .what");
+    if (first) first.innerHTML = v === "down"
+      ? '<span class="code">SP-04</span>слетела авторизация'
+      : "grenadeadmin · Premium";
+  };
+});
+</script>
+</body>
+</html>
