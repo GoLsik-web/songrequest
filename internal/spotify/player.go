@@ -36,6 +36,7 @@ type PlayerState struct {
 		Name       string `json:"name"`
 		DurationMs int    `json:"duration_ms"`
 		Artists    []struct {
+			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"artists"`
 		Album struct {
@@ -70,6 +71,7 @@ type Snapshot struct {
 	TrackURI    string    `json:"track_uri"`
 	TrackName   string    `json:"track_name"`
 	ArtistName  string    `json:"artist_name"`
+	ArtistID    string    `json:"artist_id"`
 	PositionMs  int       `json:"position_ms"`
 	DurationMs  int       `json:"duration_ms"`
 	IsPlaying   bool      `json:"is_playing"`
@@ -85,11 +87,34 @@ func (s *Snapshot) Describe() string {
 	if s.Empty {
 		return "в момент снимка ничего не играло"
 	}
-	where := "без плейлиста"
-	if s.ContextURI != "" {
-		where = s.ContextType
+	where := s.DeviceName
+	if where == "" {
+		where = "устройство неизвестно"
 	}
-	return fmt.Sprintf("%s — %s (%s, %s)", s.ArtistName, s.TrackName, where, mmss(s.PositionMs))
+	return fmt.Sprintf("%s — %s · %s · %s · %s",
+		s.ArtistName, s.TrackName, mmss(s.PositionMs), s.ContextLabel(), where)
+}
+
+// ContextLabel объясняет человеческими словами, откуда играла музыка и чем
+// это грозит при возврате. Стример видит это в панели ещё до заказа.
+func (s *Snapshot) ContextLabel() string {
+	if s == nil || s.Empty {
+		return "ничего не играло"
+	}
+	switch {
+	case s.ContextURI == "":
+		return "без источника — вернём только трек"
+	case strings.HasPrefix(s.ContextURI, "spotify:playlist:"):
+		return "плейлист — вернётся полностью"
+	case strings.HasPrefix(s.ContextURI, "spotify:album:"):
+		return "альбом — вернётся полностью"
+	case strings.HasPrefix(s.ContextURI, "spotify:artist:"):
+		return "радио артиста — вернём только трек"
+	case strings.HasPrefix(s.ContextURI, "spotify:collection"):
+		return "любимые треки — вернём только трек"
+	default:
+		return s.ContextType + " — вернём только трек"
+	}
 }
 
 func mmss(ms int) string {
@@ -154,6 +179,7 @@ func (c *Client) Capture(ctx context.Context) (*Snapshot, error) {
 	}
 	if len(st.Item.Artists) > 0 {
 		snap.ArtistName = st.Item.Artists[0].Name
+		snap.ArtistID = st.Item.Artists[0].ID
 	}
 	if st.Context != nil {
 		snap.ContextURI = st.Context.URI

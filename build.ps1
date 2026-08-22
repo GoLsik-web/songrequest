@@ -67,9 +67,24 @@ if (-not $NoZip) {
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
     Copy-Item $exe $staging
-    foreach ($doc in @("docs\Инструкция-Spotify.md", "README.md")) {
+    # В архив кладём только то, что нужно стримеру. README — для разработчика,
+    # ему там делать нечего.
+    foreach ($doc in @("docs\Инструкция-Spotify.html", "docs\Чек-лист-проверки.txt")) {
         if (Test-Path $doc) { Copy-Item $doc $staging }
     }
+    @"
+Привет!
+
+1. Открой «Инструкция-Spotify» — как подключить Spotify.
+   Откроется в браузере, просто читай.
+2. Потом «Чек-лист-проверки» — что нажать и что записать.
+   Откроется Блокнотом, ответы вписывай прямо в него и сохраняй.
+
+Приложение запускается двойным щелчком по songrequest.exe.
+
+Windows может сказать, что издатель неизвестен: «Подробнее» → «Выполнить
+в любом случае». Приложение просто без платной подписи.
+"@ | Out-File -FilePath "$staging\Начни отсюда.txt" -Encoding utf8
 
     Remove-Item $zip -ErrorAction SilentlyContinue
     Compress-Archive -Path "$staging\*" -DestinationPath $zip

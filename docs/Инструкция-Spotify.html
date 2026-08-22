@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как подключить Spotify</title>
+<style>
+  :root {
+    --bg: #0e1013; --card: #171a1f; --line: #262b33;
+    --text: #e7eaf0; --dim: #8b93a1; --accent: #ffb03a;
+    --bad: #e5484d; --ok: #3ec46d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 20px 80px;
+    background: var(--bg); color: var(--text);
+    font: 17px/1.65 "Segoe UI", system-ui, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; }
+  h2 {
+    font-size: 21px; margin: 44px 0 12px; padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+  .lead { color: var(--dim); margin: 0 0 28px; }
+  p { margin: 0 0 14px; }
+  ol, ul { padding-left: 24px; margin: 0 0 14px; }
+  li { margin-bottom: 8px; }
+  code {
+    background: #12151a; border: 1px solid var(--line); border-radius: 5px;
+    padding: 2px 6px; font-family: Consolas, "Courier New", monospace; font-size: 15px;
+  }
+  .copy {
+    display: block; background: #12151a; border: 1px solid var(--accent);
+    border-radius: 8px; padding: 14px 16px; margin: 14px 0;
+    font-family: Consolas, "Courier New", monospace; font-size: 17px;
+    color: var(--accent); word-break: break-all; user-select: all;
+  }
+  .warn, .note {
+    border-left: 3px solid var(--accent); background: #1a1712;
+    padding: 12px 16px; margin: 18px 0; border-radius: 0 8px 8px 0;
+  }
+  .note { border-left-color: var(--line); background: var(--card); }
+  .warn strong { color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 15px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; }
+  td:first-child { white-space: nowrap; font-family: Consolas, monospace; color: var(--accent); }
+  a { color: var(--accent); }
+  .step { color: var(--dim); font-size: 14px; letter-spacing: .8px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Как подключить Spotify к приложению заказа музыки</h1>
+<p class="lead">Это займёт минут десять и делается один раз. Ничего программировать
+не нужно — только пройти по шагам и скопировать одну строчку.</p>
+
+<p><strong>Зачем это.</strong> Spotify не разрешает чужим программам управлять
+твоей музыкой просто так. Нужно один раз завести на сайте Spotify «пропуск» для
+приложения и дать этому пропуску доступ. Пропуск создаётся на твоём аккаунте и
+живёт у тебя — никто, кроме тебя, им пользоваться не сможет.</p>
+
+<p><strong>Что понадобится:</strong></p>
+<ul>
+  <li>Аккаунт Spotify с подпиской <strong>Premium</strong>. Без неё управлять
+      музыкой нельзя — это ограничение самого Spotify, обойти его невозможно.</li>
+  <li>Браузер.</li>
+</ul>
+
+<h2><span class="step">Шаг 1</span><br>Зайти на сайт для разработчиков Spotify</h2>
+
+<p>Открой: <a href="https://developer.spotify.com/dashboard">developer.spotify.com/dashboard</a></p>
+
+<p>Нажми кнопку входа и войди <strong>тем же самым аккаунтом Spotify, в котором
+ты слушаешь музыку на стриме</strong>. Это важно: если войти другим аккаунтом,
+приложение будет управлять чужой музыкой, а не твоей.</p>
+
+<p>Если Spotify попросит принять условия для разработчиков — прими их. Возможно,
+попросит подтвердить адрес почты: сделай это, иначе следующий шаг не откроется.</p>
+
+<h2><span class="step">Шаг 2</span><br>Создать «пропуск»</h2>
+
+<p>На открывшейся странице нажми зелёную кнопку <strong>Create app</strong>.
+Появится форма:</p>
+
+<table>
+  <tr><th>Поле</th><th>Что вписать</th></tr>
+  <tr><td>App name</td><td>Заказ музыки<br><span style="color:var(--dim)">название любое, его видишь только ты</span></td></tr>
+  <tr><td>App description</td><td>Заказ треков зрителями<br><span style="color:var(--dim)">тоже любое</span></td></tr>
+  <tr><td>Redirect URI</td><td>см. ниже — самое важное поле</td></tr>
+</table>
+
+<p><strong>Redirect URI</strong> — это адрес, куда Spotify вернёт тебя после
+разрешения. Скопируй строчку ниже целиком, без пробелов в начале и в конце:</p>
+
+<span class="copy">http://127.0.0.1:8977/callback</span>
+
+<p>Вставь её в поле и обязательно нажми кнопку <strong>Add</strong> справа от
+поля — строка должна прыгнуть в список под полем. Если не нажать Add, Spotify
+её не запомнит.</p>
+
+<div class="warn">
+<strong>Здесь чаще всего ошибаются.</strong> Адрес должен совпадать символ в
+символ. Не <code>localhost</code> вместо <code>127.0.0.1</code> — Spotify их
+больше не считает одинаковыми. Не <code>https</code>, а <code>http</code>.
+Не потеряй <code>/callback</code> в конце и не добавь <code>/</code> после него.
+</div>
+
+<p>Ниже, в списке <strong>Which API/SDKs are you planning to use?</strong>,
+поставь галочку <strong>Web API</strong>. Остальные галочки не нужны.</p>
+
+<p>Поставь галочку согласия с условиями и нажми <strong>Save</strong>.</p>
+
+<h2><span class="step">Шаг 3</span><br>Скопировать Client ID</h2>
+
+<p>Тебя перебросит на страницу приложения. Нажми <strong>Settings</strong>
+справа вверху.</p>
+
+<p>Найди строку <strong>Client ID</strong> — это набор букв и цифр вроде
+<code>4f8c2b1e9a7d43c6b0e5f2a1c3d4e5f6</code>. Нажми рядом кнопку копирования.</p>
+
+<p>Рядом будет ссылка <strong>View client secret</strong> — она нам
+<strong>не нужна</strong>, приложение работает без секрета. Не открывай её и
+никому не показывай.</p>
+
+<div class="note">
+Client ID — не пароль, но и не то, чем стоит светить в чате. Просто вставь его
+в приложение и закрой страницу.
+</div>
+
+<h2><span class="step">Шаг 4</span><br>Вставить Client ID в приложение</h2>
+
+<ol>
+  <li>Запусти <code>songrequest.exe</code>. Откроется чёрное окно —
+      <strong>не закрывай его</strong>, пока работает приложение. Заодно
+      откроется вкладка браузера с панелью управления. Если не открылась —
+      адрес написан в чёрном окне, обычно это
+      <code>http://127.0.0.1:8977</code></li>
+  <li>В панели, в карточке Spotify, найди поле <strong>Client ID</strong>,
+      вставь скопированное и нажми <strong>«Сохранить Client ID»</strong>.</li>
+  <li>Нажми <strong>«Подключить Spotify»</strong>.</li>
+  <li>Откроется страница Spotify со списком того, что приложение просит
+      разрешить. Нажми <strong>Agree</strong>.</li>
+  <li>Тебя вернёт на страницу с надписью «Готово». Вкладку можно закрыть.</li>
+</ol>
+
+<h2><span class="step">Шаг 5</span><br>Проверить, что всё работает</h2>
+
+<p>Вернись в панель. Вверху должна гореть <strong style="color:var(--ok)">зелёная</strong>
+лампочка <code>Spotify</code>, а в карточке Spotify — твоё имя и слово
+<code>Premium</code>.</p>
+
+<p>Если так и есть — открывай файл <strong>«Чек-лист-проверки»</strong> и иди
+по нему. Там уже проверяем саму работу приложения.</p>
+
+<h2>Если что-то пошло не так</h2>
+
+<p>В панели каждая ошибка показывается с коротким кодом вроде <code>SP-04</code>.
+<strong>Назови этот код тому, кто делает приложение</strong> — по нему сразу
+понятно, где искать. Вот самые частые:</p>
+
+<table>
+  <tr><th>Код</th><th>Что случилось</th><th>Что делать</th></tr>
+  <tr><td>CFG-01</td><td>Client ID не вставлен</td><td>Вернись к шагу 3</td></tr>
+  <tr><td>SP-02</td><td>Spotify не принял вход</td><td>Открывай вход только из панели и не держи две вкладки входа сразу</td></tr>
+  <tr><td>SP-03</td><td>Вход не завершился</td><td>Почти всегда адрес из шага 2 отличается от нужного. Проверь его заново</td></tr>
+  <tr><td>SP-04</td><td>Доступ слетел</td><td>Нажми «Подключить заново»</td></tr>
+  <tr><td>SP-05</td><td>Нет Premium</td><td>Проверь, что вошёл тем аккаунтом, где оплачена подписка</td></tr>
+  <tr><td>SP-06</td><td>Spotify нигде не открыт</td><td>Открой Spotify и включи любой трек, чтобы оно стало активным</td></tr>
+  <tr><td>SP-07</td><td>Spotify не отвечает</td><td>Проверь интернет, приложение попробует само ещё несколько раз</td></tr>
+</table>
+
+<div class="warn">
+<strong>Отдельно про адрес.</strong> Если при запуске в панели появилось
+предупреждение, что порт 8977 занят и приложение работает на другом, — вернись
+в настройки приложения на сайте Spotify (шаг 2), нажми <strong>Edit</strong> и
+добавь тот адрес, который показала панель. Старый можно оставить, адресов может
+быть несколько.
+</div>
+
+<h2>Как прислать лог</h2>
+
+<ol>
+  <li>В панели, в карточке <strong>Диагностика</strong>, поставь галочку
+      <strong>«Подробный лог»</strong>.</li>
+  <li>Повтори то действие, которое не сработало.</li>
+  <li>Нажми <strong>«Выгрузить лог»</strong> — скачается один <code>.zip</code>.</li>
+  <li>Отправь этот файл и назови код ошибки, который был в панели.</li>
+</ol>
+
+<p>В архиве только записи работы приложения и настройки. <strong>Пароли, ключи
+доступа и твой Client ID туда не попадают</strong> — они вырезаются
+автоматически.</p>
+
+</main>
+</body>
+</html>
