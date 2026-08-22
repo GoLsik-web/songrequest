@@ -94,7 +94,28 @@
   // ── эфир ───────────────────────────────────────────────────────────
 
   function renderStage(s) {
-    const spotifyDown = s.connections.some((c) => c.name === "Spotify" && !c.connected && c.detail !== "Не настроено");
+    // Самый первый запуск: Client ID ещё не вставлен. Отдельный экран, потому
+    // что человеку тут нужно не «нажать кнопку», а сходить за строчкой в
+    // инструкции — и найти настройки, которые спрятаны.
+    if (!s.spotify.has_client_id) {
+      $("stage").innerHTML = `
+        <div class="eyebrow quiet"><i class="live"></i> Первый запуск</div>
+        <div class="void">
+          <div class="rule"></div>
+          <div class="mark">Нужен Client ID Spotify</div>
+          <div class="say">Открой файл «Инструкция-Spotify» — там по шагам, как его получить.
+            Это делается один раз и занимает минут десять.</div>
+          <div class="acts"><button class="act key" id="stage-setup">Открыть настройки</button></div>
+        </div>`;
+      $("stage-setup").onclick = () => {
+        $("settings").hidden = false;
+        $("client-id").focus();
+        $("client-id").scrollIntoView({ block: "center" });
+      };
+      return;
+    }
+
+    const spotifyDown = s.connections.some((c) => c.name === "Spotify" && !c.connected);
 
     if (spotifyDown) {
       const conn = s.connections.find((c) => c.name === "Spotify");
@@ -121,6 +142,7 @@
             он появится здесь, а после очереди музыка вернётся на ту же секунду.</div>
           ${snapshotLine(s.spotify)}
         </div>`;
+      wireStageButtons();
       return;
     }
 
@@ -147,12 +169,11 @@
       <div class="acts">
         <button class="act key" id="skip">${icon("skip-forward")}Скипнуть</button>
         <button class="act" id="pause">${icon("pause")}Пауза</button>
-        <button class="act" id="restore">${icon("rotate-cw")}Вернуть Spotify</button>
-        <button class="act" id="snapshot">${icon("clock")}Запомнить состояние</button>
+        <button class="act" data-do="restore">${icon("rotate-cw")}Вернуть как было</button>
+        <button class="act" data-do="snapshot">${icon("clock")}Запомнить состояние</button>
       </div>`;
 
-    $("restore").onclick = (e) => post("/api/spotify/restore", e.currentTarget);
-    $("snapshot").onclick = (e) => post("/api/spotify/snapshot", e.currentTarget);
+    wireStageButtons();
   }
 
   // Строка снимка живёт в пустом состоянии: именно там она нужна — стример
@@ -160,16 +181,26 @@
   function snapshotLine(sp) {
     if (!sp.snapshot_text) {
       return `<div class="acts">
-        <button class="act small" onclick="fetch('/api/spotify/snapshot',{method:'POST'})">
-          Запомнить, что играет сейчас</button></div>`;
+        <button class="act key" data-do="snapshot">Запомнить состояние</button>
+      </div>`;
     }
     const at = new Date(sp.snapshot_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-    return `<div class="say" style="margin-top:14px;color:var(--dim)">
-      Вернусь к: ${esc(sp.snapshot_text)} <span style="color:var(--dimmer)">· запомнено в ${at}</span></div>
+    return `<div class="say" style="margin-top:16px;color:var(--dim)">
+        Вернусь к: ${esc(sp.snapshot_text)}
+        <span style="color:var(--dimmer)">· запомнено в ${at}</span>
+      </div>
       <div class="acts">
-        <button class="act small" onclick="fetch('/api/spotify/snapshot',{method:'POST'})">Перезапомнить</button>
-        <button class="act small" onclick="fetch('/api/spotify/restore',{method:'POST'})">Вернуть сейчас</button>
+        <button class="act key" data-do="restore">${icon("rotate-cw")}Вернуть как было</button>
+        <button class="act" data-do="snapshot">Запомнить состояние</button>
       </div>`;
+  }
+
+  // Кнопки снимка живут в разных состояниях экрана, поэтому обработчик
+  // один на всех и находит их по data-do.
+  function wireStageButtons() {
+    document.querySelectorAll("#stage [data-do]").forEach((b) => {
+      b.onclick = (e) => post(`/api/spotify/${b.dataset.do}`, e.currentTarget);
+    });
   }
 
   // ── очередь ────────────────────────────────────────────────────────

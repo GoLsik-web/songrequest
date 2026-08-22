@@ -56,6 +56,10 @@ type Notice struct {
 
 // SpotifyInfo — состояние Spotify для панели.
 type SpotifyInfo struct {
+	// HasClientID отличает «ещё не настроено» от «настроено, но отвалилось».
+	// Для первого запуска это разные экраны: в одном случае человеку надо
+	// вставить Client ID, в другом — нажать одну кнопку.
+	HasClientID  bool       `json:"has_client_id"`
 	Connected    bool       `json:"connected"`
 	Account      string     `json:"account"`
 	Premium      bool       `json:"premium"`

@@ -185,6 +185,7 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "не смог сохранить настройки", http.StatusInternalServerError)
 		return
 	}
+	s.syncSpotifyInfo()
 	s.state.Notify("info", "Настройки сохранены")
 	writeJSON(w, s.cfg.Get())
 }
