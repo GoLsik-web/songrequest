@@ -1,0 +1,6 @@
+songrequest.exe
+songrequest
+*.db
+*.db-wal
+*.db-shm
+*.log

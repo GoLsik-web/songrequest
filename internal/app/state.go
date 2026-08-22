@@ -1,0 +1,189 @@
+// Package app хранит состояние приложения, которое видит панель.
+//
+// Состояние меняется только из обработчиков событий (редемпшен, конец трека,
+// команда модератора). Никаких фоновых опросов здесь нет: панель узнаёт об
+// изменениях из WebSocket, а в простое приложение не делает вообще ничего.
+package app
+
+import (
+	"sync"
+	"time"
+)
+
+// ConnState — состояние одного внешнего подключения для лампочки в панели.
+type ConnState struct {
+	Name      string `json:"name"`
+	Connected bool   `json:"connected"`
+	// Detail — человеческая подсказка: «Не настроено», «Слетела авторизация».
+	// Никаких «401 Unauthorized» тут быть не должно.
+	Detail string `json:"detail"`
+}
+
+// NowPlaying — что играет прямо сейчас.
+type NowPlaying struct {
+	Provider   string `json:"provider"` // spotify | youtube | ""
+	Title      string `json:"title"`
+	Artist     string `json:"artist"`
+	CoverURL   string `json:"cover_url"`
+	Requester  string `json:"requester"`
+	PositionMs int    `json:"position_ms"`
+	DurationMs int    `json:"duration_ms"`
+	Uncertain  bool   `json:"uncertain"`
+}
+
+// QueueItem — заказ в очереди.
+type QueueItem struct {
+	ID         int64  `json:"id"`
+	Source     string `json:"source"`
+	Requester  string `json:"requester"`
+	Title      string `json:"title"`
+	Artist     string `json:"artist"`
+	Provider   string `json:"provider"`
+	DurationMs int    `json:"duration_ms"`
+	Uncertain  bool   `json:"uncertain"`
+}
+
+// Notice — сообщение для стримера в панели.
+type Notice struct {
+	Level string    `json:"level"` // info | warn | error
+	Text  string    `json:"text"`
+	At    time.Time `json:"at"`
+}
+
+// Snapshot — вся картинка целиком, ровно то, что уходит в панель одним JSON.
+type Snapshot struct {
+	Connections []ConnState `json:"connections"`
+	Now         *NowPlaying `json:"now"`
+	Queue       []QueueItem `json:"queue"`
+	Notices     []Notice    `json:"notices"`
+	Paused      bool        `json:"paused"` // приём заказов остановлен
+	Version     string      `json:"version"`
+}
+
+// State — потокобезопасное состояние с уведомлением подписчиков об изменениях.
+type State struct {
+	mu      sync.RWMutex
+	conns   map[string]ConnState
+	order   []string // порядок лампочек в панели, фиксированный
+	now     *NowPlaying
+	queue   []QueueItem
+	notices []Notice
+	paused  bool
+	version string
+
+	subs map[int]chan struct{}
+	next int
+}
+
+const maxNotices = 50
+
+// New создаёт состояние с погашенными лампочками подключений.
+func New(version string) *State {
+	s := &State{
+		conns:   map[string]ConnState{},
+		subs:    map[int]chan struct{}{},
+		version: version,
+	}
+	for _, name := range []string{"Spotify", "Twitch", "DonationAlerts", "DonatePay"} {
+		s.order = append(s.order, name)
+		s.conns[name] = ConnState{Name: name, Connected: false, Detail: "Не настроено"}
+	}
+	return s
+}
+
+// Subscribe отдаёт канал-звонок: в него приходит сигнал при любом изменении.
+// Канал буферизован на 1 — если подписчик отстал, лишние сигналы отбрасываются,
+// он всё равно прочитает актуальный снимок целиком.
+func (s *State) Subscribe() (<-chan struct{}, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := s.next
+	s.next++
+	ch := make(chan struct{}, 1)
+	s.subs[id] = ch
+
+	return ch, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if c, ok := s.subs[id]; ok {
+			delete(s.subs, id)
+			close(c)
+		}
+	}
+}
+
+// notify вызывается под уже взятой блокировкой записи.
+func (s *State) notify() {
+	for _, ch := range s.subs {
+		select {
+		case ch <- struct{}{}:
+		default: // подписчик ещё не забрал прошлый сигнал — и не надо
+		}
+	}
+}
+
+// SetConn обновляет лампочку подключения.
+func (s *State) SetConn(name string, connected bool, detail string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conns[name] = ConnState{Name: name, Connected: connected, Detail: detail}
+	s.notify()
+}
+
+// SetNow задаёт текущий трек (nil — тишина).
+func (s *State) SetNow(n *NowPlaying) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = n
+	s.notify()
+}
+
+// SetQueue заменяет очередь целиком.
+func (s *State) SetQueue(q []QueueItem) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queue = q
+	s.notify()
+}
+
+// SetPaused включает или выключает приём заказов.
+func (s *State) SetPaused(p bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.paused = p
+	s.notify()
+}
+
+// Notify добавляет сообщение для стримера.
+func (s *State) Notify(level, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notices = append(s.notices, Notice{Level: level, Text: text, At: time.Now()})
+	if len(s.notices) > maxNotices {
+		s.notices = s.notices[len(s.notices)-maxNotices:]
+	}
+	s.notify()
+}
+
+// Snapshot собирает копию состояния для отправки в панель.
+func (s *State) Snapshot() Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Пустые срезы, а не nil: панель ждёт массив и на null споткнётся.
+	snap := Snapshot{
+		Queue:   append(make([]QueueItem, 0, len(s.queue)), s.queue...),
+		Notices: append(make([]Notice, 0, len(s.notices)), s.notices...),
+		Paused:  s.paused,
+		Version: s.version,
+	}
+	for _, name := range s.order {
+		snap.Connections = append(snap.Connections, s.conns[name])
+	}
+	if s.now != nil {
+		now := *s.now
+		snap.Now = &now
+	}
+	return snap
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Заказ музыки — панель</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <h1>Заказ музыки</h1>
+  <div id="conns" class="conns"></div>
+  <span id="link" class="link"></span>
+</header>
+
+<main>
+  <section class="card now">
+    <h2>Сейчас играет</h2>
+    <div id="now" class="now-body"><p class="empty">Тишина</p></div>
+  </section>
+
+  <section class="card queue">
+    <h2>Очередь <span id="queue-count" class="count">0</span></h2>
+    <ol id="queue"><li class="empty">Очередь пуста</li></ol>
+  </section>
+
+  <section class="card notices">
+    <h2>События</h2>
+    <ul id="notices"><li class="empty">Пока ничего не происходило</li></ul>
+  </section>
+</main>
+
+<footer id="status" class="offline">Подключаюсь к приложению…</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>
