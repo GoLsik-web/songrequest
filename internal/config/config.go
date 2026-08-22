@@ -15,8 +15,13 @@ type ResumeFailMode string
 const (
 	// ResumeNothing — ничего не включать, только показать уведомление в панели.
 	ResumeNothing ResumeFailMode = "nothing"
-	// ResumeFallbackPlaylist — включить запасной плейлист из настроек.
+	// ResumeFallbackPlaylist — включить запасной плейлист, выбранный в настройках.
+	// Режим по умолчанию: он самый предсказуемый, стример заранее знает, что заиграет.
 	ResumeFallbackPlaylist ResumeFailMode = "playlist"
+	// ResumeArtistRadio — включить треки последнего игравшего артиста.
+	// Настоящее радио Spotify через API недоступно: эндпоинт рекомендаций
+	// закрыт для новых приложений. Это ближайшая замена, которая работает.
+	ResumeArtistRadio ResumeFailMode = "radio"
 )
 
 // Config — всё, что стример может настроить. Поля с тегом json попадают в файл.
@@ -42,6 +47,7 @@ type Config struct {
 	// Возврат контекста Spotify
 	ResumeFail         ResumeFailMode `json:"resume_fail_mode"`
 	FallbackPlaylistID string         `json:"fallback_playlist_id"`
+	FallbackPlaylist   string         `json:"fallback_playlist_name"` // для показа в панели
 	ResumeDelaySeconds int            `json:"resume_delay_seconds"`
 
 	// Матчинг: пороги уверенности и веса. Вынесены наружу, чтобы крутить без пересборки.
@@ -78,7 +84,7 @@ func Defaults() Config {
 		MaxTrackSeconds:    8 * 60,
 		MaxPerUser:         3,
 		DonationPriority:   true,
-		ResumeFail:         ResumeNothing,
+		ResumeFail:         ResumeFallbackPlaylist,
 		ResumeDelaySeconds: 3,
 		MatchAccept:        0.80,
 		MatchMaybe:         0.55,
@@ -162,6 +168,23 @@ func (f *File) Get() Config {
 	cp := f.cfg
 	cp.RejectKeywords = append([]string(nil), f.cfg.RejectKeywords...)
 	return cp
+}
+
+// EffectiveResumeMode — режим, который действительно сработает.
+//
+// Если выбран запасной плейлист, но сам плейлист не выбран, включать нечего:
+// молча деградируем до «ничего не включать». Панель подсветит это в настройках,
+// но посреди стрима приложение не должно ругаться на настройку.
+func (c Config) EffectiveResumeMode() ResumeFailMode {
+	if c.ResumeFail == ResumeFallbackPlaylist && c.FallbackPlaylistID == "" {
+		return ResumeNothing
+	}
+	return c.ResumeFail
+}
+
+// ResumeModeIncomplete сообщает панели, что выбранный режим не настроен до конца.
+func (c Config) ResumeModeIncomplete() bool {
+	return c.ResumeFail == ResumeFallbackPlaylist && c.FallbackPlaylistID == ""
 }
 
 // Path — путь к файлу настроек, показываем его в панели.

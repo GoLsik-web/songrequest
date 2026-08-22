@@ -198,6 +198,10 @@ type RestoreOutcome struct {
 	Restored bool      `json:"restored"`
 	Code     errs.Code `json:"code"`
 	Message  string    `json:"message"`
+	// ContextLost — трек вернули, а источник (плейлист, радио) нет. После
+	// такого трека Spotify замолчит, поэтому продолжение надо дособрать самим.
+	ContextLost bool   `json:"context_lost"`
+	DeviceID    string `json:"device_id"`
 }
 
 // Restore возвращает Spotify в состояние из снимка.
@@ -289,9 +293,14 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string) 
 
 	msg := fmt.Sprintf("Вернул: %s — %s с %s.", snap.ArtistName, snap.TrackName, mmss(snap.PositionMs))
 	if lostContext {
-		msg += " Плейлист вернуть не вышло — Spotify не умеет возвращаться внутрь такого источника."
+		msg += " Источник вернуть не вышло — Spotify не умеет возвращаться внутрь такого."
 	}
-	return RestoreOutcome{Restored: true, Message: msg}, nil
+	return RestoreOutcome{
+		Restored:    true,
+		Message:     msg,
+		ContextLost: lostContext,
+		DeviceID:    deviceID,
+	}, nil
 }
 
 // IsStale определяет, что стример сам переключил музыку, пока играл заказ.

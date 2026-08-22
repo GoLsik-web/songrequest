@@ -4,209 +4,370 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const status = $("status");
+
+  const icon = (name, cls = "") =>
+    `<svg class="${cls}"><use href="#i-${name}"></use></svg>`;
+
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+
+  const mmss = (ms) => {
+    const t = Math.max(0, Math.round(ms / 1000));
+    return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+  };
+
+  const human = (ms) => {
+    const m = Math.round(ms / 60000);
+    return m < 1 ? "меньше минуты" : `ещё ${m} мин`;
+  };
+
+  // ── связь с приложением ────────────────────────────────────────────
+
   let retryDelay = 1000;
+  let lastQueueIds = new Set();
 
   function connect() {
     const socket = new WebSocket(`ws://${location.host}/ws`);
 
     socket.onopen = () => {
       retryDelay = 1000;
-      status.textContent = `Подключено · ${location.host}`;
-      status.className = "online";
+      say(`Подключено · ${location.host}`);
     };
-
-    socket.onmessage = (event) => render(JSON.parse(event.data));
-
+    socket.onmessage = (e) => render(JSON.parse(e.data));
     socket.onclose = () => {
-      status.textContent = "Приложение не отвечает. Проверь, запущено ли оно.";
-      status.className = "offline";
-      // Переподключение с ростом паузы: если приложение закрыто, браузер не
-      // должен долбиться в него каждую секунду до конца стрима.
+      say("Приложение не отвечает. Проверь, запущено ли оно.", true);
+      // Пауза растёт: если приложение закрыто, браузер не должен
+      // долбиться в него каждую секунду до конца стрима.
       setTimeout(connect, retryDelay);
       retryDelay = Math.min(retryDelay * 2, 15000);
     };
   }
 
-  // post отправляет команду и показывает ошибку так же, как её видит панель:
-  // с кодом, который можно продиктовать голосом.
-  async function post(path, button) {
-    if (button) button.disabled = true;
+  function say(text, bad) {
+    status.textContent = text;
+    status.className = bad ? "offline" : "online";
+  }
+
+  async function post(path, btn) {
+    if (btn) btn.disabled = true;
     try {
-      const response = await fetch(path, { method: "POST" });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        flash(data.code ? `${data.code} · ${data.error}` : "Не получилось", true);
+      const r = await fetch(path, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        say(d.code ? `${d.code} · ${d.error}` : "Не получилось", true);
         return null;
       }
-      return data;
-    } catch (e) {
-      flash("Приложение не отвечает", true);
+      return d;
+    } catch {
+      say("Приложение не отвечает", true);
       return null;
     } finally {
-      if (button) button.disabled = false;
+      if (btn) btn.disabled = false;
     }
   }
 
-  function flash(text, isError) {
-    status.textContent = text;
-    status.className = isError ? "offline" : "online";
+  // ── шапка ──────────────────────────────────────────────────────────
+
+  function renderBar(s) {
+    const cells = s.connections.map((c) => {
+      const cls = c.connected ? "on" : (c.detail === "Не настроено" ? "idle" : "off");
+      const detail = c.detail ? `<b>${esc(c.detail)}</b>` : "";
+      return `<div class="st ${cls}"><i class="led"></i>${esc(c.name)} ${detail}</div>`;
+    }).join("");
+
+    $("bar").innerHTML = cells +
+      `<div class="bar-tail">
+         <a href="#" id="toggle-settings">настройки</a>
+         <a href="/widget" target="_blank">виджет</a>
+         <span>${esc(s.version)}</span>
+       </div>`;
+
+    $("toggle-settings").onclick = (e) => {
+      e.preventDefault();
+      const panel = $("settings");
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) loadPlaylists();
+    };
   }
 
-  // Настройки читаем один раз при загрузке: они меняются редко и только
-  // руками, гонять их через сокет вместе с состоянием ни к чему.
+  // ── эфир ───────────────────────────────────────────────────────────
+
+  function renderStage(s) {
+    const spotifyDown = s.connections.some((c) => c.name === "Spotify" && !c.connected && c.detail !== "Не настроено");
+
+    if (spotifyDown) {
+      const conn = s.connections.find((c) => c.name === "Spotify");
+      $("stage").innerHTML = `
+        <div class="eyebrow alarm"><i class="live"></i> Связи нет</div>
+        <div class="void hot">
+          <div class="rule"></div>
+          <div class="mark">${esc(conn.detail)}</div>
+          <div class="say">Заказы будут копиться в очереди и заиграют, как только подключишься.</div>
+          <div class="acts"><button class="act key" id="stage-login">Подключить Spotify</button></div>
+        </div>`;
+      $("stage-login").onclick = doLogin;
+      return;
+    }
+
+    const now = s.now;
+    if (!now) {
+      $("stage").innerHTML = `
+        <div class="eyebrow quiet"><i class="live"></i> Тихо</div>
+        <div class="void">
+          <div class="rule"></div>
+          <div class="mark">Заказов нет</div>
+          <div class="say">В Spotify играет то, что ты включил сам. Как только зритель закажет трек,
+            он появится здесь, а после очереди музыка вернётся на ту же секунду.</div>
+          ${snapshotLine(s.spotify)}
+        </div>`;
+      return;
+    }
+
+    const pct = now.duration_ms ? (now.position_ms / now.duration_ms) * 100 : 0;
+    $("stage").innerHTML = `
+      <div class="eyebrow">
+        <i class="live"></i> В эфире
+        <span class="sep">/</span>
+        <span class="where">${now.provider === "youtube" ? "YouTube" : "Spotify"}${now.uncertain ? " · неточное совпадение" : ""}</span>
+      </div>
+      <div class="stage-row">
+        <div class="art">${now.cover_url ? `<img src="${esc(now.cover_url)}" alt="">` : icon("music")}</div>
+        <div style="min-width:0;flex:1">
+          <h1 class="headline">${esc(now.title)}</h1>
+          <div class="subhead">${esc(now.artist)}</div>
+          ${now.requester ? `<div class="credit">${icon("user")}заказал <b>${esc(now.requester)}</b></div>` : ""}
+          <div class="meter">
+            <span class="t">${mmss(now.position_ms)}</span>
+            <span class="bar"><i style="width:${pct}%"></i></span>
+            <span class="t">${mmss(now.duration_ms)}</span>
+          </div>
+        </div>
+      </div>
+      <div class="acts">
+        <button class="act key" id="skip">${icon("skip-forward")}Скипнуть</button>
+        <button class="act" id="pause">${icon("pause")}Пауза</button>
+        <button class="act" id="restore">${icon("rotate-cw")}Вернуть Spotify</button>
+        <button class="act" id="snapshot">${icon("clock")}Запомнить состояние</button>
+      </div>`;
+
+    $("restore").onclick = (e) => post("/api/spotify/restore", e.currentTarget);
+    $("snapshot").onclick = (e) => post("/api/spotify/snapshot", e.currentTarget);
+  }
+
+  // Строка снимка живёт в пустом состоянии: именно там она нужна — стример
+  // видит, куда приложение вернётся, ещё до того как придёт первый заказ.
+  function snapshotLine(sp) {
+    if (!sp.snapshot_text) {
+      return `<div class="acts">
+        <button class="act small" onclick="fetch('/api/spotify/snapshot',{method:'POST'})">
+          Запомнить, что играет сейчас</button></div>`;
+    }
+    const at = new Date(sp.snapshot_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    return `<div class="say" style="margin-top:14px;color:var(--dim)">
+      Вернусь к: ${esc(sp.snapshot_text)} <span style="color:var(--dimmer)">· запомнено в ${at}</span></div>
+      <div class="acts">
+        <button class="act small" onclick="fetch('/api/spotify/snapshot',{method:'POST'})">Перезапомнить</button>
+        <button class="act small" onclick="fetch('/api/spotify/restore',{method:'POST'})">Вернуть сейчас</button>
+      </div>`;
+  }
+
+  // ── очередь ────────────────────────────────────────────────────────
+
+  function renderQueue(s) {
+    $("q-count").textContent = s.queue.length;
+    $("q-count").style.color = s.queue.length ? "var(--lime)" : "var(--dimmer)";
+
+    const left = s.queue.reduce((sum, i) => sum + i.duration_ms, 0);
+    $("q-rest").textContent = s.queue.length ? human(left) : "";
+
+    if (!s.queue.length) {
+      $("queue").innerHTML = `
+        <div class="void">
+          <div class="rule"></div>
+          <div class="mark">Пусто</div>
+          <div class="say">Заказы появятся здесь, как только подключим Twitch и донаты.</div>
+        </div>`;
+      lastQueueIds = new Set();
+      return;
+    }
+
+    const rows = s.queue.map((item, i) => {
+      const fresh = lastQueueIds.size && !lastQueueIds.has(item.id) ? " fresh" : "";
+      const marks = [];
+      if (item.source === "donation") marks.push('<span class="chip money">донат</span>');
+      if (item.uncertain) marks.push('<span class="chip doubt">неточно</span>');
+      if (item.provider === "youtube") marks.push(icon("radio") + " YouTube");
+
+      return `<li class="${fresh.trim()}" data-id="${item.id}">
+        <span class="idx">${String(i + 1).padStart(2, "0")}</span>
+        <span class="body">
+          <span class="ttl">${esc(item.artist)} — ${esc(item.title)}</span>
+          <span class="sub">${marks.join(" ")} ${esc(item.requester)}</span>
+        </span>
+        <span class="len">${mmss(item.duration_ms)}</span>
+        <span class="tools">
+          <button title="Наверх" data-act="top">${icon("arrow-up")}</button>
+          <button class="kill" title="Удалить" data-act="remove">${icon("trash-2")}</button>
+        </span>
+      </li>`;
+    }).join("");
+
+    $("queue").innerHTML = `<ul class="rows">${rows}</ul>`;
+    lastQueueIds = new Set(s.queue.map((i) => i.id));
+  }
+
+  // ── хроника ────────────────────────────────────────────────────────
+
+  function renderFeed(s) {
+    const notices = [...s.notices].reverse();
+    if (!notices.length) {
+      $("feed").innerHTML = `<li style="color:var(--dimmer);border:none">Пока ничего не происходило</li>`;
+      return;
+    }
+    $("feed").innerHTML = notices.map((n) => {
+      const when = new Date(n.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+      const code = n.code
+        ? `<span class="${n.level === "error" ? "fcode" : "wcode"}">${esc(n.code)}</span>`
+        : "";
+      return `<li><span class="when">${when}</span>
+        <span class="${n.level === "error" ? "fault" : ""}">${code}${esc(n.text)}</span></li>`;
+    }).join("");
+  }
+
+  // ── настройки ──────────────────────────────────────────────────────
+
+  let config = null;
+
   async function loadConfig() {
     try {
-      const cfg = await (await fetch("/api/config")).json();
-      $("sp-clientid").value = cfg.spotify_client_id || "";
-    } catch (e) {
-      flash("Не смог прочитать настройки", true);
+      config = await (await fetch("/api/config")).json();
+      $("client-id").value = config.spotify_client_id || "";
+      applyMode(config.resume_fail_mode);
+      $("playlist").value = config.fallback_playlist_id || "";
+      refreshModeHints();
+    } catch {
+      say("Не смог прочитать настройки", true);
     }
   }
 
-  $("sp-save-id").onclick = async (e) => {
-    e.target.disabled = true;
+  function applyMode(mode) {
+    document.querySelectorAll('input[name="resume"]').forEach((r) => {
+      r.checked = r.value === mode;
+      r.closest(".mode").classList.toggle("sel", r.checked);
+    });
+  }
+
+  // Выбран запасной плейлист, но сам плейлист не выбран — приложение молча
+  // деградирует до тишины. Молча для стрима, но не для настроек: тут это
+  // должно быть видно.
+  function refreshModeHints() {
+    const broken = config
+      && config.resume_fail_mode === "playlist"
+      && !config.fallback_playlist_id;
+
+    const playlistMode = document.querySelector('input[value="playlist"]').closest(".mode");
+    playlistMode.classList.toggle("broken", broken);
+    playlistMode.querySelector(".why").textContent = broken
+      ? "Плейлист не выбран — пока работает как «ничего не включать»."
+      : "Самый предсказуемый вариант: заранее знаешь, что заиграет.";
+
+    const hint = $("playlist-hint");
+    hint.className = broken ? "hint warn" : "hint";
+    hint.textContent = broken ? "Выбери плейлист, иначе режим не сработает." : "";
+  }
+
+  async function saveConfig(patch) {
     try {
-      // Читаем настройки целиком и меняем одно поле: так сохранение из панели
-      // не затирает то, что стример правил в файле руками.
-      const cfg = await (await fetch("/api/config")).json();
-      cfg.spotify_client_id = $("sp-clientid").value.trim();
-      const response = await fetch("/api/config", {
+      const current = await (await fetch("/api/config")).json();
+      Object.assign(current, patch);
+      const r = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfg),
+        body: JSON.stringify(current),
       });
-      if (!response.ok) throw new Error();
-      flash("Client ID сохранён. Теперь нажми «Подключить Spotify».");
-    } catch (err) {
-      flash("Не смог сохранить Client ID", true);
-    } finally {
-      e.target.disabled = false;
+      if (!r.ok) throw new Error();
+      config = await r.json();
+      refreshModeHints();
+      return true;
+    } catch {
+      say("Не смог сохранить настройки", true);
+      return false;
     }
+  }
+
+  let playlistsLoaded = false;
+  async function loadPlaylists() {
+    if (playlistsLoaded) return;
+    try {
+      const r = await fetch("/api/spotify/playlists");
+      const list = await r.json();
+      if (!r.ok) {
+        $("playlist-hint").className = "hint warn";
+        $("playlist-hint").textContent = `${list.code} · ${list.error}`;
+        return;
+      }
+      const chosen = config ? config.fallback_playlist_id : "";
+      $("playlist").innerHTML = '<option value="">— не выбран —</option>' +
+        list.map((p) => `<option value="${esc(p.id)}"${p.id === chosen ? " selected" : ""}>
+          ${esc(p.name)} · ${p.tracks} треков</option>`).join("");
+      playlistsLoaded = true;
+      refreshModeHints();
+    } catch {
+      say("Не смог получить список плейлистов", true);
+    }
+  }
+
+  document.querySelectorAll('input[name="resume"]').forEach((radio) => {
+    radio.onchange = async () => {
+      applyMode(radio.value);
+      await saveConfig({ resume_fail_mode: radio.value });
+      if (radio.value === "playlist") loadPlaylists();
+    };
+  });
+
+  $("playlist").onchange = async (e) => {
+    const name = e.target.selectedOptions[0].textContent.split(" · ")[0].trim();
+    await saveConfig({
+      fallback_playlist_id: e.target.value,
+      fallback_playlist_name: e.target.value ? name : "",
+    });
   };
 
-  $("sp-login").onclick = async (e) => {
-    const data = await post("/api/spotify/login", e.target);
+  $("save-id").onclick = async (e) => {
+    e.target.disabled = true;
+    if (await saveConfig({ spotify_client_id: $("client-id").value.trim() })) {
+      say("Client ID сохранён. Теперь нажми «Подключить Spotify».");
+    }
+    e.target.disabled = false;
+  };
+
+  async function doLogin(e) {
+    const data = await post("/api/spotify/login", e && e.currentTarget);
     if (!data) return;
-    // Показываем адрес возврата рядом с кнопкой: если вход не пройдёт, первым
-    // делом сверяют именно эту строку с тем, что вписано в настройках Spotify.
-    $("sp-redirect").textContent = data.redirect_uri;
-    // Страницу входа открываем в новой вкладке, чтобы панель осталась на месте.
+    // Показываем адрес возврата: если вход не пройдёт, первым делом сверяют
+    // именно эту строку с тем, что вписано в настройках Spotify.
+    $("redirect-hint").textContent = `Адрес возврата: ${data.redirect_uri}`;
     window.open(data.url, "_blank", "noopener");
-  };
-  $("sp-check").onclick = (e) => post("/api/spotify/check", e.target);
-  $("sp-logout").onclick = (e) => post("/api/spotify/logout", e.target);
-  $("sp-snap").onclick = (e) => post("/api/spotify/snapshot", e.target);
-  $("sp-restore").onclick = (e) => post("/api/spotify/restore", e.target);
+  }
 
+  $("login").onclick = doLogin;
+  $("logout").onclick = (e) => post("/api/spotify/logout", e.currentTarget);
   $("debug-log").onchange = (e) => post(`/api/log/debug?on=${e.target.checked ? 1 : 0}`);
 
-  function mmss(ms) {
-    const total = Math.max(0, Math.round(ms / 1000));
-    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+  // ── сборка ─────────────────────────────────────────────────────────
+
+  function render(s) {
+    renderBar(s);
+    renderStage(s);
+    renderQueue(s);
+    renderFeed(s);
+    $("debug-log").checked = s.debug_log;
   }
 
-  function render(state) {
-    $("version").textContent = `версия ${state.version}`;
-
-    $("conns").replaceChildren(...state.connections.map((c) => {
-      const el = document.createElement("span");
-      el.className = c.connected ? "conn on" : "conn";
-      el.innerHTML = `<i class="dot"></i>${c.name}`;
-      if (c.detail) {
-        const d = document.createElement("span");
-        d.className = "detail";
-        d.textContent = c.detail;
-        el.append(d);
-      }
-      return el;
-    }));
-
-    renderSpotify(state.spotify);
-    $("debug-log").checked = state.debug_log;
-
-    const now = state.now;
-    if (!now) {
-      $("now").innerHTML = '<p class="empty">Тишина</p>';
-    } else {
-      const pct = now.duration_ms ? (now.position_ms / now.duration_ms) * 100 : 0;
-      $("now").innerHTML = `
-        ${now.cover_url ? `<img src="${now.cover_url}" alt="">` : ""}
-        <div class="now-text">
-          <div class="now-title">${escapeHtml(now.title)}</div>
-          <div class="now-artist">${escapeHtml(now.artist)}</div>
-          <div class="now-meta">
-            ${now.requester ? `заказал ${escapeHtml(now.requester)} · ` : ""}
-            ${now.provider === "youtube" ? "YouTube" : "Spotify"}
-            ${now.uncertain ? ' · <span class="tag-uncertain">неточное совпадение</span>' : ""}
-          </div>
-          <div class="bar"><i style="width:${pct}%"></i></div>
-          <div class="now-meta">${mmss(now.position_ms)} / ${mmss(now.duration_ms)}</div>
-        </div>`;
-    }
-
-    $("queue-count").textContent = state.queue.length;
-    if (!state.queue.length) {
-      $("queue").innerHTML = '<li class="empty">Очередь пуста</li>';
-    } else {
-      $("queue").replaceChildren(...state.queue.map((item) => {
-        const li = document.createElement("li");
-        li.innerHTML = `
-          <span class="q-title">${escapeHtml(item.artist)} — ${escapeHtml(item.title)}
-            ${item.uncertain ? '<span class="tag-uncertain">неточно</span>' : ""}
-          </span>
-          <span class="q-by">${escapeHtml(item.requester)}</span>
-          <span class="q-dur">${mmss(item.duration_ms)}</span>`;
-        return li;
-      }));
-    }
-
-    const notices = [...state.notices].reverse();
-    if (!notices.length) {
-      $("notices").innerHTML = '<li class="empty">Пока ничего не происходило</li>';
-    } else {
-      $("notices").replaceChildren(...notices.map((n) => {
-        const li = document.createElement("li");
-        li.className = `lvl-${n.level}`;
-        const time = new Date(n.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-        li.innerHTML = `<span class="at">${time}</span>` +
-          (n.code ? `<b class="code">${escapeHtml(n.code)}</b> ` : "") +
-          escapeHtml(n.text);
-        return li;
-      }));
-    }
-  }
-
-  function renderSpotify(sp) {
-    const box = $("sp-status");
-    if (!sp.connected) {
-      box.className = "sp-status bad";
-      box.textContent = "Не подключён. Нажми «Подключить Spotify».";
-    } else if (!sp.premium) {
-      box.className = "sp-status bad";
-      box.textContent = `${sp.account || "Аккаунт"} — без Premium. Управлять музыкой не получится.`;
-    } else {
-      box.className = "sp-status ok";
-      box.textContent = `${sp.account} · Premium`;
-    }
-
-    $("sp-login").textContent = sp.connected ? "Подключить заново" : "Подключить Spotify";
-
-    const snap = $("sp-snapshot");
-    if (!sp.snapshot_text) {
-      snap.className = "snapshot empty";
-      snap.textContent = "Состояние ещё не запоминали";
-    } else {
-      const at = new Date(sp.snapshot_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-      snap.className = "snapshot";
-      snap.textContent = `${at} — ${sp.snapshot_text}`;
-    }
-  }
-
-  function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (c) => (
-      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
-    ));
-  }
+  fetch("/static/icons/sprite.svg")
+    .then((r) => r.text())
+    .then((svg) => { $("sprite").innerHTML = svg; });
 
   loadConfig();
   connect();

@@ -100,6 +100,7 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /api/spotify/login", s.handleSpotifyLogin)
 	mux.HandleFunc("POST /api/spotify/logout", s.handleSpotifyLogout)
 	mux.HandleFunc("POST /api/spotify/check", s.handleSpotifyCheck)
+	mux.HandleFunc("GET /api/spotify/playlists", s.handleSpotifyPlaylists)
 	mux.HandleFunc("POST /api/spotify/snapshot", s.handleSpotifySnapshot)
 	mux.HandleFunc("POST /api/spotify/restore", s.handleSpotifyRestore)
 	mux.HandleFunc("GET /callback", s.handleSpotifyCallback)

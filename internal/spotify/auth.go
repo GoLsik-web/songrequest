@@ -28,6 +28,10 @@ var scopes = []string{
 	"user-read-playback-state",
 	"user-modify-playback-state",
 	"user-read-currently-playing",
+	// Нужно, чтобы стример выбирал запасной плейлист из списка своих,
+	// а не искал и вставлял ссылку руками.
+	"playlist-read-private",
+	"playlist-read-collaborative",
 }
 
 // tokens — то, что лежит в хранилище учётных данных.
