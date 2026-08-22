@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,22 +46,61 @@ type Client struct {
 	me          *Me
 
 	refreshMu sync.Mutex
-
-	// OnStatus дёргается при смене состояния подключения — панель зажигает
-	// лампочку. Заполняется снаружи, чтобы пакет не знал про интерфейс.
-	OnStatus func(connected bool, detail string)
 }
 
-// Me — кто вошёл. Product важен: без Premium управление плеером не работает.
+// Me — кто вошёл в Spotify.
 type Me struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
-	Product     string `json:"product"`
-	Country     string `json:"country"`
+	Email       string `json:"email"`
+	// Product приходит только при выданном праве user-read-private.
+	// Пустая строка означает «Spotify не сказал», а не «подписки нет» —
+	// путать эти два случая нельзя, из-за этого приложение врало людям.
+	Product string `json:"product"`
+	Country string `json:"country"`
 }
 
-// Premium сообщает, есть ли подписка.
-func (m *Me) Premium() bool { return m != nil && m.Product == "premium" }
+// Plan — что мы знаем о подписке. Именно три состояния, а не «да/нет».
+type Plan string
+
+const (
+	// PlanPremium — Premium подтверждён, всё будет работать.
+	PlanPremium Plan = "premium"
+	// PlanFree — Spotify прямо сказал, что подписки нет.
+	PlanFree Plan = "free"
+	// PlanUnknown — определить не удалось. Не повод блокировать работу:
+	// если Premium на самом деле есть, всё заработает, а если нет — Spotify
+	// сам откажет при первой команде плееру, и мы это покажем.
+	PlanUnknown Plan = "unknown"
+)
+
+// Plan разбирает ответ Spotify о подписке.
+func (m *Me) Plan() Plan {
+	switch {
+	case m == nil || strings.TrimSpace(m.Product) == "":
+		return PlanUnknown
+	case strings.HasPrefix(m.Product, "premium"):
+		// Spotify не различает Standard, Duo и Family — все они premium.
+		return PlanPremium
+	default:
+		return PlanFree
+	}
+}
+
+// PlanLabel — то, что показываем стримеру в панели.
+func (m *Me) PlanLabel() string {
+	switch m.Plan() {
+	case PlanPremium:
+		return "Premium"
+	case PlanFree:
+		return "без подписки"
+	default:
+		return "подписка не определена"
+	}
+}
+
+// Premium сообщает, точно ли есть подписка.
+func (m *Me) Premium() bool { return m.Plan() == PlanPremium }
 
 // New создаёт клиент и подтягивает сохранённый вход, если он был.
 func New(cfg *config.File, log *logx.Logger, sec SecretStore) *Client {
@@ -103,42 +143,84 @@ func (c *Client) Account() *Me {
 	return c.me
 }
 
-// status сообщает панели о смене состояния подключения.
-func (c *Client) status(connected bool, detail string) {
-	if c.OnStatus != nil {
-		c.OnStatus(connected, detail)
+// GrantedScopes — права, которые стример выдал при входе.
+func (c *Client) GrantedScopes() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tokens.Scope
+}
+
+// hasScope проверяет одно право.
+func (c *Client) hasScope(scope string) bool {
+	return strings.Contains(c.GrantedScopes(), scope)
+}
+
+// PlanProblem объясняет, почему подписку не удалось подтвердить.
+// nil означает, что с подпиской всё в порядке.
+func (c *Client) PlanProblem(me *Me) *errs.Error {
+	switch me.Plan() {
+	case PlanPremium:
+		return nil
+
+	case PlanFree:
+		return errs.New(errs.SpotifyNoPremium,
+			"Spotify сообщил, что на этом аккаунте нет Premium. Управлять музыкой не получится — проверь, тем ли аккаунтом вошёл.")
+
+	default:
+		// Разделяем две причины «не определили»: не выдано право (лечится
+		// одной кнопкой) и Spotify промолчал (лечится ожиданием).
+		if !c.hasScope("user-read-private") {
+			return errs.New(errs.SpotifyPlanUnknown,
+				"Не могу проверить подписку: при входе не выдано право читать данные аккаунта. Нажми «Подключить заново» — приложение попросит его и всё определится.")
+		}
+		return errs.New(errs.SpotifyPlanUnknown,
+			"Spotify не сообщил тип подписки. Работать можно: если Premium есть, всё заработает, а если нет — Spotify откажет при первом заказе, и я об этом скажу.")
 	}
 }
 
-// CheckAccount спрашивает у Spotify, кто вошёл, и заодно проверяет Premium.
-// Вызывается после входа и при старте приложения — это единственное место,
-// где мы сами лезем в сеть без действия пользователя.
+// CheckAccount спрашивает у Spotify, кто вошёл, и запоминает ответ.
+//
+// Ошибку возвращает только на настоящий сбой связи. Про подписку решение
+// принимает вызывающий код через PlanProblem: «не смогли определить» — это
+// не отказ, и блокировать из-за него работу нельзя.
 func (c *Client) CheckAccount(ctx context.Context) (*Me, error) {
-	var me Me
-	if err := c.do(ctx, http.MethodGet, "/me", nil, &me); err != nil {
-		code, text := errs.Describe(err)
-		c.status(false, text)
+	// Забираем ответ и разбираем его, и целиком кладём в лог: когда у чужого
+	// человека «нет Premium» при живой подписке, разбираться приходится
+	// именно по этому куску JSON.
+	var raw json.RawMessage
+	if err := c.do(ctx, http.MethodGet, "/me", nil, &raw); err != nil {
+		code, _ := errs.Describe(err)
 		c.log.Error("не смог получить данные аккаунта Spotify", "код", code, "ошибка", err)
 		return nil, err
+	}
+
+	var me Me
+	if err := json.Unmarshal(raw, &me); err != nil {
+		c.log.Error("не разобрал ответ о аккаунте", "ответ", string(raw))
+		return nil, errs.Wrap(errs.SpotifyBadResponse, "Spotify ответил непонятным образом.", err)
 	}
 
 	c.mu.Lock()
 	c.me = &me
 	c.mu.Unlock()
 
-	if !me.Premium() {
-		// Это не техническая ошибка, а бизнес-условие: без Premium Spotify
-		// вообще не пускает к управлению плеером, и знать об этом надо сразу,
-		// а не в момент первого заказа на стриме.
-		err := errs.New(errs.SpotifyNoPremium,
-			fmt.Sprintf("У аккаунта %s нет Spotify Premium. Без него приложение не сможет управлять музыкой.", me.DisplayName))
-		c.status(false, err.UserText())
-		c.log.Warn("аккаунт без Premium", "аккаунт", me.DisplayName, "подписка", me.Product)
-		return &me, err
+	fields := []any{
+		"аккаунт", me.DisplayName,
+		"подписка_от_spotify", me.Product,
+		"страна", me.Country,
+		"выданные_права", c.GrantedScopes(),
+		"ответ", string(raw),
+	}
+	if me.Plan() == PlanUnknown {
+		// Это ровно тот случай, ради которого лог и читают, поэтому он не
+		// прячется за подробным режимом.
+		c.log.Warn("Spotify не сообщил тип подписки", fields...)
+	} else {
+		c.log.Info("данные аккаунта Spotify получены", fields...)
 	}
 
-	c.status(true, me.DisplayName+" · Premium")
-	c.log.Info("Spotify подключён", "аккаунт", me.DisplayName, "страна", me.Country)
+	// Почту в панели показываем, а из лога вычищаем — архив уходит наружу.
+	c.log.Redactor.Add(me.Email)
 	return &me, nil
 }
 

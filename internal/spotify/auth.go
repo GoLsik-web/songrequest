@@ -28,6 +28,11 @@ var scopes = []string{
 	"user-read-playback-state",
 	"user-modify-playback-state",
 	"user-read-currently-playing",
+	// Без user-read-private Spotify не присылает поле product, и подписку
+	// определить нечем: приложение решало, что Premium нет, у кого угодно.
+	// Почта нужна, чтобы стример видел в панели, каким аккаунтом вошёл.
+	"user-read-private",
+	"user-read-email",
 	// Нужно, чтобы стример выбирал запасной плейлист из списка своих,
 	// а не искал и вставлял ссылку руками.
 	"playlist-read-private",

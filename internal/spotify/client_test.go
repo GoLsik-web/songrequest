@@ -108,27 +108,6 @@ func TestLogoutWhenRefreshRejected(t *testing.T) {
 	}
 }
 
-func TestNoPremiumIsReportedClearly(t *testing.T) {
-	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"display_name": "Стример", "product": "free"})
-	})
-
-	var connected bool
-	var detail string
-	c.OnStatus = func(ok bool, d string) { connected, detail = ok, d }
-
-	_, err := c.CheckAccount(context.Background())
-	if errs.CodeOf(err) != errs.SpotifyNoPremium {
-		t.Fatalf("ждали код %s, получили %v", errs.SpotifyNoPremium, err)
-	}
-	if connected {
-		t.Fatal("без Premium подключение нельзя считать рабочим")
-	}
-	if !strings.Contains(detail, "Premium") || !strings.Contains(detail, string(errs.SpotifyNoPremium)) {
-		t.Fatalf("в панели должен быть код и понятный текст, а там: %q", detail)
-	}
-}
-
 func TestNoActiveDeviceIsTranslatedToHumanText(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

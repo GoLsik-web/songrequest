@@ -23,6 +23,9 @@ var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)("(?:access_token|refresh_token|code_verifier|code|id_token|client_secret)"\s*:\s*")([^"]{4,})(")`),
 	regexp.MustCompile(`(?i)(bearer\s+)([A-Za-z0-9._\-]{12,})`),
 	regexp.MustCompile(`(?i)((?:access_token|refresh_token|code_verifier|client_secret)=)([^&\s]{4,})`),
+	// Почта стримера — не секрет, но и не то, что стоит пересылать вместе
+	// с логом. В панели она видна, в архиве — нет.
+	regexp.MustCompile(`(?i)("email"\s*:\s*")([^"]{3,})(")`),
 }
 
 const mask = "***СКРЫТО***"

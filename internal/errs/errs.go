@@ -31,6 +31,7 @@ const (
 	SpotifyNothing     Code = "SP-12" // возвращать нечего
 	SpotifyBadResponse Code = "SP-13" // Spotify ответил не тем, чего мы ждали
 	SpotifyNoScope     Code = "SP-14" // не выданы права, нужен повторный вход
+	SpotifyPlanUnknown Code = "SP-15" // Spotify не сказал, какая подписка
 
 	// Диагностика
 	DiagExport Code = "DIAG-01" // не собрался архив с логом
