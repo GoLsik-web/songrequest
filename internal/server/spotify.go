@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"songrequest/internal/app"
-	"songrequest/internal/config"
 	"songrequest/internal/diag"
 	"songrequest/internal/errs"
 )
@@ -135,7 +134,8 @@ func (s *Server) handleSpotifyRestore(w http.ResponseWriter, r *http.Request) {
 	outcome, err := s.spotify.Restore(ctx, snap, "")
 	if err != nil {
 		s.state.NotifyError(err)
-		s.fallbackAfterFailedRestore(ctx)
+		// Вернуть не вышло совсем — включаем то, что стример выбрал в настройках.
+		s.startFresh(ctx, s.cfg.Get(), s.cfg.Get().EffectiveResumeMode(), snap)
 		s.fail(w, err)
 		return
 	}
@@ -145,26 +145,8 @@ func (s *Server) handleSpotifyRestore(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.state.NotifyCode("warn", string(outcome.Code), outcome.Message)
 	}
+	s.afterRestore(ctx, snap, outcome)
 	writeJSON(w, outcome)
-}
-
-// fallbackAfterFailedRestore выполняет то, что стример выбрал в настройках на
-// случай неудачного возобновления.
-func (s *Server) fallbackAfterFailedRestore(ctx context.Context) {
-	cfg := s.cfg.Get()
-	if cfg.ResumeFail != config.ResumeFallbackPlaylist || cfg.FallbackPlaylistID == "" {
-		return
-	}
-
-	uri := cfg.FallbackPlaylistID
-	if len(uri) > 0 && uri[0] != 's' {
-		uri = "spotify:playlist:" + uri
-	}
-	if err := s.spotify.PlayContext(ctx, uri, ""); err != nil {
-		s.log.Warn("запасной плейлист тоже не включился", "ошибка", err)
-		return
-	}
-	s.state.Notify("warn", "Вернуть прежнее не вышло — включил запасной плейлист.")
 }
 
 func (s *Server) syncSpotifyInfo() {
@@ -196,6 +178,19 @@ func (s *Server) syncSpotifyInfo() {
 	default:
 		s.state.SetConn("Spotify", true, me.DisplayName)
 	}
+}
+
+// handleSpotifyPlaylists отдаёт плейлисты стримера для выпадающего списка.
+func (s *Server) handleSpotifyPlaylists(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	list, err := s.spotify.Playlists(ctx)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, list)
 }
 
 // handleDiagExport отдаёт zip с логом и настройками без секретов.
