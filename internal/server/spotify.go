@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"songrequest/internal/app"
@@ -151,7 +152,10 @@ func (s *Server) handleSpotifyRestore(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) syncSpotifyInfo() {
 	me := s.spotify.Account()
-	info := app.SpotifyInfo{Connected: s.spotify.Connected()}
+	info := app.SpotifyInfo{
+		Connected:   s.spotify.Connected(),
+		HasClientID: strings.TrimSpace(s.cfg.Get().SpotifyClientID) != "",
+	}
 	if me != nil {
 		info.Account = me.DisplayName
 		info.Premium = me.Premium()
@@ -169,6 +173,8 @@ func (s *Server) syncSpotifyInfo() {
 	s.state.SetSpotify(info)
 
 	switch {
+	case !info.HasClientID:
+		s.state.SetConn("Spotify", false, "Не настроено")
 	case !info.Connected:
 		s.state.SetConn("Spotify", false, "Не подключён")
 	case me == nil:
