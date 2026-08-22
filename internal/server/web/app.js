@@ -378,7 +378,7 @@
     if (!data) return;
     // Показываем адрес возврата: если вход не пройдёт, первым делом сверяют
     // именно эту строку с тем, что вписано в настройках Spotify.
-    $("redirect-hint").textContent = `Адрес возврата: ${data.redirect_uri}`;
+    $("redirect").textContent = `Адрес возврата: ${data.redirect_uri}`;
     window.open(data.url, "_blank", "noopener");
   }
 
@@ -388,8 +388,29 @@
 
   // ── сборка ─────────────────────────────────────────────────────────
 
+  function renderAccount(sp) {
+    const box = $("account");
+    if (!sp.connected) {
+      box.className = "account";
+      box.innerHTML = `<div class="who">Вход не выполнен</div>`;
+      return;
+    }
+
+    const bad = sp.plan === "free";
+    const iffy = sp.plan === "unknown";
+    box.className = "account" + (bad ? " bad" : iffy ? " iffy" : " ok");
+    box.innerHTML = `
+      <div class="who">${esc(sp.account || "аккаунт без имени")}</div>
+      ${sp.email ? `<div class="mail">${esc(sp.email)}</div>` : ""}
+      <div class="plan">${esc(sp.plan_label)}</div>
+      ${sp.plan_note ? `<div class="note">
+        ${sp.plan_note_code ? `<b>${esc(sp.plan_note_code)}</b> ` : ""}${esc(sp.plan_note)}
+      </div>` : ""}`;
+  }
+
   function render(s) {
     renderBar(s);
+    renderAccount(s.spotify);
     renderStage(s);
     renderQueue(s);
     renderFeed(s);

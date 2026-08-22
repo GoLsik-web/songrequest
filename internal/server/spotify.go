@@ -12,6 +12,7 @@ import (
 	"songrequest/internal/app"
 	"songrequest/internal/diag"
 	"songrequest/internal/errs"
+	"songrequest/internal/spotify"
 )
 
 // redirectURI собирается из адреса, который мы реально слушаем. Он обязан
@@ -62,7 +63,13 @@ func (s *Server) handleSpotifyCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.syncSpotifyInfo()
-	s.state.Notify("info", "Spotify подключён: "+me.DisplayName)
+	s.state.Notify("info", "Spotify подключён: "+me.DisplayName+" · "+me.PlanLabel())
+
+	if problem := s.spotify.PlanProblem(me); problem != nil {
+		s.reportPlanProblem(problem)
+		s.callbackPage(w, "Вход выполнен", problem.Message)
+		return
+	}
 	s.callbackPage(w, "Готово", "Spotify подключён. Эту вкладку можно закрыть и вернуться в панель.")
 }
 
@@ -84,7 +91,11 @@ func (s *Server) handleSpotifyCheck(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.state.Notify("info", "Spotify на связи: "+me.DisplayName)
+
+	s.state.Notify("info", "Spotify на связи: "+me.DisplayName+" · "+me.PlanLabel())
+	if problem := s.spotify.PlanProblem(me); problem != nil {
+		s.reportPlanProblem(problem)
+	}
 	writeJSON(w, me)
 }
 
@@ -155,10 +166,19 @@ func (s *Server) syncSpotifyInfo() {
 	info := app.SpotifyInfo{
 		Connected:   s.spotify.Connected(),
 		HasClientID: strings.TrimSpace(s.cfg.Get().SpotifyClientID) != "",
+		Plan:        string(spotify.PlanUnknown),
 	}
+
 	if me != nil {
 		info.Account = me.DisplayName
-		info.Premium = me.Premium()
+		info.Email = me.Email
+		info.Plan = string(me.Plan())
+		info.PlanLabel = me.PlanLabel()
+
+		if problem := s.spotify.PlanProblem(me); problem != nil {
+			info.PlanNote = problem.Message
+			info.PlanNoteCode = string(problem.Code)
+		}
 	}
 
 	s.snapMu.Lock()
@@ -172,6 +192,8 @@ func (s *Server) syncSpotifyInfo() {
 
 	s.state.SetSpotify(info)
 
+	// Лампочка гаснет только тогда, когда работать точно нельзя. Неизвестная
+	// подписка — повод предупредить, а не повод объявить всё сломанным.
 	switch {
 	case !info.HasClientID:
 		s.state.SetConn("Spotify", false, "Не настроено")
@@ -179,11 +201,24 @@ func (s *Server) syncSpotifyInfo() {
 		s.state.SetConn("Spotify", false, "Не подключён")
 	case me == nil:
 		s.state.SetConn("Spotify", false, "Вход есть, но связи не было")
-	case !info.Premium:
+	case me.Plan() == spotify.PlanFree:
 		s.state.SetConn("Spotify", false, string(errs.SpotifyNoPremium)+" · нет Premium")
+	case me.Plan() == spotify.PlanUnknown:
+		s.state.SetConn("Spotify", true, me.DisplayName+" · подписка не определена")
 	default:
-		s.state.SetConn("Spotify", true, me.DisplayName)
+		s.state.SetConn("Spotify", true, me.DisplayName+" · Premium")
 	}
+}
+
+// reportPlanProblem показывает вопрос с подпиской в панели. Отсутствие
+// Premium — ошибка, неопределённая подписка — предупреждение: работать при
+// ней можно, и мешать человеку из-за неё нельзя.
+func (s *Server) reportPlanProblem(problem *errs.Error) {
+	if problem.Code == errs.SpotifyNoPremium {
+		s.state.NotifyError(problem)
+		return
+	}
+	s.state.NotifyWarn(problem.Code, problem.Message)
 }
 
 // handleSpotifyPlaylists отдаёт плейлисты стримера для выпадающего списка.

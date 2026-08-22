@@ -59,10 +59,16 @@ type SpotifyInfo struct {
 	// HasClientID отличает «ещё не настроено» от «настроено, но отвалилось».
 	// Для первого запуска это разные экраны: в одном случае человеку надо
 	// вставить Client ID, в другом — нажать одну кнопку.
-	HasClientID  bool       `json:"has_client_id"`
-	Connected    bool       `json:"connected"`
-	Account      string     `json:"account"`
-	Premium      bool       `json:"premium"`
+	HasClientID bool   `json:"has_client_id"`
+	Connected   bool   `json:"connected"`
+	Account     string `json:"account"`
+	Email       string `json:"email"`
+	// Plan: premium | free | unknown. Три состояния, а не флаг: «не смогли
+	// определить» — это не то же самое, что «подписки нет».
+	Plan         string     `json:"plan"`
+	PlanLabel    string     `json:"plan_label"`
+	PlanNote     string     `json:"plan_note"` // что делать, если что-то не так
+	PlanNoteCode string     `json:"plan_note_code"`
 	SnapshotText string     `json:"snapshot_text"`
 	SnapshotAt   *time.Time `json:"snapshot_at"`
 }

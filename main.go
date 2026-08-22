@@ -66,9 +66,6 @@ func run() error {
 	state.SetDebugLog(*debug)
 
 	sp := spotify.New(cfg, log, secrets.New())
-	sp.OnStatus = func(connected bool, detail string) {
-		state.SetConn("Spotify", connected, detail)
-	}
 
 	srv, err := server.New(server.Deps{
 		State:   state,
