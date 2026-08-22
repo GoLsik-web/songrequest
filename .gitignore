@@ -5,3 +5,4 @@ songrequest
 *.db-shm
 *.log
 *.exe~
+dist/

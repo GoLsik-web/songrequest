@@ -10,24 +10,71 @@
 <header>
   <h1>Заказ музыки</h1>
   <div id="conns" class="conns"></div>
-  <span id="link" class="link"></span>
+  <span id="version" class="link"></span>
 </header>
 
 <main>
-  <section class="card now">
-    <h2>Сейчас играет</h2>
-    <div id="now" class="now-body"><p class="empty">Тишина</p></div>
-  </section>
+  <div class="col">
+    <section class="card">
+      <h2>Spotify</h2>
+      <div id="sp-status" class="sp-status">Проверяю…</div>
 
-  <section class="card queue">
-    <h2>Очередь <span id="queue-count" class="count">0</span></h2>
-    <ol id="queue"><li class="empty">Очередь пуста</li></ol>
-  </section>
+      <label class="field">
+        <span>Client ID (из инструкции, шаг 3)</span>
+        <input type="text" id="sp-clientid" spellcheck="false" autocomplete="off"
+               placeholder="вставь сюда набор букв и цифр">
+      </label>
+      <div class="row">
+        <button id="sp-save-id" class="btn">Сохранить Client ID</button>
+        <span id="sp-redirect" class="hint mono"></span>
+      </div>
 
-  <section class="card notices">
-    <h2>События</h2>
-    <ul id="notices"><li class="empty">Пока ничего не происходило</li></ul>
-  </section>
+      <div class="row">
+        <button id="sp-login" class="btn primary">Подключить Spotify</button>
+        <button id="sp-check" class="btn">Проверить связь</button>
+        <button id="sp-logout" class="btn ghost">Отключить</button>
+      </div>
+
+      <h3>Проверка возврата</h3>
+      <p class="hint">Включи что-нибудь в Spotify, нажми «Запомнить», переключи трек или плейлист руками, потом «Вернуть как было».</p>
+      <div class="row">
+        <button id="sp-snap" class="btn">Запомнить состояние</button>
+        <button id="sp-restore" class="btn">Вернуть как было</button>
+      </div>
+      <div id="sp-snapshot" class="snapshot empty">Состояние ещё не запоминали</div>
+    </section>
+
+    <section class="card">
+      <h2>Диагностика</h2>
+      <label class="check">
+        <input type="checkbox" id="debug-log">
+        Подробный лог
+      </label>
+      <p class="hint">Включи, повтори то, что не работало, и выгрузи лог — в архиве будет видно, что именно ответили Spotify и Twitch.</p>
+      <div class="row">
+        <a id="diag" class="btn" href="/api/diag/export">Выгрузить лог</a>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <h2>Сейчас играет</h2>
+      <div id="now" class="now-body"><p class="empty">Тишина</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Очередь <span id="queue-count" class="count">0</span></h2>
+      <ol id="queue"><li class="empty">Очередь пуста</li></ol>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <h2>События</h2>
+      <ul id="notices"><li class="empty">Пока ничего не происходило</li></ul>
+    </section>
+  </div>
 </main>
 
 <footer id="status" class="offline">Подключаюсь к приложению…</footer>

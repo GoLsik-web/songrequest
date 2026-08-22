@@ -4,19 +4,22 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"songrequest/internal/app"
 	"songrequest/internal/config"
+	"songrequest/internal/logx"
+	"songrequest/internal/secrets"
 	"songrequest/internal/server"
+	"songrequest/internal/spotify"
 	"songrequest/internal/store"
 )
 
@@ -33,16 +36,20 @@ func main() {
 }
 
 func run() error {
+	debug := flag.Bool("подробный-лог", false, "писать в лог все подробности с самого старта")
+	noBrowser := flag.Bool("без-браузера", false, "не открывать панель автоматически")
+	flag.Parse()
+
 	dir, err := dataDir()
 	if err != nil {
 		return err
 	}
 
-	log, closeLog, err := newLogger(dir)
+	log, err := logx.New(dir, *debug)
 	if err != nil {
 		return err
 	}
-	defer closeLog()
+	defer log.Close()
 
 	cfg, err := config.Load(dir)
 	if err != nil {
@@ -56,8 +63,21 @@ func run() error {
 	defer db.Close()
 
 	state := app.New(version)
+	state.SetDebugLog(*debug)
 
-	srv, err := server.New(state, cfg, log)
+	sp := spotify.New(cfg, log, secrets.New())
+	sp.OnStatus = func(connected bool, detail string) {
+		state.SetConn("Spotify", connected, detail)
+	}
+
+	srv, err := server.New(server.Deps{
+		State:   state,
+		Cfg:     cfg,
+		Log:     log,
+		Spotify: sp,
+		DataDir: dir,
+		Version: version,
+	})
 	if err != nil {
 		return err
 	}
@@ -72,7 +92,25 @@ func run() error {
 		srv.Addr(), srv.Addr(), dir)
 
 	state.Notify("info", "Приложение запущено")
-	openBrowser(srv.Addr(), log)
+	srv.WarnIfPortChanged()
+	if !*noBrowser {
+		openBrowser(srv.Addr(), log)
+	}
+
+	// Если вход был сохранён с прошлого раза, проверяем его сразу: лучше
+	// увидеть «Spotify отвалился» до стрима, а не во время первого заказа.
+	if sp.Connected() {
+		go func() {
+			checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			if _, err := sp.CheckAccount(checkCtx); err != nil {
+				state.NotifyError(err)
+			}
+			srv.SyncSpotify()
+		}()
+	} else {
+		srv.SyncSpotify()
+	}
 
 	return srv.Serve(ctx)
 }
@@ -91,21 +129,8 @@ func dataDir() (string, error) {
 	return dir, nil
 }
 
-// newLogger пишет и в консоль, и в файл: консоль стример видит сразу, а файл
-// пригодится, когда он придёт с вопросом «оно сломалось».
-func newLogger(dir string) (*slog.Logger, func(), error) {
-	f, err := os.OpenFile(filepath.Join(dir, "songrequest.log"),
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return nil, nil, fmt.Errorf("не смог открыть файл лога: %w", err)
-	}
-
-	h := slog.NewTextHandler(io.MultiWriter(os.Stderr, f), &slog.HandlerOptions{Level: slog.LevelInfo})
-	return slog.New(h), func() { f.Close() }, nil
-}
-
 // openBrowser открывает панель. Не смогли — не беда, адрес напечатан выше.
-func openBrowser(url string, log *slog.Logger) {
+func openBrowser(url string, log *logx.Logger) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":

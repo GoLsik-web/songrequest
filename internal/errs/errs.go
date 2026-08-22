@@ -1,0 +1,88 @@
+// Package errs — ошибки с коротким кодом и человеческим текстом.
+//
+// Смысл кода: стример на своём компьютере видит в панели «SP-04» и просто
+// называет его голосом, а разработчик по коду сразу знает место в программе.
+// Текст при этом пишем так, чтобы человек понял, что делать, без слова «токен».
+package errs
+
+import "fmt"
+
+// Code — короткий код ошибки, который видно в панели.
+type Code string
+
+const (
+	// Настройки
+	NoClientID   Code = "CFG-01" // не заполнен client_id Spotify
+	ConfigSave   Code = "CFG-02" // не смогли сохранить настройки
+	ConfigBroken Code = "CFG-03" // файл настроек повреждён
+
+	// Spotify
+	SpotifyAuthStart   Code = "SP-01" // не удалось открыть страницу входа
+	SpotifyAuthDenied  Code = "SP-02" // вход отклонён или подделан ответ
+	SpotifyAuthToken   Code = "SP-03" // не удалось завершить вход
+	SpotifyAuthExpired Code = "SP-04" // авторизация слетела, нужен повторный вход
+	SpotifyNoPremium   Code = "SP-05" // на аккаунте нет Premium
+	SpotifyNoDevice    Code = "SP-06" // нет устройства, где играть
+	SpotifyUnreachable Code = "SP-07" // Spotify не отвечает
+	SpotifyRateLimit   Code = "SP-08" // Spotify просит подождать
+	SpotifySnapshot    Code = "SP-09" // не удалось запомнить, что играло
+	SpotifyRestore     Code = "SP-10" // не удалось вернуть воспроизведение
+	SpotifyStale       Code = "SP-11" // за время заказа музыку переключили руками
+	SpotifyNothing     Code = "SP-12" // возвращать нечего
+	SpotifyBadResponse Code = "SP-13" // Spotify ответил не тем, чего мы ждали
+
+	// Диагностика
+	DiagExport Code = "DIAG-01" // не собрался архив с логом
+)
+
+// Error — ошибка с кодом. Message показываем стримеру, cause уходит в лог.
+type Error struct {
+	Code    Code
+	Message string
+	cause   error
+}
+
+// New создаёт ошибку с кодом и понятным текстом.
+func New(code Code, message string) *Error {
+	return &Error{Code: code, Message: message}
+}
+
+// Wrap оборачивает техническую ошибку в понятную.
+func Wrap(code Code, message string, cause error) *Error {
+	return &Error{Code: code, Message: message, cause: cause}
+}
+
+func (e *Error) Error() string {
+	if e.cause == nil {
+		return fmt.Sprintf("%s: %s", e.Code, e.Message)
+	}
+	return fmt.Sprintf("%s: %s (%v)", e.Code, e.Message, e.cause)
+}
+
+// Unwrap открывает исходную ошибку для errors.Is и errors.As.
+func (e *Error) Unwrap() error { return e.cause }
+
+// UserText — то, что видит стример: «SP-04 · Слетела авторизация Spotify…».
+func (e *Error) UserText() string {
+	return fmt.Sprintf("%s · %s", e.Code, e.Message)
+}
+
+// CodeOf достаёт код из любой ошибки; если кода нет — пустая строка.
+func CodeOf(err error) Code {
+	var e *Error
+	if As(err, &e) {
+		return e.Code
+	}
+	return ""
+}
+
+// Describe разбирает ошибку на код и текст по отдельности. Панель показывает
+// их разными элементами, поэтому склеивать их здесь нельзя — иначе код
+// напечатается дважды.
+func Describe(err error) (Code, string) {
+	var e *Error
+	if As(err, &e) {
+		return e.Code, e.Message
+	}
+	return "", "Непонятная ошибка. Загляни в лог приложения."
+}
