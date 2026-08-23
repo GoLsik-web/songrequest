@@ -354,6 +354,13 @@ func apiError(statusCode int, data []byte) error {
 	json.Unmarshal(data, &e)
 
 	switch {
+	// Spotify отвечает этим, когда страна аккаунта и страна выхода в интернет
+	// расходятся, — обычно из-за отключившегося VPN. К подписке это отношения
+	// не имеет, и говорить человеку про Premium тут просто неправда.
+	case contains(e.Error.Message, "unavailable in this country"):
+		return errs.New(errs.SpotifyCountry,
+			"Spotify не работает из этой страны. Если пользуешься VPN — включи его и нажми «Проверить связь».")
+
 	case e.Error.Reason == "NO_ACTIVE_DEVICE":
 		return errs.New(errs.SpotifyNoDevice,
 			"Spotify нигде не открыт. Запусти приложение Spotify и включи любой трек, чтобы устройство стало активным.")
