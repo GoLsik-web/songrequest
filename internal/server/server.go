@@ -219,7 +219,11 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "не смог сохранить настройки", http.StatusInternalServerError)
 		return
 	}
+	// Обе карточки: сохранили Client ID Twitch — лампочка Twitch обязана
+	// перестать говорить «Не настроено» прямо сейчас, иначе это выглядит
+	// так, будто сохранение не сработало.
 	s.syncSpotifyInfo()
+	s.syncTwitchInfo()
 	s.state.Notify("info", "Настройки сохранены")
 	writeJSON(w, s.cfg.Get())
 }
