@@ -320,7 +320,7 @@ func TestCaptureAndRestoreRoundTrip(t *testing.T) {
 	deviceAwake = false
 	*calls = nil
 
-	outcome, err := c.Restore(ctx, snap, "spotify:track:заказ")
+	outcome, err := c.Restore(ctx, snap, "spotify:track:заказ", false)
 	if err != nil {
 		t.Fatalf("возврат не удался: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestRestoreSkippedWhenStreamerSwitchedTrackManually(t *testing.T) {
 
 	snap := &Snapshot{TrackURI: "spotify:track:исходный", TrackName: "Исходный", DeviceID: "комп"}
 
-	outcome, err := c.Restore(context.Background(), snap, "spotify:track:заказ")
+	outcome, err := c.Restore(context.Background(), snap, "spotify:track:заказ", false)
 	if err != nil {
 		t.Fatalf("неожиданная ошибка: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestRestoreNothingToRestore(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	outcome, err := c.Restore(context.Background(), &Snapshot{Empty: true}, "")
+	outcome, err := c.Restore(context.Background(), &Snapshot{Empty: true}, "", false)
 	if err != nil {
 		t.Fatalf("неожиданная ошибка: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestRestorePausedSnapshotEndsPaused(t *testing.T) {
 		IsPlaying:  false, // стример слушал на паузе
 	}
 
-	if _, err := c.Restore(context.Background(), snap, ""); err != nil {
+	if _, err := c.Restore(context.Background(), snap, "", false); err != nil {
 		t.Fatalf("возврат не удался: %v", err)
 	}
 
@@ -471,7 +471,7 @@ func TestRestoreWithoutDevicesGivesReadableError(t *testing.T) {
 
 	snap := &Snapshot{TrackURI: "spotify:track:исходный", DeviceID: "исчез"}
 
-	_, err := c.Restore(context.Background(), snap, "")
+	_, err := c.Restore(context.Background(), snap, "", false)
 	if errs.CodeOf(err) != errs.SpotifyNoDevice {
 		t.Fatalf("ждали код %s, получили %v", errs.SpotifyNoDevice, err)
 	}
@@ -488,4 +488,83 @@ func TestRestoreWithoutDevicesGivesReadableError(t *testing.T) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// Из лога тестера: он снимал состояние, переключал трек руками — как и
+// написано в чек-листе — и нажимал «Вернуть как было». Защита от «стример
+// взял управление на себя» срабатывала на его собственное нажатие, и кнопка
+// пять раз подряд не делала ничего. Явную команду человека она блокировать
+// не должна.
+func TestManualRestoreIgnoresStaleCheck(t *testing.T) {
+	c, calls, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/me/player" && r.Method == http.MethodGet:
+			writeJSON(w, map[string]any{
+				"device":     map[string]any{"id": "комп", "is_active": true},
+				"is_playing": true,
+				"item":       map[string]any{"uri": "spotify:track:включил-руками", "name": "Lost Soul"},
+			})
+		case r.URL.Path == "/me/player/devices":
+			writeJSON(w, map[string]any{"devices": []any{
+				map[string]any{"id": "комп", "is_active": true},
+			}})
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	snap := &Snapshot{
+		DeviceID:   "комп",
+		TrackURI:   "spotify:track:исходный",
+		TrackName:  "BIRDS OF A FEATHER",
+		ContextURI: "spotify:playlist:любой",
+		PositionMs: 44169,
+		IsPlaying:  true,
+	}
+
+	outcome, err := c.Restore(context.Background(), snap, "", true)
+	if err != nil {
+		t.Fatalf("возврат по кнопке не должен падать: %v", err)
+	}
+	if !outcome.Restored {
+		t.Fatalf("нажатие кнопки — явная команда, её нельзя игнорировать: %+v", outcome)
+	}
+
+	var started bool
+	for _, got := range *calls {
+		if got.Path == "/me/player/play" {
+			started = true
+		}
+	}
+	if !started {
+		t.Fatal("музыку так и не включили")
+	}
+}
+
+// А вот автоматический возврат после очереди защиту сохраняет.
+func TestAutomaticRestoreStillRespectsStaleCheck(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/me/player" && r.Method == http.MethodGet {
+			writeJSON(w, map[string]any{
+				"device":     map[string]any{"id": "комп", "is_active": true},
+				"is_playing": true,
+				"item":       map[string]any{"uri": "spotify:track:включил-руками", "name": "Lost Soul"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	snap := &Snapshot{DeviceID: "комп", TrackURI: "spotify:track:исходный"}
+
+	outcome, err := c.Restore(context.Background(), snap, "spotify:track:заказ", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Restored {
+		t.Fatal("сам, без спроса, приложение перебивать музыку не должно")
+	}
+	if outcome.Code != errs.SpotifyStale {
+		t.Fatalf("ждали код %s, получили %s", errs.SpotifyStale, outcome.Code)
+	}
 }

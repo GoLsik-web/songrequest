@@ -141,9 +141,10 @@ func (s *Server) handleSpotifyRestore(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	// playedURI пустой: на этом этапе заказов ещё нет, мы просто проверяем
-	// сам возврат. С появлением очереди сюда поедет трек, который играл заказ.
-	outcome, err := s.spotify.Restore(ctx, snap, "")
+	// Кнопку нажал человек — значит возвращаем даже если он только что
+	// переключил трек руками. Защита от «стример взял управление на себя»
+	// нужна автоматическому возврату после очереди, а не явной команде.
+	outcome, err := s.spotify.Restore(ctx, snap, "", true)
 	if err != nil {
 		s.state.NotifyError(err)
 		// Вернуть не вышло совсем — включаем то, что стример выбрал в настройках.
