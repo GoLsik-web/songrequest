@@ -32,6 +32,7 @@ const (
 	SpotifyBadResponse Code = "SP-13" // Spotify ответил не тем, чего мы ждали
 	SpotifyNoScope     Code = "SP-14" // не выданы права, нужен повторный вход
 	SpotifyPlanUnknown Code = "SP-15" // Spotify не сказал, какая подписка
+	SpotifyCountry     Code = "SP-16" // Spotify недоступен в стране аккаунта
 
 	// Twitch
 	TwitchNoClientID   Code = "TW-01" // не заполнен client_id Twitch

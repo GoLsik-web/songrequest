@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/coder/websocket"
 
@@ -221,8 +223,11 @@ func (e *EventSub) handleNotification(payload json.RawMessage) {
 		UserID:      p.Event.UserID,
 		UserLogin:   p.Event.UserLogin,
 		UserName:    p.Event.UserName,
-		UserInput:   p.Event.UserInput,
-		RedeemedAt:  p.Event.RedeemedAt,
+		// Текст чистим сразу: зрители вставляют его из буфера обмена вместе с
+		// переводами строк и лишними пробелами, а дальше по нему будет
+		// искаться трек, и невидимый символ в начале сломает поиск.
+		UserInput:  cleanInput(p.Event.UserInput),
+		RedeemedAt: p.Event.RedeemedAt,
 	}
 
 	e.client.log.Info("заказ за баллы",
@@ -231,6 +236,20 @@ func (e *EventSub) handleNotification(payload json.RawMessage) {
 	if e.OnRedemption != nil {
 		e.OnRedemption(r)
 	}
+}
+
+// cleanInput убирает из текста заказа переводы строк, табуляции и повторные
+// пробелы. Twitch отдаёт то, что ввёл зритель, слово в слово.
+func cleanInput(s string) string {
+	// Переводы строк, табуляции и прочие управляющие символы превращаем в
+	// пробелы, а затем схлопываем пробелы. strings.Fields делает это сам.
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // subscribe оформляет подписку на заказы за баллы.
