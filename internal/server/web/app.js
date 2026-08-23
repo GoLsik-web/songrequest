@@ -348,9 +348,10 @@
       return `<li class="${fresh.trim()}">
         <span class="idx">${String(i + 1).padStart(2, "0")}</span>
         <span class="body">
-          <span class="ttl">${r.text ? esc(r.text) : `<span class="muted">без текста</span>`}</span>
+          <span class="ttl">${matchLine(r)}</span>
           <span class="sub">
-            <span class="chip money">${r.cost} ${plural(r.cost, "балл", "балла", "баллов")}</span>
+            ${matchNote(r)}
+            <span class="chip">${r.cost} ${plural(r.cost, "балл", "балла", "баллов")}</span>
             ${esc(r.user)} · ${hhmm(r.at)}
           </span>
         </span>
@@ -382,6 +383,36 @@
       cell(ses.accepted, "принято") +
       cell(ses.refunded, "возвращено") +
       cell(uptime, "в работе");
+  }
+
+  // Что нашлось по тексту заказа. Пока трека нет, показываем сам текст —
+  // человек должен узнать сообщение зрителя.
+  function matchLine(r) {
+    const m = r.match || {};
+    if (m.state === "found" || m.state === "uncertain") {
+      return `${esc(m.artist)} — ${esc(m.title)}`;
+    }
+    return r.text ? esc(r.text) : `<span class="muted">без текста</span>`;
+  }
+
+  function matchNote(r) {
+    const m = r.match || {};
+    switch (m.state) {
+      case "searching":
+        return `<span class="tag searching">ищу…</span>`;
+      case "uncertain":
+        return `<span class="tag doubt" title="${esc(m.why || "")}">неточно</span>`;
+      case "missing":
+        return `<span class="tag miss">в Spotify нет</span>`;
+      case "failed":
+        return `<span class="tag miss" title="${esc(m.note || "")}">не искал</span>`;
+      case "found":
+        // Найденный трек и так виден строкой выше; исходный текст показываем
+        // рядом, чтобы было понятно, из чего он получился.
+        return r.text ? `<span class="asked" title="${esc(r.text)}">${esc(r.text)}</span>` : "";
+      default:
+        return "";
+    }
   }
 
   // ── хроника ────────────────────────────────────────────────────────

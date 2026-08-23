@@ -125,6 +125,8 @@ type RedemptionView struct {
 	// Status — код, а не готовая фраза: панель сравнивает состояние заказа с
 	// ним, и переписанная формулировка не должна молча ломать эту проверку.
 	Status string `json:"status"` // new | refunded | fulfilled
+	// Match — что нашлось в Spotify по тексту заказа.
+	Match OrderMatch `json:"match"`
 }
 
 // Состояния заказа.
@@ -133,6 +135,30 @@ const (
 	OrderRefunded  = "refunded"
 	OrderFulfilled = "fulfilled"
 )
+
+// Состояния подбора трека.
+const (
+	MatchSearching = "searching"
+	MatchFound     = "found"
+	MatchUncertain = "uncertain"
+	MatchMissing   = "missing" // в Spotify нет — дальше будет YouTube
+	MatchFailed    = "failed"  // не смогли поискать
+)
+
+// OrderMatch — что удалось подобрать по тексту заказа.
+type OrderMatch struct {
+	State    string `json:"state"`
+	TrackID  string `json:"track_id"`
+	URI      string `json:"uri"`
+	Title    string `json:"title"`
+	Artist   string `json:"artist"`
+	CoverURL string `json:"cover_url"`
+	Duration int    `json:"duration_ms"`
+	// Note — что сказать стримеру: «совпадение неточное», «в Spotify нет».
+	Note string `json:"note"`
+	// Why — расшифровка оценки. В панели не показывается, нужна для разбора.
+	Why string `json:"why"`
+}
 
 // Session — итоги с момента запуска. Панель на этапе, когда заказов ещё нет,
 // иначе состоит из одних пустых блоков; это настоящие числа, а не украшение.
@@ -319,6 +345,19 @@ func (s *State) AddRedemption(r RedemptionView) {
 	s.redemptions = append([]RedemptionView{r}, s.redemptions...)
 	if len(s.redemptions) > maxRedemptions {
 		s.redemptions = s.redemptions[:maxRedemptions]
+	}
+	s.notify()
+}
+
+// SetOrderMatch записывает результат подбора трека.
+func (s *State) SetOrderMatch(id string, m OrderMatch) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.redemptions {
+		if s.redemptions[i].ID == id {
+			s.redemptions[i].Match = m
+			break
+		}
 	}
 	s.notify()
 }

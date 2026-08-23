@@ -662,3 +662,20 @@ footer.online { color: var(--dimmer); }
   font-size: var(--t-xs); color: var(--dimmer); margin-top: 2px;
   letter-spacing: var(--track-chip);
 }
+
+/* ── Что нашлось по заказу ──────────────────────────────────────────── */
+
+.tag {
+  font-size: 10px; font-weight: 700; letter-spacing: var(--track-chip);
+  text-transform: uppercase; padding: 2px 6px; border-radius: 2px; flex: none;
+}
+.tag.searching { color: var(--dimmer); border: 1px solid var(--line-2); }
+.tag.doubt { color: var(--lime); border: 1px solid var(--lime-lo); }
+.tag.miss { color: var(--bad); border: 1px solid rgba(255, 77, 77, .4); }
+
+/* Исходный текст зрителя рядом с найденным треком: видно, из чего что
+   получилось, и сразу заметно, если подобралось не то. */
+.asked {
+  font-size: 12px; color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%;
+}

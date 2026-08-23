@@ -19,6 +19,7 @@ import (
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/logx"
+	"songrequest/internal/match"
 	"songrequest/internal/spotify"
 	"songrequest/internal/store"
 	"songrequest/internal/twitch"
@@ -48,8 +49,10 @@ type Server struct {
 	spotify *spotify.Client
 	twitch  *twitch.Client
 	db      *store.DB
-	dataDir string
-	version string
+	// matchCache помнит, чем закончился поиск по такому же запросу.
+	matchCache *match.Cache
+	dataDir    string
+	version    string
 
 	http *http.Server
 	ln   net.Listener
@@ -93,6 +96,10 @@ func New(d Deps) (*Server, error) {
 		version: d.Version,
 		ln:      ln,
 		addr:    "http://" + ln.Addr().String(),
+	}
+
+	if d.DB != nil {
+		s.matchCache = match.NewCache(d.DB.SQL())
 	}
 
 	sub, err := fs.Sub(webFS, "web")
