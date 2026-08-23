@@ -71,7 +71,9 @@
 
   function renderBar(s) {
     const cells = s.connections.map((c) => {
-      const cls = c.connected ? "on" : (c.detail === "Не настроено" ? "idle" : "off");
+      // Цвет берём из уровня, а не угадываем по тексту: иначе новая
+      // формулировка молча перекрасила бы ячейку.
+      const cls = { ok: "on", idle: "idle", fail: "off" }[c.level] || "idle";
       const detail = c.detail ? `<b>${esc(c.detail)}</b>` : "";
       return `<div class="st ${cls}"><i class="led"></i>${esc(c.name)} ${detail}</div>`;
     }).join("");
@@ -434,14 +436,14 @@
       return;
     }
 
-    const bad = !tw.has_points;
-    box.className = "account" + (bad ? " bad" : tw.reward_ready ? " ok" : " iffy");
+    // Канал без баллов — не поломка, поэтому нейтральный вид, а не красный.
+    box.className = "account" + (tw.reward_ready ? " ok" : " iffy");
     box.innerHTML = `
       <div class="who">${esc(tw.channel || "канал")}</div>
       <div class="mail">${esc(tw.channel_type)}</div>
       <div class="plan">${tw.reward_ready
         ? `награда «${esc(tw.reward_title)}» · ${tw.reward_cost} баллов`
-        : "награда не создана"}</div>
+        : tw.has_points ? "награда не создана" : "заказы за баллы недоступны"}</div>
       ${tw.note ? `<div class="note">
         ${tw.note_code ? `<b>${esc(tw.note_code)}</b> ` : ""}${esc(tw.note)}
       </div>` : ""}`;

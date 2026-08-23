@@ -76,6 +76,12 @@ func (c *Client) EnsureReward(ctx context.Context, knownID string) (*Reward, err
 				"На канале уже есть награда «%s», созданная не этим приложением. Баллы за неё вернуть невозможно — переименуй её в настройках Twitch или задай другое название в настройках приложения.",
 				cfg.RewardTitle))
 		}
+		// 403 на этой ручке практически всегда означает одно: у канала нет
+		// баллов. Полагаться на текст сообщения Twitch нельзя — формулировку
+		// он может поменять когда угодно, а человек останется с «403».
+		if errs.CodeOf(err) == errs.TwitchNoAffiliate {
+			return nil, err
+		}
 		return nil, errs.Wrap(errs.TwitchReward, "Не получилось создать награду на канале.", err)
 	}
 	if len(out.Data) == 0 {

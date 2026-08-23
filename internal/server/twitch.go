@@ -91,8 +91,10 @@ func (s *Server) startTwitch(ctx context.Context) {
 	// на таком канале будут работать.
 	if !user.HasChannelPoints() {
 		problem := errs.New(errs.TwitchNoAffiliate,
-			"На канале нет баллов — они появляются только у аффилиатов и партнёров Twitch. Заказы за баллы работать не будут, донаты будут.")
+			"Канал подключён, но баллов на нём нет — они бывают только у аффилиатов и партнёров Twitch. Приложение исправно, просто заказывать за баллы не получится. Донаты будут работать.")
 		s.state.NotifyWarn(problem.Code, problem.Message)
+		s.log.Info("на канале нет баллов, награду не создаём",
+			"канал", user.Login, "тип_канала", user.Type)
 		s.state.UpdateTwitch(func(t *app.TwitchInfo) {
 			t.Note = problem.Message
 			t.NoteCode = string(problem.Code)
@@ -149,7 +151,11 @@ func (s *Server) startEventSub(ctx context.Context, rewardID string) {
 	events := twitch.NewEventSub(s.twitch)
 	events.OnRedemption = s.onRedemption
 	events.OnStatus = func(connected bool, detail string) {
-		s.state.SetConn("Twitch", connected, detail)
+		if connected {
+			s.state.SetConnOK("Twitch", detail)
+			return
+		}
+		s.state.SetConnFail("Twitch", detail)
 	}
 
 	go func() {
@@ -260,17 +266,19 @@ func (s *Server) syncTwitchInfo() {
 	info := s.state.Snapshot().Twitch
 	switch {
 	case !info.HasClientID:
-		s.state.SetConn("Twitch", false, "Не настроено")
+		s.state.SetConnIdle("Twitch", "Не настроено")
 	case !info.Connected:
-		s.state.SetConn("Twitch", false, "Не подключён")
+		s.state.SetConnIdle("Twitch", "Не подключён")
 	case user == nil:
-		s.state.SetConn("Twitch", false, "Вход есть, но связи не было")
+		s.state.SetConnFail("Twitch", "Вход есть, но связи не было")
 	case !info.HasPoints:
-		s.state.SetConn("Twitch", false, string(errs.TwitchNoAffiliate)+" · нет баллов")
+		// Не ошибка, а свойство канала: чинить нечего, красный цвет тут
+		// сказал бы «приложение сломалось», и человек бросил бы установку.
+		s.state.SetConnIdle("Twitch", user.Login+" · баллов на канале нет")
 	case !info.RewardReady:
-		s.state.SetConn("Twitch", false, user.Login+" · награда не создана")
+		s.state.SetConnFail("Twitch", user.Login+" · награда не создана")
 	default:
-		s.state.SetConn("Twitch", true, user.Login)
+		s.state.SetConnOK("Twitch", user.Login)
 	}
 }
 

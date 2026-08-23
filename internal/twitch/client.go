@@ -267,12 +267,12 @@ func apiError(statusCode int, data []byte) error {
 	json.Unmarshal(data, &e)
 
 	switch {
-	case statusCode == http.StatusForbidden && contains(e.Message, "partner or affiliate"):
-		return errs.New(errs.TwitchNoAffiliate,
-			"На канале нет баллов: они появляются только у аффилиатов и партнёров Twitch. Заказы за баллы работать не будут, донаты — будут.")
 	case statusCode == http.StatusForbidden:
+		// Twitch отвечает 403 и когда на канале нет баллов, и когда прав не
+		// хватает. Разбирать по тексту ненадёжно, поэтому текст для человека
+		// покрывает оба случая, а точную формулировку Twitch мы кладём в лог.
 		return errs.New(errs.TwitchNoAffiliate,
-			fmt.Sprintf("Twitch запретил это действие (%s).", firstNonEmpty(e.Message, "без объяснения")))
+			"Twitch не разрешил работать с наградами. Чаще всего это значит, что на канале нет баллов — они бывают только у аффилиатов и партнёров. Заказы за баллы работать не будут, донаты — будут.")
 	case statusCode == http.StatusBadRequest:
 		return errs.New(errs.TwitchBadResponse,
 			fmt.Sprintf("Twitch не принял запрос: %s", firstNonEmpty(e.Message, "без объяснения")))
