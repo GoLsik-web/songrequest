@@ -1,44 +1,87 @@
 /* Панель «Эфир».
-   Одна краска — кислотный лайм, цвет «в эфире»; больше на экране цветов нет,
-   кроме красного для поломок. Экран строится типографикой: то, что играет,
-   набрано так, что читается за долю секунды, а очередь намеренно мельче.
-   Главный сценарий — стример альт-табнулся из игры на две секунды. */
+   Одна краска — кислотный лайм, цвет «в эфире». Он означает ровно две вещи:
+   идёт эфир и «нажми сюда». Всё остальное — оттенки серого, плюс красный на
+   поломки. Экран строится типографикой; главный сценарий — стример
+   альт-табнулся из игры на две секунды, глянул и вернулся. */
 
 :root {
+  color-scheme: dark;
+
   --bg:      #08090a;
   --raise:   #101214;
   --line:    #1c1f22;
   --line-2:  #282c30;
   --text:    #f2f4f5;
-  --dim:     #858d94;
-  --dimmer:  #4d545a;
+  --dim:     #99a1a8;
+  /* Самый тусклый серый, которым ещё можно набирать текст: на фоне панели
+     это 4.4:1. Всё, что глуше, годится только линиям. */
+  --dimmer:  #6f777e;
+  --faint:   #3b4147;
   --lime:    #c8f751;
   --lime-lo: #4e5f22;
   --bad:     #ff4d4d;
   --ink:     #0d1204;
+  --hover:   rgba(255, 255, 255, .04);
+
+  /* Шкала отступов. Промежуточных значений нет специально: разнобой в
+     полпикселя не замечают осознанно, но он читается как неаккуратность. */
+  --s1:  4px;
+  --s2:  8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s7: 32px;
+  --edge: 40px;
+
+  /* Три кегля на всю мелкую типографику, три на крупную. */
+  --t-xs: 11px;
+  --t-sm: 13px;
+  --t-md: 15px;
+
+  /* Один трекинг для надзаголовков, один для чипов и кодов. */
+  --track-caps: .18em;
+  --track-chip: .06em;
+
+  --ease: cubic-bezier(.2, .7, .3, 1);
+  --fast: .14s;
+  --slow: .28s;
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
+  padding-bottom: var(--edge);
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.5 Manrope, system-ui, sans-serif;
+  font: var(--t-md)/1.5 Manrope, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, .display { font-family: Unbounded, Manrope, sans-serif; font-weight: 600; }
+/* Приложение молчит — показанное уже неправда, и это должно быть видно.
+   Гасим содержимое, но не строку внизу: там единственное сообщение, которое
+   в этот момент обязано читаться. */
+main, .status-bar, .panel { transition: opacity var(--slow) var(--ease); }
+body.stale main,
+body.stale .status-bar,
+body.stale .panel { opacity: .4; pointer-events: none; }
 
-button { font-family: inherit; }
+h1 { font-family: Unbounded, Manrope, sans-serif; font-weight: 600; }
+
+button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
+
+:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+::selection { background: var(--lime); color: var(--ink); }
+::placeholder { color: var(--faint); }
 
 /* ── Лента подключений ──────────────────────────────────────────────────
-   Пока всё хорошо — тонкая полоска, которую не замечаешь. Как только
-   что-то отвалилось, ячейка заливается красным на всю высоту: это видно
-   боковым зрением, читать не нужно. */
+   Пока всё исправно, она должна быть незаметной: никаких горящих точек в
+   ряд. Внимание привлекает только поломка — красной заливкой ячейки. */
 
 .status-bar {
   display: flex;
+  align-items: stretch;
   border-bottom: 1px solid var(--line);
   background: var(--raise);
   position: sticky;
@@ -46,306 +89,459 @@ button { font-family: inherit; }
   z-index: 5;
 }
 
+.conns { display: flex; flex: 1; min-width: 0; overflow: hidden; }
+
 .st {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 18px;
+  display: flex; align-items: center; gap: var(--s2);
+  padding: var(--s3) var(--s4);
   border-right: 1px solid var(--line);
   font-size: 12px;
-  color: var(--dim);
+  color: var(--dimmer);
   white-space: nowrap;
+  min-width: 0;
+  transition: background var(--slow) var(--ease), color var(--slow) var(--ease);
 }
-.st .led { width: 6px; height: 6px; border-radius: 50%; background: var(--dimmer); flex: none; }
-.st.on .led { background: var(--lime); box-shadow: 0 0 0 3px rgba(200, 247, 81, .14); }
-.st.on b { color: var(--text); font-weight: 500; }
-.st.off { background: var(--bad); color: #1a0000; font-weight: 700; }
-.st.off .led { background: #1a0000; box-shadow: none; }
-.st.idle { color: var(--dimmer); }
+.st b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+
+/* Засечка вместо кружка: она не светится и не притягивает взгляд. */
+.st .led {
+  width: 3px; height: 14px; border-radius: 1px;
+  background: var(--faint); flex: none;
+  transition: background var(--slow) var(--ease);
+}
+.st.on { color: var(--dim); }
+.st.on .led { background: var(--lime-lo); }
+.st.on b { color: var(--text); }
+
+/* Неисправность — единственное, что кричит. Вес не меняем: иначе ячейка
+   раздаётся вширь и соседние прыгают вбок. */
+.st.off { background: var(--bad); color: #1a0000; flex: none; }
+.st.off .led { background: #1a0000; }
+.st.off b { color: #1a0000; font-weight: 700; }
+
+/* Ненастроенное сжимаем: две колонки «Не настроено» не должны занимать
+   половину ленты. */
+.st.idle { color: var(--faint); min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.st.idle .led { background: transparent; width: 0; }
+
+.st:last-child { border-right: none; }
 
 .bar-tail {
-  margin-left: auto;
-  display: flex; align-items: center; gap: 14px;
-  padding: 0 18px;
-  font-size: 12px; color: var(--dimmer);
+  display: flex; align-items: center; gap: var(--s1);
+  padding: 0 var(--s3) 0 var(--s2);
   border-left: 1px solid var(--line);
-}
-.bar-tail b { color: var(--dim); font-weight: 500; }
-.bar-tail a { color: var(--dimmer); text-decoration: none; }
-.bar-tail a:hover { color: var(--lime); }
-
-/* ── Эфир ───────────────────────────────────────────────────────────── */
-
-.stage { padding: 32px 40px 28px; border-bottom: 1px solid var(--line); }
-
-.eyebrow {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 11px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase;
-  color: var(--lime);
-  margin-bottom: 18px;
-}
-.eyebrow .live { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); flex: none; }
-.eyebrow .sep { color: var(--dimmer); letter-spacing: 0; }
-.eyebrow .where { color: var(--dim); font-weight: 500; letter-spacing: .12em; }
-.eyebrow.quiet { color: var(--dimmer); }
-.eyebrow.quiet .live { background: var(--dimmer); }
-.eyebrow.alarm { color: var(--bad); }
-.eyebrow.alarm .live { background: var(--bad); }
-
-.stage-row { display: flex; gap: 28px; align-items: flex-start; }
-
-.art {
-  width: 118px; height: 118px; flex: none;
-  border: 1px solid var(--line-2); border-radius: 2px;
-  background: #14171a;
-  display: grid; place-items: center;
-  overflow: hidden;
-}
-.art img { width: 100%; height: 100%; object-fit: cover; }
-.art svg { width: 34px; height: 34px; color: #2c3136; }
-
-.headline {
-  font-family: Unbounded, sans-serif;
-  font-size: 40px; line-height: 1.05; font-weight: 600; letter-spacing: -.02em;
-  margin: 0 0 10px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.subhead { font-size: 20px; color: var(--dim); font-weight: 500; margin-bottom: 16px; }
-
-.credit { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--dim); }
-.credit b { color: var(--lime); font-weight: 700; }
-.credit svg { width: 15px; height: 15px; color: var(--dimmer); flex: none; }
-
-.meter { margin-top: 20px; display: flex; align-items: center; gap: 14px; }
-.meter .bar { flex: 1; height: 2px; background: var(--line-2); position: relative; }
-/* Единственная плавность на экране — движение полосы, и то потому,
-   что она показывает настоящее время. */
-.meter .bar i { position: absolute; inset: 0 auto 0 0; background: var(--lime); transition: width .9s linear; }
-.meter .t { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
-
-/* ── Кнопки ─────────────────────────────────────────────────────────── */
-
-.acts { display: flex; gap: 10px; margin-top: 26px; flex-wrap: wrap; }
-
-.act {
-  display: inline-flex; align-items: center; gap: 9px;
-  border: 1px solid var(--line-2); background: transparent; color: var(--text);
-  padding: 11px 18px; border-radius: 2px; cursor: pointer;
-  font: 600 13px/1 Manrope, sans-serif;
-}
-.act:hover:not(:disabled) { border-color: var(--dim); }
-.act:disabled { opacity: .4; cursor: default; }
-.act svg { width: 16px; height: 16px; }
-.act.key { background: var(--lime); border-color: var(--lime); color: var(--ink); }
-.act.key:hover:not(:disabled) { background: #d5ff6b; }
-.act.icon { padding: 11px 13px; color: var(--dim); }
-.act.small { padding: 8px 13px; font-size: 12px; }
-.act.risky:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
-
-/* ── Нижняя половина ────────────────────────────────────────────────── */
-
-.lower { display: grid; grid-template-columns: 1.55fr 1fr; align-items: start; }
-@media (max-width: 1000px) { .lower { grid-template-columns: 1fr; } }
-
-.queue { padding: 24px 40px 40px; border-right: 1px solid var(--line); }
-.side { padding: 24px 28px 40px; }
-
-.kicker {
-  font-size: 11px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase;
-  color: var(--dimmer);
-  margin-bottom: 14px;
-  display: flex; align-items: baseline; gap: 10px;
-}
-.kicker .cnt { color: var(--lime); }
-.kicker .rest { margin-left: auto; font-weight: 500; letter-spacing: .08em; }
-
-.rows { list-style: none; margin: 0; padding: 0; }
-.rows li {
-  display: grid; grid-template-columns: 30px 1fr auto 66px;
-  align-items: center; gap: 14px;
-  padding: 10px 0; border-bottom: 1px solid var(--line);
-}
-.rows .idx {
-  font-family: Unbounded, sans-serif; font-size: 13px; font-weight: 600;
-  color: var(--dimmer); font-variant-numeric: tabular-nums;
-}
-.rows li:first-child .idx { color: var(--lime); }
-.rows .body { min-width: 0; }
-.rows .ttl { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rows .sub { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 7px; margin-top: 2px; }
-.rows .sub svg { width: 12px; height: 12px; flex: none; }
-.rows .len { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
-
-/* Действия появляются при наведении, но остаются в один клик — без меню
-   и без подтверждений. Подтверждение только у опасного, см. .confirm. */
-.rows .tools { display: flex; gap: 6px; justify-content: flex-end; opacity: 0; }
-.rows li:hover .tools, .rows li:focus-within .tools { opacity: 1; }
-.rows .tools button {
-  background: none; border: none; color: var(--dimmer);
-  cursor: pointer; padding: 4px; display: grid; place-items: center;
-}
-.rows .tools button:hover { color: var(--text); }
-.rows .tools button.kill:hover { color: var(--bad); }
-.rows .tools svg { width: 15px; height: 15px; }
-
-.chip {
-  font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-  padding: 2px 6px; border-radius: 2px; flex: none;
-}
-.chip.money { background: var(--lime); color: var(--ink); }
-.chip.doubt { border: 1px solid var(--lime-lo); color: var(--lime); }
-
-/* Заказ приезжает коротким сдвигом — понятно, что список изменился,
-   без пульсаций и переливов. */
-@keyframes land {
-  from { transform: translateX(-6px); background: rgba(200, 247, 81, .10); }
-  to   { transform: none; background: transparent; }
-}
-.rows li.fresh { animation: land .5s ease-out; }
-
-/* ── Хроника ────────────────────────────────────────────────────────── */
-
-.feed { list-style: none; margin: 0; padding: 0; font-size: 13px; }
-.feed li { padding: 8px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; }
-.feed li:last-child { border: none; }
-.feed .when { color: var(--dimmer); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; padding-top: 2px; }
-.feed .fault { color: var(--bad); }
-.feed .fcode {
-  font-weight: 700; font-size: 11px; letter-spacing: .06em;
-  border: 1px solid rgba(255, 77, 77, .4); color: var(--bad);
-  padding: 0 4px; margin-right: 5px;
-}
-.feed .wcode {
-  font-weight: 700; font-size: 11px; letter-spacing: .06em;
-  border: 1px solid var(--lime-lo); color: var(--lime);
-  padding: 0 4px; margin-right: 5px;
+  flex: none;
 }
 
-/* ── Пустые состояния: их стример видит чаще всего ──────────────────── */
-
-.void { padding: 34px 0 26px; }
-.void .rule { width: 40px; height: 2px; background: var(--line-2); margin-bottom: 20px; }
-.void .mark {
-  font-family: Unbounded, sans-serif; font-size: 22px; font-weight: 600;
-  letter-spacing: -.01em; color: var(--dim); margin-bottom: 8px;
+.tail-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: none; cursor: pointer;
+  color: var(--dimmer); text-decoration: none;
+  font-size: 12px; padding: var(--s2); border-radius: 2px;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
 }
-.void .say { font-size: 14px; color: var(--dimmer); max-width: 420px; line-height: 1.6; }
-.void .say code { color: var(--dim); font-family: inherit; }
-.void.hot .rule { background: var(--bad); }
-.void.hot .mark { color: var(--bad); }
+.tail-btn:hover { color: var(--text); background: var(--hover); }
+.tail-btn:active { transform: translateY(1px); }
+.tail-btn.active { color: var(--lime); }
+.tail-btn svg { width: 14px; height: 14px; }
 
-/* ── Настройки ──────────────────────────────────────────────────────── */
-
-.panel { border-top: 1px solid var(--line); padding: 24px 40px 48px; }
-.panel[hidden] { display: none; }
-
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 26px 34px; }
-
-.field { display: block; margin-bottom: 16px; }
-.field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: 6px; }
-.field input[type="text"], .field select {
-  width: 100%;
-  background: var(--raise); border: 1px solid var(--line-2); border-radius: 2px;
-  color: var(--text); padding: 9px 11px; font: inherit; font-size: 13px;
+.ver {
+  font-size: var(--t-xs); color: var(--dimmer);
+  padding-left: var(--s2); font-variant-numeric: tabular-nums;
 }
-.field input:focus, .field select:focus { outline: none; border-color: var(--lime); }
-.field .hint { font-size: 12px; color: var(--dimmer); margin-top: 6px; }
-.field .hint.warn { color: var(--bad); }
-
-/* Режимы возврата — не выпадашка, а три строки: стример читает их целиком
-   и выбирает осознанно, потому что настройка редкая и важная. */
-.modes { display: flex; flex-direction: column; gap: 2px; }
-.mode {
-  display: flex; gap: 11px; align-items: flex-start;
-  padding: 11px 13px; border: 1px solid var(--line); border-radius: 2px;
-  cursor: pointer;
-}
-.mode:hover { border-color: var(--line-2); }
-.mode input { margin: 3px 0 0; accent-color: var(--lime); flex: none; }
-.mode.sel { border-color: var(--lime); background: rgba(200, 247, 81, .05); }
-.mode .name { font-size: 13px; font-weight: 600; }
-.mode .why { font-size: 12px; color: var(--dimmer); margin-top: 2px; }
-.mode.broken { border-color: var(--bad); }
-.mode.broken .why { color: var(--bad); }
-
-.check { display: flex; align-items: center; gap: 9px; font-size: 13px; cursor: pointer; margin-bottom: 8px; }
-.check input { accent-color: var(--lime); width: 15px; height: 15px; }
-
-/* ── Подтверждение опасного ─────────────────────────────────────────── */
-
-.confirm {
-  display: inline-flex; align-items: center; gap: 8px;
-  border: 1px solid var(--bad); border-radius: 2px; padding: 6px 8px 6px 12px;
-  font-size: 12px; color: var(--bad);
-}
-.confirm button { background: none; border: none; cursor: pointer; font: 600 12px/1 Manrope, sans-serif; padding: 5px 9px; }
-.confirm .yes { background: var(--bad); color: #1a0000; border-radius: 2px; }
-.confirm .no { color: var(--dim); }
-
-/* ── Низ окна ───────────────────────────────────────────────────────── */
-
-footer {
-  position: fixed; left: 0; right: 0; bottom: 0;
-  padding: 7px 40px; font-size: 12px;
-  background: var(--raise); border-top: 1px solid var(--line);
-  display: flex; gap: 12px; align-items: center;
-}
-footer.offline { color: var(--bad); }
-footer.online { color: var(--dimmer); }
-body { padding-bottom: 34px; }
-
-/* Карточка аккаунта: стример должен с одного взгляда видеть, каким аккаунтом
-   вошёл. Половина «у меня не работает» — это вход не тем аккаунтом. */
-.account {
-  margin-top: 14px;
-  border: 1px solid var(--line-2);
-  border-left-width: 3px;
-  border-radius: 2px;
-  padding: 11px 13px;
-}
-.account.ok { border-left-color: var(--lime); }
-.account.iffy { border-left-color: var(--dim); }
-.account.bad { border-left-color: var(--bad); }
-
-.account .who { font-weight: 600; font-size: 14px; }
-.account .mail { font-size: 12px; color: var(--dim); margin-top: 1px; }
-.account .plan { font-size: 12px; color: var(--dimmer); margin-top: 5px; }
-.account.ok .plan { color: var(--lime); }
-.account.bad .plan { color: var(--bad); }
-.account .note {
-  font-size: 12px; color: var(--dim); line-height: 1.5;
-  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
-}
-.account .note b { color: var(--text); font-weight: 700; letter-spacing: .04em; }
-.account.bad .note b { color: var(--bad); }
 
 /* ── Код для входа в Twitch ─────────────────────────────────────────────
-   Пока код не введён, работать нечем, поэтому он занимает всю ширину и
-   набран так, чтобы прочитать его с телефона в вытянутой руке. */
+   Пока код не введён, работать нечем: он занимает всю ширину и набран так,
+   чтобы прочитать его с телефона в вытянутой руке. */
 
 #banner {
-  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
-  padding: 18px 40px;
+  display: flex; align-items: center; gap: var(--s6); flex-wrap: wrap;
+  padding: var(--s5) var(--edge);
   background: var(--lime); color: var(--ink);
-  border-bottom: 1px solid var(--line);
+  animation: drop var(--slow) var(--ease);
 }
-#banner .what { font-size: 13px; font-weight: 700; line-height: 1.45; max-width: 420px; }
+/* Без этого правила display:flex перебивает атрибут hidden, и под шапкой
+   постоянно висит пустая лаймовая полоса. */
+#banner[hidden] { display: none; }
+
+#banner .what { font-size: var(--t-sm); font-weight: 700; line-height: 1.45; max-width: 420px; }
 #banner .what a { color: var(--ink); }
 #banner .code {
   font-family: Unbounded, monospace;
   font-size: 34px; font-weight: 700; letter-spacing: .22em;
   user-select: all;
 }
-#banner .left { margin-left: auto; font-size: 12px; font-weight: 700; opacity: .7; }
+#banner .left { margin-left: auto; font-size: 12px; font-weight: 700; opacity: .75; }
+/* Лаймовый фокус на лаймовом фоне не виден. */
+#banner :focus-visible { outline-color: var(--ink); }
+#banner ::selection { background: var(--ink); color: var(--lime); }
 
-/* ── Заказы за баллы ────────────────────────────────────────────────── */
-
-.deal { display: flex; gap: 8px; }
-.deal button {
-  background: none; border: 1px solid var(--line-2); color: var(--dim);
-  border-radius: 2px; padding: 4px 9px; font: 600 11px/1.6 Manrope, sans-serif; cursor: pointer;
+@keyframes drop {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: none; }
 }
-.deal button:hover { color: var(--text); border-color: var(--dim); }
-.deal button.kill:hover { color: var(--bad); border-color: var(--bad); }
-.deal button:disabled { opacity: .35; cursor: default; }
 
-.done { font-size: 11px; color: var(--dimmer); font-weight: 700; letter-spacing: .06em; }
-.done.paid { color: var(--lime); }
+/* ── Эфир ───────────────────────────────────────────────────────────── */
+
+.stage {
+  padding: var(--s7) var(--edge) var(--s6);
+  border-bottom: 1px solid var(--line);
+  animation: appear var(--slow) var(--ease);
+}
+
+@keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+
+.eyebrow {
+  display: flex; align-items: center; gap: var(--s2);
+  font-size: var(--t-xs); font-weight: 700;
+  letter-spacing: var(--track-caps); text-transform: uppercase;
+  color: var(--lime);
+  margin-bottom: var(--s4);
+}
+.eyebrow .live { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); flex: none; }
+.eyebrow .sep { color: var(--faint); letter-spacing: 0; }
+.eyebrow .where { color: var(--dim); font-weight: 500; letter-spacing: var(--track-chip); }
+.eyebrow.quiet { color: var(--dimmer); }
+.eyebrow.quiet .live { background: var(--faint); }
+.eyebrow.alarm { color: var(--bad); }
+.eyebrow.alarm .live { background: var(--bad); }
+
+.stage-row { display: flex; gap: var(--s6); align-items: flex-start; }
+.stage-text { min-width: 0; flex: 1; }
+
+.art {
+  width: 120px; height: 120px; flex: none;
+  border: 1px solid var(--line-2); border-radius: 2px;
+  background: var(--raise);
+  display: grid; place-items: center;
+  overflow: hidden;
+}
+.art img { width: 100%; height: 100%; object-fit: cover; }
+.art svg { width: 34px; height: 34px; color: var(--faint); }
+
+/* Unbounded широкий, и длинные названия с «(feat. …)» обрезались бы почти
+   всегда — то есть самый важный элемент экрана не влезал бы систематически.
+   Поэтому кегль подвижный, а строк две. */
+.headline {
+  font-size: clamp(28px, 3.2vw, 40px);
+  line-height: 1.08; letter-spacing: -.02em;
+  margin: 0 0 var(--s2);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.subhead {
+  font-size: 20px; color: var(--dim); font-weight: 500; margin-bottom: var(--s4);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.credit { display: flex; align-items: center; gap: var(--s2); font-size: var(--t-sm); color: var(--dim); }
+.credit b { color: var(--text); font-weight: 700; }
+.credit svg { width: 15px; height: 15px; color: var(--dimmer); flex: none; }
+
+.meter { margin-top: var(--s5); display: flex; align-items: center; gap: var(--s3); }
+.meter .bar { flex: 1; height: 2px; background: var(--line-2); position: relative; }
+/* Единственная плавность, отражающая настоящее время. */
+.meter .bar i { position: absolute; inset: 0 auto 0 0; background: var(--lime); transition: width .9s linear; }
+.meter .t { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* Куда вернётся музыка — это стример читает перед тем, как пустить заказы. */
+.recall {
+  margin-top: var(--s5);
+  border-left: 2px solid var(--lime-lo);
+  padding: 2px 0 2px var(--s3);
+  max-width: 560px;
+}
+.recall .label {
+  display: block;
+  font-size: var(--t-xs); font-weight: 700;
+  letter-spacing: var(--track-caps); text-transform: uppercase;
+  color: var(--dimmer); margin-bottom: var(--s1);
+}
+.recall .what { display: block; font-size: var(--t-sm); color: var(--text); }
+.recall .when { display: block; font-size: 12px; color: var(--dimmer); margin-top: 2px; }
+
+/* ── Кнопки ─────────────────────────────────────────────────────────── */
+
+.acts { display: flex; gap: var(--s2); margin-top: var(--s6); flex-wrap: wrap; align-items: center; }
+
+.act {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  border: 1px solid var(--line-2); background: transparent; color: var(--text);
+  padding: var(--s3) var(--s4); border-radius: 2px; cursor: pointer;
+  font: 600 var(--t-sm)/1 Manrope, system-ui, sans-serif;
+  text-decoration: none;
+  transition: border-color var(--fast) var(--ease),
+              background var(--fast) var(--ease),
+              color var(--fast) var(--ease),
+              transform var(--fast) var(--ease);
+}
+.act:hover { border-color: var(--dim); background: var(--hover); }
+.act:active { transform: translateY(1px); }
+.act svg { width: 16px; height: 16px; }
+
+.act.key { background: var(--lime); border-color: var(--lime); color: var(--ink); }
+.act.key:hover { background: #d5ff6b; border-color: #d5ff6b; }
+
+.act.small { padding: var(--s2) var(--s3); font-size: 12px; }
+.act.small svg { width: 14px; height: 14px; }
+
+.act.risky:hover { border-color: var(--bad); color: var(--bad); background: rgba(255, 77, 77, .06); }
+
+/* Пока запрос в пути — кнопка недоступна и с мыши, и с клавиатуры. */
+.act[disabled] { opacity: .45; pointer-events: none; }
+
+/* ── Нижняя половина ────────────────────────────────────────────────── */
+
+.lower {
+  display: grid;
+  /* Хроника заметно уже заказов: она справочная, а не рабочая. */
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 1000px) { .lower { grid-template-columns: 1fr; } }
+
+.orders { padding: var(--s6) var(--edge) var(--edge); border-right: 1px solid var(--line); min-width: 0; }
+.side { padding: var(--s6) var(--edge) var(--edge); min-width: 0; }
+@media (max-width: 1000px) {
+  .orders { border-right: none; border-bottom: 1px solid var(--line); }
+}
+
+.kicker {
+  font-size: var(--t-xs); font-weight: 700;
+  letter-spacing: var(--track-caps); text-transform: uppercase;
+  color: var(--dimmer);
+  margin-bottom: var(--s3);
+  display: flex; align-items: center; gap: var(--s2);
+}
+.kicker .cnt {
+  color: var(--ink); background: var(--lime);
+  border-radius: 2px; padding: 1px 6px;
+  font-size: var(--t-xs); letter-spacing: var(--track-chip);
+  font-variant-numeric: tabular-nums;
+  transition: background var(--slow) var(--ease), color var(--slow) var(--ease);
+}
+.kicker .cnt.zero { background: var(--line-2); color: var(--dim); }
+
+/* ── Список заказов ─────────────────────────────────────────────────── */
+
+.rows { list-style: none; margin: 0; padding: 0; }
+.rows li {
+  display: grid; grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center; gap: var(--s3);
+  padding: var(--s3) 0; border-bottom: 1px solid var(--line);
+}
+.rows li:last-child { border-bottom: none; }
+
+.rows .idx {
+  font-family: Unbounded, sans-serif; font-size: var(--t-sm); font-weight: 600;
+  color: var(--faint); font-variant-numeric: tabular-nums;
+}
+.rows li:first-child .idx { color: var(--dim); }
+.rows .body { min-width: 0; }
+.rows .ttl {
+  display: block; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rows .sub {
+  display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+  font-size: 12px; color: var(--dimmer); margin-top: var(--s1);
+}
+
+/* Кнопки заказа приглушены, но читаемы: при взгляде на две секунды они
+   должны быть видны, а не проявляться только под курсором. */
+.rows .deal { display: flex; gap: var(--s1); opacity: .7; transition: opacity var(--fast) var(--ease); }
+.rows li:hover .deal, .rows li:focus-within .deal { opacity: 1; }
+
+/* Цена — служебное. Лайм тут перебивал бы названия треков, ради которых
+   в список и смотрят. */
+.chip {
+  font-size: 12px; flex: none;
+  color: var(--text); font-variant-numeric: tabular-nums;
+}
+.chip::after { content: ""; }
+
+.done { font-size: var(--t-xs); color: var(--dimmer); font-weight: 700; letter-spacing: var(--track-chip); }
+
+.muted { color: var(--dimmer); }
+
+/* Заказ приезжает коротким сдвигом — видно, что список изменился,
+   без пульсаций и переливов. */
+@keyframes land {
+  from { transform: translateX(-6px); background: rgba(200, 247, 81, .10); }
+  to   { transform: none; background: transparent; }
+}
+.rows li.fresh { animation: land var(--slow) var(--ease); }
+
+/* ── Хроника ────────────────────────────────────────────────────────── */
+
+.feed { list-style: none; margin: 0; padding: 0; font-size: var(--t-sm); }
+.feed li {
+  display: flex; gap: var(--s2);
+  padding: var(--s2) 0; border-bottom: 1px solid var(--line);
+  color: var(--dimmer);
+}
+.feed li:last-child { border-bottom: none; }
+.feed .when {
+  color: var(--faint); font-size: var(--t-xs); flex: none;
+  padding-top: 2px; font-variant-numeric: tabular-nums;
+}
+.feed .what { min-width: 0; overflow-wrap: anywhere; }
+.feed .lvl-error .what { color: var(--bad); }
+.feed .lvl-warn .what { color: var(--dim); }
+
+.feed .fcode, .feed .wcode {
+  font-weight: 700; font-size: var(--t-xs); letter-spacing: var(--track-chip);
+  padding: 0 4px; margin-right: var(--s1); white-space: nowrap;
+}
+.feed .fcode { color: var(--bad); border: 1px solid rgba(255, 77, 77, .4); }
+/* Предупреждение — не «хорошо», поэтому не лаймом. */
+.feed .wcode { color: var(--dim); border: 1px solid var(--line-2); }
+
+/* Повторы схлопнуты в счётчик: пять одинаковых строк подряд — это шум. */
+.feed .times {
+  margin-left: var(--s1); font-size: var(--t-xs); font-weight: 700;
+  color: var(--faint); font-variant-numeric: tabular-nums;
+}
+
+.more {
+  margin-top: var(--s2);
+  background: none; border: none; cursor: pointer;
+  color: var(--dimmer); font: 600 12px/1 Manrope, system-ui, sans-serif;
+  padding: var(--s2) 0;
+  transition: color var(--fast) var(--ease);
+}
+.more:hover { color: var(--text); }
+.more:active { transform: translateY(1px); }
+
+/* ── Пустые состояния ───────────────────────────────────────────────────
+   Их стример видит почти всё время, поэтому иерархия должна работать и
+   здесь: в эфире — крупно и в полную яркость, в служебных колонках — мельче
+   и приглушённо. */
+
+.void { padding: var(--s7) 0 var(--s6); }
+.void .rule { width: 40px; height: 2px; background: var(--line-2); margin-bottom: var(--s5); }
+.void .mark {
+  font-family: Unbounded, sans-serif; font-weight: 600; letter-spacing: -.01em;
+  font-size: 18px; color: var(--dim); margin-bottom: var(--s2);
+}
+.void .say { font-size: var(--t-sm); color: var(--dimmer); max-width: 460px; line-height: 1.6; }
+
+.stage .void { padding-top: var(--s5); }
+.stage .void .mark { font-size: 30px; color: var(--text); }
+.stage .void .say { font-size: var(--t-md); }
+
+.void.hot .rule { background: var(--bad); }
+.void.hot .mark { color: var(--bad); }
+
+/* ── Настройки ──────────────────────────────────────────────────────── */
+
+.panel {
+  border-top: 1px solid var(--line);
+  background: var(--raise);
+  padding: var(--s7) var(--edge) var(--edge);
+  animation: unfold var(--slow) var(--ease);
+}
+.panel[hidden] { display: none; }
+
+@keyframes unfold {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  gap: var(--s7);
+  align-items: start;
+}
+.col { min-width: 0; }
+
+.field { display: block; margin-bottom: var(--s3); }
+.field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: var(--s1); }
+.field input[type="text"], .field select {
+  width: 100%;
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: 2px;
+  color: var(--text); padding: var(--s2) var(--s3); font: inherit; font-size: var(--t-sm);
+  transition: border-color var(--fast) var(--ease);
+}
+.field input:hover, .field select:hover { border-color: var(--dim); }
+.field input:focus, .field select:focus { outline: none; border-color: var(--lime); }
+
+.hint { font-size: 12px; color: var(--dimmer); margin-top: var(--s2); line-height: 1.5; }
+.hint.warn { color: var(--bad); }
+.hint:empty { display: none; }
+
+/* Режимы возврата — не выпадашка, а три строки: настройка редкая и важная,
+   её читают один раз целиком и выбирают осознанно. */
+.modes { display: flex; flex-direction: column; gap: var(--s1); margin-bottom: var(--s3); }
+.mode {
+  display: flex; gap: var(--s3); align-items: flex-start;
+  padding: var(--s3); border: 1px solid var(--line); border-radius: 2px;
+  cursor: pointer;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.mode:hover { border-color: var(--line-2); background: var(--hover); }
+.mode:focus-within { border-color: var(--dim); }
+.mode input { margin: 3px 0 0; accent-color: var(--lime); flex: none; }
+.mode.sel { border-color: var(--lime); background: rgba(200, 247, 81, .05); }
+.mode .name { display: block; font-size: var(--t-sm); font-weight: 600; }
+.mode .why { display: block; font-size: 12px; color: var(--dimmer); margin-top: 3px; line-height: 1.45; }
+.mode.broken { border-color: var(--bad); }
+.mode.broken .why { color: var(--bad); }
+
+.check {
+  display: flex; align-items: center; gap: var(--s2);
+  font-size: var(--t-sm); cursor: pointer; margin-bottom: var(--s2);
+  width: fit-content;
+  transition: color var(--fast) var(--ease);
+}
+.check:hover { color: var(--lime); }
+.check input { accent-color: var(--lime); width: 15px; height: 15px; }
+
+/* Карточка аккаунта: половина «у меня не работает» — это вход не тем
+   аккаунтом, и увидеть это надо с одного взгляда. */
+.account {
+  margin-top: var(--s3);
+  border: 1px solid var(--line-2);
+  border-left-width: 3px;
+  border-radius: 2px;
+  padding: var(--s3);
+  transition: border-color var(--slow) var(--ease);
+}
+.account.ok { border-left-color: var(--lime); }
+.account.iffy { border-left-color: var(--dim); }
+.account.bad { border-left-color: var(--bad); }
+
+.account .who { font-weight: 600; font-size: var(--t-md); overflow-wrap: anywhere; }
+.account .mail { font-size: 12px; color: var(--dim); margin-top: 1px; overflow-wrap: anywhere; }
+.account .plan { font-size: 12px; color: var(--dimmer); margin-top: var(--s1); }
+.account.ok .plan { color: var(--lime); }
+.account.bad .plan { color: var(--bad); }
+.account .note {
+  font-size: 12px; color: var(--dim); line-height: 1.5;
+  margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--line);
+}
+.account .note b { color: var(--text); font-weight: 700; letter-spacing: var(--track-chip); }
+.account.bad .note b { color: var(--bad); }
+
+/* ── Низ окна ───────────────────────────────────────────────────────── */
+
+footer {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  padding: var(--s2) var(--edge);
+  font-size: 12px;
+  background: var(--raise); border-top: 1px solid var(--line);
+  transition: color var(--fast) var(--ease);
+  z-index: 6;
+}
+footer.offline { color: var(--bad); }
+footer.online { color: var(--dimmer); }
+
+/* Кому анимации мешают — их не будет. Прогресс-полоса и так показывает
+   время, а остальное здесь помогает заметить изменение, не более. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    transition-duration: .001ms !important;
+  }
+}

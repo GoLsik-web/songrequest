@@ -122,8 +122,17 @@ type RedemptionView struct {
 	Text     string    `json:"text"`
 	Cost     int       `json:"cost"`
 	At       time.Time `json:"at"`
-	Status   string    `json:"status"` // новый | баллы возвращены | выполнен
+	// Status — код, а не готовая фраза: панель сравнивает состояние заказа с
+	// ним, и переписанная формулировка не должна молча ломать эту проверку.
+	Status string `json:"status"` // new | refunded | fulfilled
 }
+
+// Состояния заказа.
+const (
+	OrderNew       = "new"
+	OrderRefunded  = "refunded"
+	OrderFulfilled = "fulfilled"
+)
 
 // Snapshot — вся картинка целиком, ровно то, что уходит в панель одним JSON.
 type Snapshot struct {

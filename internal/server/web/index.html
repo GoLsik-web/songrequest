@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Заказ музыки</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/fonts/fonts.css">
 <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -13,65 +14,79 @@
      Chrome не поддерживает, поэтому спрайт живёт прямо в странице. -->
 <div id="sprite" hidden></div>
 
-<div class="status-bar" id="bar"></div>
+<header class="status-bar">
+  <div class="conns" id="conns"></div>
+  <div class="bar-tail">
+    <button class="tail-btn" id="settings-toggle" aria-expanded="false">
+      <svg aria-hidden="true"><use href="#i-settings"></use></svg>
+      настройки
+    </button>
+    <a class="tail-btn" href="/widget" target="_blank" rel="noopener">виджет</a>
+    <span class="ver" id="version"></span>
+  </div>
+</header>
 
 <!-- Код для входа в Twitch: пока он не введён, это самое важное на экране. -->
 <div id="banner" hidden></div>
 
-<section class="stage" id="stage"></section>
+<main>
+  <section class="stage" id="stage"></section>
 
-<div class="lower">
-  <section class="queue">
-    <div class="kicker">
-      Очередь <span class="cnt" id="q-count">0</span>
-      <span class="rest" id="q-rest"></span>
-    </div>
-    <div id="queue"></div>
-  </section>
+  <div class="lower">
+    <section class="orders">
+      <div class="kicker">
+        Заказы за баллы <span class="cnt zero" id="orders-count">0</span>
+      </div>
+      <div id="orders"></div>
+    </section>
 
-  <aside class="side">
-    <div class="kicker">Хроника</div>
-    <ul class="feed" id="feed"></ul>
-  </aside>
-</div>
+    <aside class="side">
+      <div class="kicker">Хроника</div>
+      <ul class="feed" id="feed"></ul>
+      <button class="more" id="feed-more" hidden></button>
+    </aside>
+  </div>
+</main>
 
 <section class="panel" id="settings" hidden>
-  <div class="kicker">Настройки</div>
-
   <div class="grid">
-    <div>
+
+    <div class="col">
+      <div class="kicker">Spotify</div>
       <label class="field">
-        <span>Client ID Spotify — из инструкции, шаг 3</span>
+        <span>Client ID — из инструкции, шаг 3</span>
         <input type="text" id="client-id" spellcheck="false" autocomplete="off"
                placeholder="набор букв и цифр">
       </label>
-      <div class="acts" style="margin-top:0">
+      <div class="acts">
         <button class="act small" id="save-id">Сохранить</button>
-        <button class="act small key" id="login">Подключить Spotify</button>
-        <button class="act small risky" id="logout">Отключить</button>
+        <button class="act small key" data-do="login">Подключить Spotify</button>
+        <button class="act small" data-do="check">Проверить связь</button>
+        <button class="act small risky" data-do="logout">Отключить</button>
       </div>
-
       <div class="account" id="account"></div>
-      <div class="hint" id="redirect" style="font-size:12px;color:var(--dimmer);margin-top:10px"></div>
+      <div class="hint" id="redirect"></div>
     </div>
 
-    <div>
+    <div class="col">
+      <div class="kicker">Twitch</div>
       <label class="field">
-        <span>Client ID Twitch — из инструкции по Twitch</span>
+        <span>Client ID — из инструкции по Twitch, шаг 3</span>
         <input type="text" id="twitch-id" spellcheck="false" autocomplete="off"
                placeholder="набор букв и цифр">
       </label>
-      <div class="acts" style="margin-top:0">
+      <div class="acts">
         <button class="act small" id="save-twitch-id">Сохранить</button>
-        <button class="act small key" id="twitch-login">Подключить Twitch</button>
-        <button class="act small risky" id="twitch-logout">Отключить</button>
+        <button class="act small key" data-do="twitch-login">Подключить Twitch</button>
+        <button class="act small risky" data-do="twitch-logout">Отключить</button>
       </div>
       <div class="account" id="twitch-account"></div>
     </div>
 
-    <div>
-      <span class="field" style="margin-bottom:8px"><span>Если вернуть музыку на место не вышло</span></span>
-      <div class="modes" id="modes">
+    <div class="col">
+      <div class="kicker">Запасной вариант</div>
+      <div class="hint" style="margin-top:0">Что включить, если вернуть музыку на место не вышло.</div>
+      <div class="modes">
         <label class="mode">
           <input type="radio" name="resume" value="nothing">
           <span>
@@ -90,32 +105,37 @@
           <input type="radio" name="resume" value="radio">
           <span>
             <span class="name">Включить музыку последнего артиста</span>
-            <span class="why">Ближе всего к тому, что играло. Настоящее радио Spotify через API недоступно, поэтому берём популярные треки этого артиста.</span>
+            <span class="why">Ближе всего к тому, что играло. Настоящее радио Spotify через
+              API недоступно, поэтому берём популярные треки этого артиста.</span>
           </span>
         </label>
       </div>
 
-      <label class="field" style="margin-top:14px">
+      <label class="field">
         <span>Запасной плейлист</span>
         <select id="playlist"><option value="">— не выбран —</option></select>
-        <span class="hint" id="playlist-hint"></span>
       </label>
+      <div class="hint" id="playlist-hint"></div>
     </div>
 
-    <div>
-      <span class="field" style="margin-bottom:8px"><span>Диагностика</span></span>
+    <div class="col">
+      <div class="kicker">Диагностика</div>
       <label class="check">
         <input type="checkbox" id="debug-log">
         Подробный лог
       </label>
-      <div class="hint" style="font-size:12px;color:var(--dimmer);margin-bottom:12px">
-        Включи, повтори то, что не работало, и выгрузи лог. Ключи доступа
-        и Client ID из архива вырезаются.
+      <div class="hint">
+        Включи, повтори то, что не работало, и выгрузи лог. Ключи доступа,
+        Client ID и почта из архива вырезаются.
       </div>
-      <div class="acts" style="margin-top:0">
-        <a class="act small" id="diag" href="/api/diag/export">Выгрузить лог</a>
+      <div class="acts">
+        <a class="act small" href="/api/diag/export">
+          <svg aria-hidden="true"><use href="#i-download"></use></svg>
+          Выгрузить лог
+        </a>
       </div>
     </div>
+
   </div>
 </section>
 

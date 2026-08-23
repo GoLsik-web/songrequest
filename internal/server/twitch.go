@@ -178,7 +178,7 @@ func (s *Server) onRedemption(r twitch.Redemption) {
 		Text:     r.UserInput,
 		Cost:     r.RewardCost,
 		At:       r.RedeemedAt,
-		Status:   "новый",
+		Status:   app.OrderNew,
 	})
 	s.state.Notify("info", "Заказ от "+r.UserName+": "+r.UserInput)
 }
@@ -208,9 +208,9 @@ func (s *Server) handleRedemptionAction(w http.ResponseWriter, r *http.Request) 
 	var status string
 	switch action {
 	case "refund":
-		err, status = s.twitch.RefundRedemption(ctx, rewardID, id), "баллы возвращены"
+		err, status = s.twitch.RefundRedemption(ctx, rewardID, id), app.OrderRefunded
 	case "fulfill":
-		err, status = s.twitch.FulfillRedemption(ctx, rewardID, id), "выполнен"
+		err, status = s.twitch.FulfillRedemption(ctx, rewardID, id), app.OrderFulfilled
 	default:
 		s.fail(w, errs.New(errs.TwitchRefund, "Непонятное действие с заказом."))
 		return
@@ -223,7 +223,11 @@ func (s *Server) handleRedemptionAction(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.state.SetRedemptionStatus(id, status)
-	s.state.Notify("info", "Заказ: "+status)
+	if status == app.OrderRefunded {
+		s.state.Notify("info", "Баллы за заказ возвращены")
+	} else {
+		s.state.Notify("info", "Заказ принят, баллы не возвращаются")
+	}
 	writeJSON(w, map[string]string{"status": status})
 }
 
