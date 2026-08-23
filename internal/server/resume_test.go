@@ -13,6 +13,7 @@ import (
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/logx"
+	"songrequest/internal/match"
 	"songrequest/internal/spotify"
 	"songrequest/internal/store"
 	"songrequest/internal/twitch"
@@ -99,13 +100,14 @@ func newTestServer(t *testing.T, tune func(*config.Config), handler http.Handler
 	t.Cleanup(func() { db.Close() })
 
 	srv := &Server{
-		state:   app.New("тест"),
-		cfg:     cfg,
-		log:     log,
-		spotify: spotify.NewForTest(cfg, log, keys, api.URL),
-		twitch:  twitch.NewForTest(cfg, log, keys, api.URL),
-		db:      db,
-		dataDir: dir,
+		state:      app.New("тест"),
+		cfg:        cfg,
+		log:        log,
+		spotify:    spotify.NewForTest(cfg, log, keys, api.URL),
+		twitch:     twitch.NewForTest(cfg, log, keys, api.URL),
+		db:         db,
+		matchCache: match.NewCache(db.SQL()),
+		dataDir:    dir,
 	}
 	return srv, &calls
 }

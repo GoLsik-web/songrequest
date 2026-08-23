@@ -179,8 +179,13 @@ func (s *Server) onRedemption(r twitch.Redemption) {
 		Cost:     r.RewardCost,
 		At:       r.RedeemedAt,
 		Status:   app.OrderNew,
+		Match:    app.OrderMatch{State: app.MatchSearching},
 	})
 	s.state.Notify("info", "Заказ от "+r.UserName+": "+r.UserInput)
+
+	// Подбор идёт в фоне: EventSub ждать нельзя, иначе следующие заказы
+	// встанут в очередь за этим.
+	go s.resolveOrder(s.baseContext(), r)
 }
 
 // handleRedemptionAction возвращает баллы или отмечает заказ выполненным.
