@@ -209,7 +209,11 @@ type RestoreOutcome struct {
 // playedURI — трек, который мы играли своим заказом. Он нужен, чтобы понять,
 // не переключил ли стример музыку руками: если сейчас играет что-то третье,
 // снимок протух и лезть в чужое воспроизведение нельзя.
-func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string) (RestoreOutcome, error) {
+//
+// force снимает эту защиту. Она нужна, когда приложение возвращает музыку
+// само, после очереди. Но если стример нажал «Вернуть как было» руками, он
+// уже сказал, чего хочет, — спорить с ним не о чем.
+func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, force bool) (RestoreOutcome, error) {
 	if snap == nil || snap.Empty {
 		return RestoreOutcome{
 			Code:    errs.SpotifyNothing,
@@ -222,7 +226,7 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string) 
 		c.log.Warn("не прочитал состояние перед возвратом", "ошибка", err)
 	}
 
-	if playing && current != nil && current.Item != nil && IsStale(snap, current.Item.URI, playedURI) {
+	if !force && playing && current != nil && current.Item != nil && IsStale(snap, current.Item.URI, playedURI) {
 		c.log.Info("снимок протух: музыку переключили руками",
 			"сейчас_играет", current.Item.Name, "ожидали", playedURI)
 		return RestoreOutcome{
