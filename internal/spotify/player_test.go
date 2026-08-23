@@ -130,12 +130,25 @@ func TestBuildPlayBody(t *testing.T) {
 			wantLost: true,
 		},
 		{
-			name: "без контекста играем один трек и ничего не теряем",
+			// Источника не было вовсе — вернём трек, но после него наступит
+			// тишина, поэтому продолжение всё равно надо досыпать.
+			name: "без источника играем один трек, продолжать нечем",
 			snap: Snapshot{
 				TrackURI:   "spotify:track:11dFghVXANMlKmJXsNCbNl",
 				PositionMs: 1000,
 			},
 			wantURIs: []string{"spotify:track:11dFghVXANMlKmJXsNCbNl"},
+			wantLost: true,
+		},
+		{
+			name: "любимые треки тоже не возвращаются источником",
+			snap: Snapshot{
+				ContextURI: "spotify:user:someone:collection",
+				TrackURI:   "spotify:track:11dFghVXANMlKmJXsNCbNl",
+				PositionMs: 2000,
+			},
+			wantURIs: []string{"spotify:track:11dFghVXANMlKmJXsNCbNl"},
+			wantLost: true,
 		},
 	}
 

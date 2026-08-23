@@ -67,6 +67,10 @@ type Notice struct {
 	Code  string    `json:"code"`
 	Text  string    `json:"text"`
 	At    time.Time `json:"at"`
+	// Count — сколько раз подряд повторилось одно и то же. Нажатие кнопки,
+	// которое пять раз отвечает одинаково, должно быть одной строкой со
+	// счётчиком, а не пятью: иначе хроника забивается и в ней тонет важное.
+	Count int `json:"count"`
 }
 
 // SpotifyInfo — состояние Spotify для панели.
@@ -324,7 +328,21 @@ func (s *State) Notify(level, text string) {
 func (s *State) NotifyCode(level, code, text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.notices = append(s.notices, Notice{Level: level, Code: code, Text: text, At: time.Now()})
+
+	// Повтор последнего сообщения не плодит строки, а увеличивает счётчик.
+	if n := len(s.notices); n > 0 {
+		last := &s.notices[n-1]
+		if last.Text == text && last.Code == code && last.Level == level {
+			last.Count++
+			last.At = time.Now()
+			s.notify()
+			return
+		}
+	}
+
+	s.notices = append(s.notices, Notice{
+		Level: level, Code: code, Text: text, At: time.Now(), Count: 1,
+	})
 	if len(s.notices) > maxNotices {
 		s.notices = s.notices[len(s.notices)-maxNotices:]
 	}
