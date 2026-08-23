@@ -295,9 +295,14 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 	c.log.Info("вернул Spotify в исходное состояние",
 		"трек", snap.TrackName, "позиция_мс", snap.PositionMs, "контекст", snap.ContextURI)
 
+	// Проверяем, что вышло на самом деле. Без этого приложение отчитывается
+	// об успехе по факту отправки запроса, а стример видит другое — и спорить
+	// с ним нечем.
+	c.verifyRestore(ctx, snap)
+
 	msg := fmt.Sprintf("Вернул: %s — %s с %s.", snap.ArtistName, snap.TrackName, mmss(snap.PositionMs))
 	if lostContext {
-		msg += " Источник вернуть не вышло — Spotify не умеет возвращаться внутрь такого."
+		msg += " Плейлист вернуть не вышло — Spotify не запоминает, откуда играла эта музыка."
 	}
 	return RestoreOutcome{
 		Restored:    true,
@@ -305,6 +310,41 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 		ContextLost: lostContext,
 		DeviceID:    deviceID,
 	}, nil
+}
+
+// verifyRestore смотрит, что Spotify реально играет после возврата, и пишет
+// это в лог. Отчёт «вернул» без проверки — это отчёт об отправленном запросе,
+// а не о результате: разбирать по такому логу чужую проблему невозможно.
+func (c *Client) verifyRestore(ctx context.Context, snap *Snapshot) {
+	if !sleepCtx(ctx, time.Second) {
+		return
+	}
+
+	st, playing, err := c.State(ctx)
+	if err != nil || !playing || st.Item == nil {
+		c.log.Warn("после возврата плеер молчит", "ошибка", err)
+		return
+	}
+
+	gotContext := ""
+	if st.Context != nil {
+		gotContext = st.Context.URI
+	}
+
+	fields := []any{
+		"ждали_трек", snap.TrackName, "получили_трек", st.Item.Name,
+		"ждали_контекст", snap.ContextURI, "получили_контекст", gotContext,
+		"ждали_позицию_мс", snap.PositionMs, "получили_позицию_мс", st.ProgressMs,
+	}
+
+	switch {
+	case st.Item.URI != snap.TrackURI:
+		c.log.Warn("после возврата играет не тот трек", fields...)
+	case snap.ContextURI != "" && gotContext != snap.ContextURI:
+		c.log.Warn("трек вернулся, а источник нет", fields...)
+	default:
+		c.log.Info("возврат подтверждён", fields...)
+	}
 }
 
 // IsStale определяет, что стример сам переключил музыку, пока играл заказ.
@@ -373,9 +413,12 @@ type playBody struct {
 
 // BuildPlayBody собирает запрос на возврат к нужному месту.
 //
-// Второе значение — признак того, что вернуться внутрь исходного источника
-// не выйдет. Spotify принимает «начать с этого трека» только для альбома и
-// плейлиста; для радио артиста или подкаста остаётся включить сам трек.
+// Второе значение — признак того, что источник восстановить не вышло и играть
+// будет один трек. Spotify принимает «начать с этого трека» только для альбома
+// и плейлиста; во всех остальных случаях — радио артиста, любимые треки,
+// автоподбор, вообще без источника — остаётся включить сам трек, и после него
+// наступит тишина. Поэтому здесь true, а не только когда источник был известен:
+// молчание после одного трека одинаково неприятно в любом из этих случаев.
 func BuildPlayBody(snap *Snapshot) (any, bool) {
 	if snap.ContextURI != "" && supportsOffset(snap.ContextURI) {
 		body := &playBody{ContextURI: snap.ContextURI, PositionMs: snap.PositionMs}
@@ -389,7 +432,7 @@ func BuildPlayBody(snap *Snapshot) (any, bool) {
 	if snap.TrackURI != "" {
 		body.URIs = []string{snap.TrackURI}
 	}
-	return body, snap.ContextURI != ""
+	return body, true
 }
 
 func supportsOffset(contextURI string) bool {

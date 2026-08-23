@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
@@ -79,6 +80,21 @@ func (s *Server) startFresh(ctx context.Context, cfg config.Config,
 		return // стример сам выбрал тишину
 	}
 
+	// Плейлист включаем именно плейлистом, а не списком его треков. Разница
+	// видна сразу: у списка в Spotify не написано, откуда играет музыка, и
+	// кончается он ровно на последнем отданном треке.
+	if uri, what := s.wholeSource(cfg, mode, snap); uri != "" {
+		if err := s.spotify.PlayContext(ctx, uri, ""); err != nil {
+			s.log.Warn("запасной вариант не включился", "источник", uri, "ошибка", err)
+			s.state.NotifyError(err)
+			return
+		}
+		s.log.Info("включил запасной вариант", "режим", mode, "источник", uri)
+		s.state.Notify("info", "Возвращать было нечего, поэтому "+what+".")
+		return
+	}
+
+	// Источника целиком нет — тогда хотя бы списком треков.
 	uris, what, err := s.continuation(ctx, cfg, mode, snap)
 	if err != nil {
 		s.log.Warn("не собрал, что включить", "режим", mode, "ошибка", err)
@@ -91,8 +107,38 @@ func (s *Server) startFresh(ctx context.Context, cfg config.Config,
 		s.state.NotifyError(err)
 		return
 	}
-	s.log.Info("включил запасной вариант", "режим", mode, "треков", len(uris))
+	s.log.Info("включил запасной вариант списком", "режим", mode, "треков", len(uris))
 	s.state.Notify("info", "Возвращать было нечего, поэтому "+what+".")
+}
+
+// wholeSource отдаёт источник, который можно включить целиком, — тогда Spotify
+// сам продолжит играть дальше, и в плеере будет видно, откуда идёт музыка.
+func (s *Server) wholeSource(cfg config.Config, mode config.ResumeFailMode,
+	snap *spotify.Snapshot) (uri, what string) {
+
+	switch mode {
+	case config.ResumeFallbackPlaylist:
+		if cfg.FallbackPlaylistID == "" {
+			return "", ""
+		}
+		name := cfg.FallbackPlaylist
+		if name == "" {
+			name = "запасной плейлист"
+		} else {
+			name = "«" + name + "»"
+		}
+		return "spotify:playlist:" + strings.TrimPrefix(cfg.FallbackPlaylistID, "spotify:playlist:"),
+			"играет " + name
+
+	case config.ResumeArtistRadio:
+		if snap == nil || snap.ArtistID == "" {
+			return "", ""
+		}
+		// Контекст артиста Spotify играет сам и не останавливается после
+		// десятка треков, в отличие от списка.
+		return "spotify:artist:" + snap.ArtistID, "играет музыка " + snap.ArtistName
+	}
+	return "", ""
 }
 
 // continuation собирает список треков по выбранному режиму и заодно фразу
