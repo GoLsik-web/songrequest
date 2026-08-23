@@ -121,142 +121,185 @@
 
   // ── эфир ───────────────────────────────────────────────────────────
 
-  // Главный экран. Ради него панель и открывают на две секунды, поэтому он
-  // обязан показывать настоящее положение дел, а не «что-то не так»:
-  // «не настроено» — это не авария, отсутствие Premium не чинится повторным
-  // входом, а обещать заказы, когда Twitch не подключён, — враньё.
-  function renderStage(s) {
-    const stage = $("stage");
+  // Главный экран.
+  //
+  // Пока заказов нет, показывать «ничего не происходит» серым текстом — значит
+  // отдать три четверти экрана под пустоту. Вместо этого экран показывает
+  // готовность: что уже настроено, чего не хватает и куда вернётся музыка.
+  // Это настоящие сведения, они же и есть инструкция по первому запуску.
+
+  // Шаги готовности. Каждый знает, выполнен ли он, что показать и что нажать.
+  function steps(s) {
     const sp = s.spotify;
     const tw = s.twitch;
 
-    const screen = (mood, eyebrow, mark, say, buttons) => {
-      stage.innerHTML = `
-        <div class="eyebrow ${mood}"><i class="live"></i> ${eyebrow}</div>
-        <div class="void ${mood === "alarm" ? "hot" : ""}">
-          <div class="rule"></div>
-          <div class="mark">${mark}</div>
-          <div class="say">${say}</div>
-          ${buttons ? `<div class="acts">${buttons}</div>` : ""}
-        </div>`;
+    const spotifyStep = () => {
+      if (!sp.has_client_id) {
+        return { state: "todo", value: "Client ID не вставлен",
+                 hint: "Открой «Инструкция-Spotify» — это делается один раз",
+                 button: `<button class="act key small" data-open-settings>Открыть настройки</button>` };
+      }
+      if (!sp.connected) {
+        return { state: "todo", value: "Вход не выполнен",
+                 hint: "Разреши доступ на странице Spotify",
+                 button: `<button class="act key small" data-do="login">Подключить Spotify</button>` };
+      }
+      if (!sp.account) {
+        return { state: "fail", value: "Spotify не отвечает",
+                 hint: "Проверь интернет; если пользуешься VPN — включи его",
+                 button: `<button class="act small" data-do="check">Проверить связь</button>` };
+      }
+      if (sp.plan === "free") {
+        return { state: "fail", value: `${sp.account} · без Premium`,
+                 hint: "Управлять музыкой Spotify разрешает только с подпиской",
+                 button: `<button class="act small" data-open-settings>Посмотреть аккаунт</button>` };
+      }
+      return {
+        state: sp.plan === "unknown" ? "warn" : "done",
+        value: sp.account,
+        hint: sp.plan_label,
+      };
     };
 
-    // 1. Ещё ничего не настроено.
-    if (!sp.has_client_id) {
-      screen("quiet", "Первый запуск", "Нужен Client ID Spotify",
-        "Открой файл «Инструкция-Spotify» — там по шагам, как его получить. " +
-        "Делается один раз, минут за десять.",
-        `<button class="act key" data-open-settings>Открыть настройки</button>`);
-      return;
-    }
+    const twitchStep = () => {
+      if (!tw.has_client_id) {
+        return { state: "todo", value: "Client ID не вставлен",
+                 hint: "Открой «Инструкция-Twitch»",
+                 button: `<button class="act key small" data-open-settings>Открыть настройки</button>` };
+      }
+      if (!tw.connected) {
+        return { state: "todo", value: "Вход не выполнен",
+                 hint: "Приложение покажет короткий код",
+                 button: `<button class="act key small" data-do="twitch-login">Подключить Twitch</button>` };
+      }
+      if (!tw.channel) {
+        return { state: "fail", value: "Twitch не отвечает", hint: "Канал пока неизвестен" };
+      }
+      return { state: "done", value: tw.channel, hint: tw.channel_type };
+    };
 
-    // 2. Client ID вставлен, но входа ещё не было. Это ожидаемый шаг, а не
-    // поломка, поэтому спокойный экран, а не красный.
-    if (!sp.connected) {
-      screen("quiet", "Почти готово", "Осталось подключить Spotify",
-        "Приложение откроет страницу Spotify, там надо разрешить доступ. " +
-        "Аккаунт нужен тот, в котором ты слушаешь музыку на стриме.",
-        `<button class="act key" data-do="login">Подключить Spotify</button>`);
-      return;
-    }
+    const rewardStep = () => {
+      if (!tw.connected) return { state: "wait", value: "—", hint: "после подключения Twitch" };
+      if (!tw.has_points) {
+        return { state: "off", value: "Баллов на канале нет",
+                 hint: "Награда бывает только у аффилиатов и партнёров" };
+      }
+      if (!tw.reward_ready) {
+        return { state: "fail", value: "Не создана",
+                 hint: tw.note || "Приложение не смогло создать награду" };
+      }
+      return {
+        state: "done",
+        value: `«${esc(tw.reward_title)}»`,
+        hint: `${tw.reward_cost} ${plural(tw.reward_cost, "балл", "балла", "баллов")} за заказ`,
+      };
+    };
 
-    // 3. Вход есть, а связи не было: аккаунт ещё не прочитан.
-    if (!sp.account) {
-      screen("alarm", "Связи нет", "Spotify не отвечает",
-        "Вход сохранён, но узнать аккаунт не вышло. Проверь интернет — " +
-        "и если пользуешься VPN, включи его.",
-        `<button class="act key" data-do="check">Проверить связь</button>`);
-      return;
-    }
+    const snapshotStep = () => {
+      if (!sp.connected || !sp.account) return { state: "wait", value: "—", hint: "после подключения Spotify" };
+      if (!sp.snapshot_text) {
+        return { state: "todo", value: "Не запомнено",
+                 hint: "Включи музыку и нажми — приложение вернётся сюда после заказов",
+                 button: `<button class="act key small" data-do="snapshot">Запомнить состояние</button>` };
+      }
+      return {
+        state: "done",
+        value: esc(sp.snapshot_text),
+        hint: `запомнено в ${hhmm(sp.snapshot_at)}`,
+        button: `<button class="act small" data-do="restore">Вернуть сейчас</button>
+                 <button class="act small" data-do="snapshot">Запомнить заново</button>`,
+      };
+    };
 
-    // 4. Подписки нет. Повторный вход это не лечит, и предлагать его —
-    // значит гонять человека по кругу.
-    if (sp.plan === "free") {
-      screen("alarm", "Играть не сможет", "На аккаунте нет Spotify Premium",
-        `Вход выполнен как <b>${esc(sp.account)}</b>, но управлять музыкой Spotify ` +
-        "разрешает только с подпиской. Проверь в настройках, тем ли аккаунтом вошёл.",
-        `<button class="act" data-open-settings>Посмотреть аккаунт</button>`);
-      return;
-    }
-
-    // 5. Spotify готов, а заказывать пока неоткуда.
-    if (!tw.connected) {
-      screen("quiet", "Заказы не принимаются", "Twitch не подключён",
-        "Spotify готов, но зрителям пока нечего нажимать: награда на канале " +
-        "появится после подключения Twitch.",
-        `<button class="act key" data-do="twitch-login">Подключить Twitch</button>
-         <button class="act" data-open-settings>Настройки</button>`);
-      return;
-    }
-    if (!tw.reward_ready) {
-      screen("quiet", "Заказы не принимаются", "Награды на канале нет",
-        tw.note ? esc(tw.note)
-                : "Приложение не смогло создать награду за баллы. Загляни в настройки.",
-        `<button class="act" data-open-settings>Настройки</button>`);
-      return;
-    }
-
-    // 6. Всё готово, но тихо — самый частый экран.
-    const now = s.now;
-    if (!now) {
-      stage.innerHTML = `
-        <div class="eyebrow quiet"><i class="live"></i> Тихо</div>
-        <div class="void">
-          <div class="rule"></div>
-          <div class="mark">Заказов нет</div>
-          <div class="say">В Spotify играет то, что ты включил сам. Когда зритель закажет
-            трек за ${tw.reward_cost} ${plural(tw.reward_cost, "балл", "балла", "баллов")},
-            он появится здесь.</div>
-          ${snapshotBlock(sp)}
-        </div>`;
-      return;
-    }
-
-    // 7. Играет заказ.
-    const pct = now.duration_ms ? (now.position_ms / now.duration_ms) * 100 : 0;
-    stage.innerHTML = `
-      <div class="eyebrow">
-        <i class="live"></i> В эфире
-        <span class="sep">/</span>
-        <span class="where">${now.provider === "youtube" ? "YouTube" : "Spotify"}${
-          now.uncertain ? " · неточное совпадение" : ""}</span>
-      </div>
-      <div class="stage-row">
-        <div class="art">${now.cover_url ? `<img src="${esc(now.cover_url)}" alt="">` : icon("music")}</div>
-        <div class="stage-text">
-          <h1 class="headline">${esc(now.title)}</h1>
-          <div class="subhead">${esc(now.artist)}</div>
-          ${now.requester ? `<div class="credit">${icon("user")}заказал <b>${esc(now.requester)}</b></div>` : ""}
-          <div class="meter">
-            <span class="t">${mmss(now.position_ms)}</span>
-            <span class="bar"><i style="width:${pct}%"></i></span>
-            <span class="t">${mmss(now.duration_ms)}</span>
-          </div>
-        </div>
-      </div>
-      <div class="acts">
-        <button class="act key" data-do="restore">${icon("rotate-cw")}Вернуть как было</button>
-        <button class="act" data-do="snapshot">${icon("clock")}Запомнить заново</button>
-      </div>`;
+    return [
+      { name: "Spotify", ...spotifyStep() },
+      { name: "Twitch", ...twitchStep() },
+      { name: "Награда", ...rewardStep() },
+      { name: "Точка возврата", ...snapshotStep() },
+    ];
   }
 
-  // Блок снимка живёт в пустом состоянии: именно там он и нужен — видно, куда
-  // приложение вернётся, ещё до того как придёт первый заказ.
-  function snapshotBlock(sp) {
-    if (!sp.snapshot_text) {
-      return `<div class="acts">
-        <button class="act key" data-do="snapshot">${icon("clock")}Запомнить состояние</button>
-      </div>`;
+  function renderStage(s) {
+    const list = steps(s);
+    const now = s.now;
+
+    // Играет заказ — всё остальное отходит на второй план.
+    if (now) {
+      const pct = now.duration_ms ? (now.position_ms / now.duration_ms) * 100 : 0;
+      swap($("stage"), `
+        <div class="eyebrow">
+          <i class="live"></i> В эфире
+          <span class="sep">/</span>
+          <span class="where">${now.provider === "youtube" ? "YouTube" : "Spotify"}${
+            now.uncertain ? " · неточное совпадение" : ""}</span>
+        </div>
+        <div class="stage-row">
+          <div class="art">${now.cover_url ? `<img src="${esc(now.cover_url)}" alt="">` : icon("music")}</div>
+          <div class="stage-text">
+            <h1 class="headline">${esc(now.title)}</h1>
+            <div class="subhead">${esc(now.artist)}</div>
+            ${now.requester ? `<div class="credit">${icon("user")}заказал <b>${esc(now.requester)}</b></div>` : ""}
+            <div class="meter">
+              <span class="t">${mmss(now.position_ms)}</span>
+              <span class="bar"><i style="width:${pct}%"></i></span>
+              <span class="t">${mmss(now.duration_ms)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="acts">
+          <button class="act key" data-do="restore">${icon("rotate-cw")}Вернуть как было</button>
+          <button class="act" data-do="snapshot">${icon("clock")}Запомнить заново</button>
+        </div>`);
+      return;
     }
-    return `<div class="recall">
-        <span class="label">вернусь к</span>
-        <span class="what">${esc(sp.snapshot_text)}</span>
-        <span class="when">запомнено в ${hhmm(sp.snapshot_at)}</span>
+
+    const done = list.filter((x) => x.state === "done").length;
+    const broken = list.some((x) => x.state === "fail");
+    const ready = done === list.length;
+
+    let brow, mark, sub;
+    if (broken) {
+      brow = `<div class="eyebrow alarm"><i class="live"></i> Нужно вмешаться</div>`;
+      mark = "Что-то отвалилось";
+      sub = "Ниже видно, что именно. Заказы пока не принимаются.";
+    } else if (ready) {
+      brow = `<div class="eyebrow"><i class="live"></i> Готов принимать заказы</div>`;
+      mark = "Всё настроено";
+      sub = `Зрители заказывают трек за ${s.twitch.reward_cost} ${
+        plural(s.twitch.reward_cost, "балл", "балла", "баллов")}. Как только заказ придёт, он появится здесь.`;
+    } else {
+      brow = `<div class="eyebrow quiet"><i class="live"></i> Настройка · ${done} из ${list.length}</div>`;
+      mark = "Ещё не всё готово";
+      sub = "Пройди шаги ниже — это делается один раз.";
+    }
+
+    swap($("stage"), `
+      ${brow}
+      <div class="head">
+        <h1 class="big">${mark}</h1>
+        <p class="lead">${sub}</p>
       </div>
-      <div class="acts">
-        <button class="act key" data-do="restore">${icon("rotate-cw")}Вернуть как было</button>
-        <button class="act" data-do="snapshot">${icon("clock")}Запомнить заново</button>
-      </div>`;
+      <div class="rail"><i style="width:${(done / list.length) * 100}%"></i></div>
+      <ol class="steps">
+        ${list.map((step, i) => `
+          <li class="step ${step.state}">
+            <div class="no">${String(i + 1).padStart(2, "0")}</div>
+            <div class="step-body">
+              <div class="step-name">${esc(step.name)}</div>
+              <div class="step-value">${step.value}</div>
+              <div class="step-hint">${esc(step.hint)}</div>
+              ${step.button ? `<div class="step-acts">${step.button}</div>` : ""}
+            </div>
+          </li>`).join("")}
+      </ol>`);
+  }
+
+  // Плавная подмена содержимого: без неё блок мигает новым текстом рывком.
+  function swap(host, html) {
+    const box = document.createElement("div");
+    box.className = "swap";
+    box.innerHTML = html;
+    host.replaceChildren(box);
   }
 
   // ── заказы ─────────────────────────────────────────────────────────
@@ -272,13 +315,25 @@
     $("orders-count").classList.toggle("zero", pending === 0);
 
     if (!list.length) {
-      box.innerHTML = `
+      // Пустой список — повод показать, что именно увидит зритель: так
+      // понятно, что всё на месте, а не «здесь пока ничего».
+      swap(box, s.twitch.reward_ready ? `
+        <div class="preview">
+          <div class="preview-label">так награду видят зрители</div>
+          <div class="preview-card">
+            <div class="preview-cost">${s.twitch.reward_cost}</div>
+            <div class="preview-text">
+              <div class="preview-title">${esc(s.twitch.reward_title)}</div>
+              <div class="preview-prompt">Напиши артиста и название или ссылку.
+                Если трек не найдётся — баллы вернутся.</div>
+            </div>
+          </div>
+        </div>` : `
         <div class="void">
           <div class="rule"></div>
-          <div class="mark">Пока пусто</div>
-          <div class="say">Заказы появятся здесь, как только зритель потратит баллы на
-            награду${s.twitch.reward_title ? ` «${esc(s.twitch.reward_title)}»` : ""}.</div>
-        </div>`;
+          <div class="mark">Заказов пока нет</div>
+          <div class="say">Они появятся здесь, когда на канале заработает награда за баллы.</div>
+        </div>`);
       knownOrderIds = new Set();
       return;
     }
@@ -308,6 +363,25 @@
     }).join("")}</ul>`;
 
     knownOrderIds = new Set(list.map((r) => r.id));
+  }
+
+  // Итоги сессии. Числа настоящие, и в тихий вечер это единственное, что на
+  // экране вообще меняется.
+  function renderTally(s) {
+    const ses = s.session;
+    const minutes = Math.max(0, Math.round((Date.now() - new Date(ses.started_at)) / 60000));
+    const uptime = minutes < 60
+      ? `${minutes} ${plural(minutes, "минута", "минуты", "минут")}`
+      : `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
+
+    const cell = (value, label) =>
+      `<div class="cell"><div class="num">${value}</div><div class="lab">${label}</div></div>`;
+
+    $("tally").innerHTML =
+      cell(ses.orders, "заказов") +
+      cell(ses.accepted, "принято") +
+      cell(ses.refunded, "возвращено") +
+      cell(uptime, "в работе");
   }
 
   // ── хроника ────────────────────────────────────────────────────────
@@ -634,6 +708,7 @@
     draw("stage", sig([s.now, s.spotify, s.connections]), () => renderStage(s));
     draw("orders", sig([s.redemptions, s.twitch.reward_title]), () => renderOrders(s));
     draw("feed", sig(s.notices), () => renderFeed(s));
+    draw("tally", sig(s.session), () => renderTally(s));
     draw("banner", sig([s.twitch.pending_code, s.twitch.pending_expires]), () => renderBanner(s.twitch));
     draw("sp-card", sig(s.spotify), () => renderSpotifyCard(s.spotify));
     draw("tw-card", sig(s.twitch), () => renderTwitchCard(s.twitch));

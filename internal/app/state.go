@@ -134,6 +134,16 @@ const (
 	OrderFulfilled = "fulfilled"
 )
 
+// Session — итоги с момента запуска. Панель на этапе, когда заказов ещё нет,
+// иначе состоит из одних пустых блоков; это настоящие числа, а не украшение.
+type Session struct {
+	StartedAt time.Time `json:"started_at"`
+	Orders    int       `json:"orders"`
+	Refunded  int       `json:"refunded"`
+	Accepted  int       `json:"accepted"`
+	Points    int       `json:"points"` // потрачено зрителями баллов
+}
+
 // Snapshot — вся картинка целиком, ровно то, что уходит в панель одним JSON.
 type Snapshot struct {
 	Connections []ConnState      `json:"connections"`
@@ -145,6 +155,7 @@ type Snapshot struct {
 	Spotify     SpotifyInfo      `json:"spotify"`
 	Twitch      TwitchInfo       `json:"twitch"`
 	Redemptions []RedemptionView `json:"redemptions"`
+	Session     Session          `json:"session"`
 	DebugLog    bool             `json:"debug_log"`
 }
 
@@ -161,6 +172,7 @@ type State struct {
 	spotify     SpotifyInfo
 	twitch      TwitchInfo
 	redemptions []RedemptionView
+	session     Session
 	debug       bool
 
 	subs map[int]chan struct{}
@@ -179,6 +191,8 @@ func New(version string) *State {
 		subs:    map[int]chan struct{}{},
 		version: version,
 	}
+	s.session.StartedAt = time.Now()
+
 	for _, name := range []string{"Spotify", "Twitch", "DonationAlerts", "DonatePay"} {
 		s.order = append(s.order, name)
 		s.conns[name] = ConnState{Name: name, Level: ConnIdle, Detail: "Не настроено"}
@@ -300,6 +314,8 @@ func (s *State) UpdateTwitch(fn func(*TwitchInfo)) {
 func (s *State) AddRedemption(r RedemptionView) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.session.Orders++
+	s.session.Points += r.Cost
 	s.redemptions = append([]RedemptionView{r}, s.redemptions...)
 	if len(s.redemptions) > maxRedemptions {
 		s.redemptions = s.redemptions[:maxRedemptions]
@@ -312,10 +328,20 @@ func (s *State) SetRedemptionStatus(id, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.redemptions {
-		if s.redemptions[i].ID == id {
-			s.redemptions[i].Status = status
-			break
+		if s.redemptions[i].ID != id {
+			continue
 		}
+		// Счётчики считаем один раз: повторное нажатие не должно их накручивать.
+		if s.redemptions[i].Status == OrderNew {
+			switch status {
+			case OrderRefunded:
+				s.session.Refunded++
+			case OrderFulfilled:
+				s.session.Accepted++
+			}
+		}
+		s.redemptions[i].Status = status
+		break
 	}
 	s.notify()
 }
@@ -372,6 +398,7 @@ func (s *State) Snapshot() Snapshot {
 		Spotify:     s.spotify,
 		Twitch:      s.twitch,
 		Redemptions: append(make([]RedemptionView, 0, len(s.redemptions)), s.redemptions...),
+		Session:     s.session,
 		DebugLog:    s.debug,
 	}
 	for _, name := range s.order {
