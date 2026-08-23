@@ -20,6 +20,8 @@ import (
 	"songrequest/internal/config"
 	"songrequest/internal/logx"
 	"songrequest/internal/spotify"
+	"songrequest/internal/store"
+	"songrequest/internal/twitch"
 )
 
 //go:embed all:web
@@ -32,6 +34,8 @@ type Deps struct {
 	Cfg     *config.File
 	Log     *logx.Logger
 	Spotify *spotify.Client
+	Twitch  *twitch.Client
+	DB      *store.DB
 	DataDir string
 	Version string
 }
@@ -42,6 +46,8 @@ type Server struct {
 	cfg     *config.File
 	log     *logx.Logger
 	spotify *spotify.Client
+	twitch  *twitch.Client
+	db      *store.DB
 	dataDir string
 	version string
 
@@ -53,6 +59,12 @@ type Server struct {
 	// кнопкой из панели; дальше это будет делать очередь заказов.
 	snapMu sync.Mutex
 	snap   *spotify.Snapshot
+
+	// mu защищает то, что заполняется по ходу подключения Twitch.
+	mu            sync.Mutex
+	rewardID      string
+	eventsRunning bool
+	ctx           context.Context
 }
 
 // New поднимает слушатель на 127.0.0.1. Если желаемый порт занят, берём любой
@@ -75,6 +87,8 @@ func New(d Deps) (*Server, error) {
 		cfg:     cfg,
 		log:     log,
 		spotify: d.Spotify,
+		twitch:  d.Twitch,
+		db:      d.DB,
 		dataDir: d.DataDir,
 		version: d.Version,
 		ln:      ln,
@@ -105,6 +119,10 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /api/spotify/restore", s.handleSpotifyRestore)
 	mux.HandleFunc("GET /callback", s.handleSpotifyCallback)
 
+	mux.HandleFunc("POST /api/twitch/login", s.handleTwitchLogin)
+	mux.HandleFunc("POST /api/twitch/logout", s.handleTwitchLogout)
+	mux.HandleFunc("POST /api/redemptions/{id}", s.handleRedemptionAction)
+
 	s.http = &http.Server{
 		Handler:           s.guard(mux),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -115,8 +133,24 @@ func New(d Deps) (*Server, error) {
 // Addr — адрес панели, его показываем в консоли и открываем в браузере.
 func (s *Server) Addr() string { return s.addr }
 
+// baseContext — контекст жизни приложения. Фоновые задачи (ожидание кода,
+// подписка на события) должны переживать отдельный HTTP-запрос, но умирать
+// вместе с приложением.
+func (s *Server) baseContext() context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
+}
+
 // Serve обслуживает запросы до отмены контекста.
 func (s *Server) Serve(ctx context.Context) error {
+	s.mu.Lock()
+	s.ctx = ctx
+	s.mu.Unlock()
+
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

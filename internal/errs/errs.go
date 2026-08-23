@@ -33,6 +33,20 @@ const (
 	SpotifyNoScope     Code = "SP-14" // не выданы права, нужен повторный вход
 	SpotifyPlanUnknown Code = "SP-15" // Spotify не сказал, какая подписка
 
+	// Twitch
+	TwitchNoClientID   Code = "TW-01" // не заполнен client_id Twitch
+	TwitchAuthStart    Code = "TW-02" // не удалось начать вход
+	TwitchAuthPending  Code = "TW-03" // код не подтвердили вовремя
+	TwitchAuthExpired  Code = "TW-04" // авторизация слетела
+	TwitchNoAffiliate  Code = "TW-05" // на канале нет баллов
+	TwitchReward       Code = "TW-06" // не удалось создать награду
+	TwitchRefund       Code = "TW-07" // не удалось вернуть баллы
+	TwitchUnreachable  Code = "TW-08" // Twitch не отвечает
+	TwitchRateLimit    Code = "TW-09" // Twitch просит подождать
+	TwitchEventSub     Code = "TW-10" // оборвалась подписка на события
+	TwitchBadResponse  Code = "TW-11" // Twitch ответил не тем, чего мы ждали
+	TwitchForeignAward Code = "TW-12" // награду создали не мы, баллы не вернуть
+
 	// Диагностика
 	DiagExport Code = "DIAG-01" // не собрался архив с логом
 )

@@ -274,6 +274,7 @@
     try {
       config = await (await fetch("/api/config")).json();
       $("client-id").value = config.spotify_client_id || "";
+      $("twitch-id").value = config.twitch_client_id || "";
       applyMode(config.resume_fail_mode);
       $("playlist").value = config.fallback_playlist_id || "";
       refreshModeHints();
@@ -408,11 +409,96 @@
       </div>` : ""}`;
   }
 
+  // ── Twitch ─────────────────────────────────────────────────────────
+
+  function renderBanner(tw) {
+    const banner = $("banner");
+    if (!tw.pending_code) {
+      banner.hidden = true;
+      return;
+    }
+    const left = Math.max(0, Math.round((new Date(tw.pending_expires) - Date.now()) / 60000));
+    banner.hidden = false;
+    banner.innerHTML = `
+      <div class="what">Открой <a href="${esc(tw.pending_url)}" target="_blank">${esc(tw.pending_url)}</a>
+        на любом устройстве и введи код:</div>
+      <div class="code">${esc(tw.pending_code)}</div>
+      <div class="left">код действует ещё ${left} мин</div>`;
+  }
+
+  function renderTwitchAccount(tw) {
+    const box = $("twitch-account");
+    if (!tw.connected) {
+      box.className = "account";
+      box.innerHTML = `<div class="who">Вход не выполнен</div>`;
+      return;
+    }
+
+    const bad = !tw.has_points;
+    box.className = "account" + (bad ? " bad" : tw.reward_ready ? " ok" : " iffy");
+    box.innerHTML = `
+      <div class="who">${esc(tw.channel || "канал")}</div>
+      <div class="mail">${esc(tw.channel_type)}</div>
+      <div class="plan">${tw.reward_ready
+        ? `награда «${esc(tw.reward_title)}» · ${tw.reward_cost} баллов`
+        : "награда не создана"}</div>
+      ${tw.note ? `<div class="note">
+        ${tw.note_code ? `<b>${esc(tw.note_code)}</b> ` : ""}${esc(tw.note)}
+      </div>` : ""}`;
+  }
+
+  // Заказы за баллы. Очереди ещё нет, поэтому они показываются списком —
+  // так проверяется весь путь: нажатие зрителем, приём, возврат баллов.
+  function renderRedemptions(list) {
+    if (!list.length) return false;
+
+    $("q-count").textContent = list.length;
+    $("q-count").style.color = "var(--lime)";
+    $("q-rest").textContent = "очередь появится на следующем этапе";
+
+    $("queue").innerHTML = `<ul class="rows">${list.map((r, i) => {
+      const at = new Date(r.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+      const busy = r.status !== "новый";
+      return `<li data-id="${esc(r.id)}">
+        <span class="idx">${String(i + 1).padStart(2, "0")}</span>
+        <span class="body">
+          <span class="ttl">${esc(r.text) || "<без текста>"}</span>
+          <span class="sub"><span class="chip money">${r.cost} баллов</span> ${esc(r.user)} · ${at}</span>
+        </span>
+        <span class="len"></span>
+        <span class="deal">${busy
+          ? `<span class="done ${r.status === "баллы возвращены" ? "paid" : ""}">${esc(r.status)}</span>`
+          : `<button data-act="fulfill">Принять</button>
+             <button class="kill" data-act="refund">Вернуть баллы</button>`}</span>
+      </li>`;
+    }).join("")}</ul>`;
+
+    $("queue").querySelectorAll("button[data-act]").forEach((b) => {
+      b.onclick = (e) => {
+        const id = e.currentTarget.closest("li").dataset.id;
+        post(`/api/redemptions/${encodeURIComponent(id)}?action=${b.dataset.act}`, e.currentTarget);
+      };
+    });
+    return true;
+  }
+
+  $("save-twitch-id").onclick = async (e) => {
+    e.target.disabled = true;
+    if (await saveConfig({ twitch_client_id: $("twitch-id").value.trim() })) {
+      say("Client ID Twitch сохранён. Теперь нажми «Подключить Twitch».");
+    }
+    e.target.disabled = false;
+  };
+  $("twitch-login").onclick = (e) => post("/api/twitch/login", e.currentTarget);
+  $("twitch-logout").onclick = (e) => post("/api/twitch/logout", e.currentTarget);
+
   function render(s) {
     renderBar(s);
     renderAccount(s.spotify);
+    renderBanner(s.twitch);
+    renderTwitchAccount(s.twitch);
     renderStage(s);
-    renderQueue(s);
+    if (!renderRedemptions(s.redemptions)) renderQueue(s);
     renderFeed(s);
     $("debug-log").checked = s.debug_log;
   }

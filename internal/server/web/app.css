@@ -316,3 +316,36 @@ body { padding-bottom: 34px; }
 }
 .account .note b { color: var(--text); font-weight: 700; letter-spacing: .04em; }
 .account.bad .note b { color: var(--bad); }
+
+/* ── Код для входа в Twitch ─────────────────────────────────────────────
+   Пока код не введён, работать нечем, поэтому он занимает всю ширину и
+   набран так, чтобы прочитать его с телефона в вытянутой руке. */
+
+#banner {
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+  padding: 18px 40px;
+  background: var(--lime); color: var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+#banner .what { font-size: 13px; font-weight: 700; line-height: 1.45; max-width: 420px; }
+#banner .what a { color: var(--ink); }
+#banner .code {
+  font-family: Unbounded, monospace;
+  font-size: 34px; font-weight: 700; letter-spacing: .22em;
+  user-select: all;
+}
+#banner .left { margin-left: auto; font-size: 12px; font-weight: 700; opacity: .7; }
+
+/* ── Заказы за баллы ────────────────────────────────────────────────── */
+
+.deal { display: flex; gap: 8px; }
+.deal button {
+  background: none; border: 1px solid var(--line-2); color: var(--dim);
+  border-radius: 2px; padding: 4px 9px; font: 600 11px/1.6 Manrope, sans-serif; cursor: pointer;
+}
+.deal button:hover { color: var(--text); border-color: var(--dim); }
+.deal button.kill:hover { color: var(--bad); border-color: var(--bad); }
+.deal button:disabled { opacity: .35; cursor: default; }
+
+.done { font-size: 11px; color: var(--dimmer); font-weight: 700; letter-spacing: .06em; }
+.done.paid { color: var(--lime); }
