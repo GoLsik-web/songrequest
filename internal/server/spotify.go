@@ -196,17 +196,17 @@ func (s *Server) syncSpotifyInfo() {
 	// подписка — повод предупредить, а не повод объявить всё сломанным.
 	switch {
 	case !info.HasClientID:
-		s.state.SetConn("Spotify", false, "Не настроено")
+		s.state.SetConnIdle("Spotify", "Не настроено")
 	case !info.Connected:
-		s.state.SetConn("Spotify", false, "Не подключён")
+		s.state.SetConnIdle("Spotify", "Не подключён")
 	case me == nil:
-		s.state.SetConn("Spotify", false, "Вход есть, но связи не было")
+		s.state.SetConnFail("Spotify", "Вход есть, но связи не было")
 	case me.Plan() == spotify.PlanFree:
-		s.state.SetConn("Spotify", false, string(errs.SpotifyNoPremium)+" · нет Premium")
+		s.state.SetConnFail("Spotify", string(errs.SpotifyNoPremium)+" · нет Premium")
 	case me.Plan() == spotify.PlanUnknown:
-		s.state.SetConn("Spotify", true, me.DisplayName+" · подписка не определена")
+		s.state.SetConnOK("Spotify", me.DisplayName+" · подписка не определена")
 	default:
-		s.state.SetConn("Spotify", true, me.DisplayName+" · Premium")
+		s.state.SetConnOK("Spotify", me.DisplayName+" · Premium")
 	}
 }
 

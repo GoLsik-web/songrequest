@@ -10,10 +10,25 @@ import (
 	"time"
 )
 
+// Уровни состояния подключения. Разделять «сломалось» и «недоступно» важно:
+// красная ячейка означает «чини», и показывать её там, где чинить нечего —
+// например, когда на канале в принципе нет баллов, — значит врать человеку.
+const (
+	// ConnOK — работает.
+	ConnOK = "ok"
+	// ConnIdle — не настроено или недоступно на этом аккаунте. Не ошибка.
+	ConnIdle = "idle"
+	// ConnFail — сломалось, надо чинить.
+	ConnFail = "fail"
+)
+
 // ConnState — состояние одного внешнего подключения для лампочки в панели.
 type ConnState struct {
 	Name      string `json:"name"`
 	Connected bool   `json:"connected"`
+	// Level — как красить: ok, idle или fail. Панель не должна догадываться
+	// об этом по тексту, иначе новая формулировка молча меняет цвет.
+	Level string `json:"level"`
 	// Detail — человеческая подсказка: «Не настроено», «Слетела авторизация».
 	// Никаких «401 Unauthorized» тут быть не должно.
 	Detail string `json:"detail"`
@@ -153,7 +168,7 @@ func New(version string) *State {
 	}
 	for _, name := range []string{"Spotify", "Twitch", "DonationAlerts", "DonatePay"} {
 		s.order = append(s.order, name)
-		s.conns[name] = ConnState{Name: name, Connected: false, Detail: "Не настроено"}
+		s.conns[name] = ConnState{Name: name, Level: ConnIdle, Detail: "Не настроено"}
 	}
 	return s
 }
@@ -190,11 +205,25 @@ func (s *State) notify() {
 	}
 }
 
-// SetConn обновляет лампочку подключения.
-func (s *State) SetConn(name string, connected bool, detail string) {
+// SetConnOK — подключение работает.
+func (s *State) SetConnOK(name, detail string) {
+	s.setConn(ConnState{Name: name, Connected: true, Level: ConnOK, Detail: detail})
+}
+
+// SetConnIdle — не настроено или недоступно. Чинить нечего, тревожить незачем.
+func (s *State) SetConnIdle(name, detail string) {
+	s.setConn(ConnState{Name: name, Level: ConnIdle, Detail: detail})
+}
+
+// SetConnFail — сломалось, нужно вмешательство.
+func (s *State) SetConnFail(name, detail string) {
+	s.setConn(ConnState{Name: name, Level: ConnFail, Detail: detail})
+}
+
+func (s *State) setConn(c ConnState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.conns[name] = ConnState{Name: name, Connected: connected, Detail: detail}
+	s.conns[c.Name] = c
 	s.notify()
 }
 

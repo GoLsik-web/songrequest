@@ -14,6 +14,8 @@ import (
 	"songrequest/internal/config"
 	"songrequest/internal/logx"
 	"songrequest/internal/spotify"
+	"songrequest/internal/store"
+	"songrequest/internal/twitch"
 )
 
 // Поведение при невозможности вернуть контекст — настройка, которую стример
@@ -89,13 +91,20 @@ func newTestServer(t *testing.T, tune func(*config.Config), handler http.Handler
 	}
 	t.Cleanup(func() { log.Close() })
 
-	sp := spotify.NewForTest(cfg, log, &fakeSecrets{}, api.URL)
+	keys := &fakeSecrets{}
+	db, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
 
 	srv := &Server{
 		state:   app.New("тест"),
 		cfg:     cfg,
 		log:     log,
-		spotify: sp,
+		spotify: spotify.NewForTest(cfg, log, keys, api.URL),
+		twitch:  twitch.NewForTest(cfg, log, keys, api.URL),
+		db:      db,
 		dataDir: dir,
 	}
 	return srv, &calls
