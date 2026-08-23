@@ -21,6 +21,7 @@ import (
 	"songrequest/internal/server"
 	"songrequest/internal/spotify"
 	"songrequest/internal/store"
+	"songrequest/internal/twitch"
 )
 
 // version подставляется при сборке релиза через -ldflags.
@@ -65,13 +66,17 @@ func run() error {
 	state := app.New(version)
 	state.SetDebugLog(*debug)
 
-	sp := spotify.New(cfg, log, secrets.New())
+	keys := secrets.New()
+	sp := spotify.New(cfg, log, keys)
+	tw := twitch.New(cfg, log, keys)
 
 	srv, err := server.New(server.Deps{
 		State:   state,
 		Cfg:     cfg,
 		Log:     log,
 		Spotify: sp,
+		Twitch:  tw,
+		DB:      db,
 		DataDir: dir,
 		Version: version,
 	})
@@ -108,6 +113,11 @@ func run() error {
 	} else {
 		srv.SyncSpotify()
 	}
+
+	// Twitch поднимаем следом: если вход был, приложение само заведёт награду
+	// и подпишется на заказы, без единого нажатия.
+	srv.SyncTwitch()
+	srv.StartTwitchIfConnected(ctx)
 
 	return srv.Serve(ctx)
 }

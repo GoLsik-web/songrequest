@@ -15,6 +15,9 @@
 
 <div class="status-bar" id="bar"></div>
 
+<!-- Код для входа в Twitch: пока он не введён, это самое важное на экране. -->
+<div id="banner" hidden></div>
+
 <section class="stage" id="stage"></section>
 
 <div class="lower">
@@ -50,6 +53,20 @@
 
       <div class="account" id="account"></div>
       <div class="hint" id="redirect" style="font-size:12px;color:var(--dimmer);margin-top:10px"></div>
+    </div>
+
+    <div>
+      <label class="field">
+        <span>Client ID Twitch — из инструкции по Twitch</span>
+        <input type="text" id="twitch-id" spellcheck="false" autocomplete="off"
+               placeholder="набор букв и цифр">
+      </label>
+      <div class="acts" style="margin-top:0">
+        <button class="act small" id="save-twitch-id">Сохранить</button>
+        <button class="act small key" id="twitch-login">Подключить Twitch</button>
+        <button class="act small risky" id="twitch-logout">Отключить</button>
+      </div>
+      <div class="account" id="twitch-account"></div>
     </div>
 
     <div>

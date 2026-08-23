@@ -73,36 +73,76 @@ type SpotifyInfo struct {
 	SnapshotAt   *time.Time `json:"snapshot_at"`
 }
 
+// TwitchInfo — состояние Twitch для панели.
+type TwitchInfo struct {
+	HasClientID bool   `json:"has_client_id"`
+	Connected   bool   `json:"connected"`
+	Channel     string `json:"channel"`
+	ChannelType string `json:"channel_type"` // партнёр | аффилиат | обычный
+	HasPoints   bool   `json:"has_points"`
+
+	RewardTitle string `json:"reward_title"`
+	RewardCost  int    `json:"reward_cost"`
+	RewardReady bool   `json:"reward_ready"`
+
+	// Код для входа: стример открывает адрес на любом устройстве и вводит код.
+	PendingCode    string     `json:"pending_code"`
+	PendingURL     string     `json:"pending_url"`
+	PendingExpires *time.Time `json:"pending_expires"`
+
+	Note     string `json:"note"`
+	NoteCode string `json:"note_code"`
+}
+
+// RedemptionView — заказ за баллы. На этом этапе очереди ещё нет, поэтому
+// заказы просто копятся списком, чтобы можно было проверить приём и возврат.
+type RedemptionView struct {
+	ID       string    `json:"id"`
+	RewardID string    `json:"reward_id"`
+	User     string    `json:"user"`
+	Text     string    `json:"text"`
+	Cost     int       `json:"cost"`
+	At       time.Time `json:"at"`
+	Status   string    `json:"status"` // новый | баллы возвращены | выполнен
+}
+
 // Snapshot — вся картинка целиком, ровно то, что уходит в панель одним JSON.
 type Snapshot struct {
-	Connections []ConnState `json:"connections"`
-	Now         *NowPlaying `json:"now"`
-	Queue       []QueueItem `json:"queue"`
-	Notices     []Notice    `json:"notices"`
-	Paused      bool        `json:"paused"` // приём заказов остановлен
-	Version     string      `json:"version"`
-	Spotify     SpotifyInfo `json:"spotify"`
-	DebugLog    bool        `json:"debug_log"`
+	Connections []ConnState      `json:"connections"`
+	Now         *NowPlaying      `json:"now"`
+	Queue       []QueueItem      `json:"queue"`
+	Notices     []Notice         `json:"notices"`
+	Paused      bool             `json:"paused"` // приём заказов остановлен
+	Version     string           `json:"version"`
+	Spotify     SpotifyInfo      `json:"spotify"`
+	Twitch      TwitchInfo       `json:"twitch"`
+	Redemptions []RedemptionView `json:"redemptions"`
+	DebugLog    bool             `json:"debug_log"`
 }
 
 // State — потокобезопасное состояние с уведомлением подписчиков об изменениях.
 type State struct {
-	mu      sync.RWMutex
-	conns   map[string]ConnState
-	order   []string // порядок лампочек в панели, фиксированный
-	now     *NowPlaying
-	queue   []QueueItem
-	notices []Notice
-	paused  bool
-	version string
-	spotify SpotifyInfo
-	debug   bool
+	mu          sync.RWMutex
+	conns       map[string]ConnState
+	order       []string // порядок лампочек в панели, фиксированный
+	now         *NowPlaying
+	queue       []QueueItem
+	notices     []Notice
+	paused      bool
+	version     string
+	spotify     SpotifyInfo
+	twitch      TwitchInfo
+	redemptions []RedemptionView
+	debug       bool
 
 	subs map[int]chan struct{}
 	next int
 }
 
 const maxNotices = 50
+
+// maxRedemptions — сколько заказов держим в списке до появления очереди.
+const maxRedemptions = 20
 
 // New создаёт состояние с погашенными лампочками подключений.
 func New(version string) *State {
@@ -198,6 +238,46 @@ func (s *State) UpdateSpotify(fn func(*SpotifyInfo)) {
 	s.notify()
 }
 
+// SetTwitch обновляет карточку Twitch в панели.
+func (s *State) SetTwitch(info TwitchInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.twitch = info
+	s.notify()
+}
+
+// UpdateTwitch меняет часть сведений о Twitch, не трогая остальные.
+func (s *State) UpdateTwitch(fn func(*TwitchInfo)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn(&s.twitch)
+	s.notify()
+}
+
+// AddRedemption кладёт новый заказ в начало списка.
+func (s *State) AddRedemption(r RedemptionView) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.redemptions = append([]RedemptionView{r}, s.redemptions...)
+	if len(s.redemptions) > maxRedemptions {
+		s.redemptions = s.redemptions[:maxRedemptions]
+	}
+	s.notify()
+}
+
+// SetRedemptionStatus помечает заказ как возвращённый или выполненный.
+func (s *State) SetRedemptionStatus(id, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.redemptions {
+		if s.redemptions[i].ID == id {
+			s.redemptions[i].Status = status
+			break
+		}
+	}
+	s.notify()
+}
+
 // SetDebugLog запоминает, включён ли подробный лог (галочка в панели).
 func (s *State) SetDebugLog(on bool) {
 	s.mu.Lock()
@@ -229,12 +309,14 @@ func (s *State) Snapshot() Snapshot {
 
 	// Пустые срезы, а не nil: панель ждёт массив и на null споткнётся.
 	snap := Snapshot{
-		Queue:    append(make([]QueueItem, 0, len(s.queue)), s.queue...),
-		Notices:  append(make([]Notice, 0, len(s.notices)), s.notices...),
-		Paused:   s.paused,
-		Version:  s.version,
-		Spotify:  s.spotify,
-		DebugLog: s.debug,
+		Queue:       append(make([]QueueItem, 0, len(s.queue)), s.queue...),
+		Notices:     append(make([]Notice, 0, len(s.notices)), s.notices...),
+		Paused:      s.paused,
+		Version:     s.version,
+		Spotify:     s.spotify,
+		Twitch:      s.twitch,
+		Redemptions: append(make([]RedemptionView, 0, len(s.redemptions)), s.redemptions...),
+		DebugLog:    s.debug,
 	}
 	for _, name := range s.order {
 		snap.Connections = append(snap.Connections, s.conns[name])
