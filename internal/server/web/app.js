@@ -247,8 +247,8 @@
           </div>
         </div>
         <div class="acts">
-          <button class="act key" data-do="restore">${icon("rotate-cw")}Вернуть как было</button>
-          <button class="act" data-do="snapshot">${icon("clock")}Запомнить заново</button>
+          <button class="act key" data-do="skip">${icon("skip-forward")}Скипнуть</button>
+          <button class="act" data-do="restore">${icon("rotate-cw")}Вернуть Spotify</button>
         </div>`);
       return;
     }
@@ -302,21 +302,28 @@
     host.replaceChildren(box);
   }
 
-  // ── заказы ─────────────────────────────────────────────────────────
+  // ── очередь ────────────────────────────────────────────────────────
+  //
+  // Частые действия — скип и удаление — в один клик, без подтверждений.
+  // Подтверждение только у того, что не отменить: очистка очереди и бан.
+
+  let dragId = null;
 
   function renderOrders(s) {
-    const list = s.redemptions;
+    const list = s.queue;
     const box = $("orders");
 
-    // Считаем только неразобранные: иначе бейдж горит вечно, а обнулить его
-    // нечем — удаления записей нет.
-    const pending = list.filter((r) => r.status === "new").length;
-    $("orders-count").textContent = pending;
-    $("orders-count").classList.toggle("zero", pending === 0);
+    $("orders-count").textContent = list.length;
+    $("orders-count").classList.toggle("zero", list.length === 0);
+
+    const left = list.reduce((sum, i) => sum + i.duration_ms, 0);
+    $("queue-rest").textContent = list.length ? `ещё ${minutesLeft(left)}` : "";
+
+    $("queue-pause").textContent = s.paused ? "возобновить заказы" : "остановить заказы";
+    $("queue-pause").classList.toggle("on", s.paused);
+    $("queue-clear").hidden = list.length === 0;
 
     if (!list.length) {
-      // Пустой список — повод показать, что именно увидит зритель: так
-      // понятно, что всё на месте, а не «здесь пока ничего».
       swap(box, s.twitch.reward_ready ? `
         <div class="preview">
           <div class="preview-label">так награду видят зрители</div>
@@ -331,8 +338,8 @@
         </div>` : `
         <div class="void">
           <div class="rule"></div>
-          <div class="mark">Заказов пока нет</div>
-          <div class="say">Они появятся здесь, когда на канале заработает награда за баллы.</div>
+          <div class="mark">Очередь пуста</div>
+          <div class="say">Заказы появятся здесь, когда на канале заработает награда за баллы.</div>
         </div>`);
       knownOrderIds = new Set();
       return;
@@ -342,28 +349,126 @@
     // страницы мигнёт весь список разом.
     const first = knownOrderIds === null;
 
-    box.innerHTML = `<ul class="rows">${list.map((r, i) => {
+    box.innerHTML = `<ul class="rows queue-rows">${list.map((r, i) => {
       const fresh = !first && !knownOrderIds.has(r.id) ? " fresh" : "";
-      const done = r.status !== "new";
-      return `<li class="${fresh.trim()}">
+      return `<li class="${fresh.trim()}" draggable="true" data-id="${r.id}">
+        <span class="grip" title="перетащи, чтобы поменять порядок">${icon("grip-vertical")}</span>
         <span class="idx">${String(i + 1).padStart(2, "0")}</span>
         <span class="body">
-          <span class="ttl">${matchLine(r)}</span>
+          <span class="ttl">${esc(r.artist)} — ${esc(r.title)}</span>
           <span class="sub">
-            ${matchNote(r)}
-            <span class="chip">${r.cost} ${plural(r.cost, "балл", "балла", "баллов")}</span>
-            ${esc(r.user)} · ${hhmm(r.at)}
+            ${r.source === "donation" ? `<span class="chip money">донат</span>` : ""}
+            ${r.uncertain ? `<span class="tag doubt" title="совпадение неточное">неточно</span>` : ""}
+            ${r.provider === "youtube" ? `<span class="tag miss">YouTube</span>` : ""}
+            ${esc(r.requester)}
+            ${r.raw_request ? `<span class="asked" title="${esc(r.raw_request)}">${esc(r.raw_request)}</span>` : ""}
           </span>
         </span>
-        <span class="deal">${done
-          ? `<span class="done">${r.status === "refunded" ? "баллы возвращены" : "принят"}</span>`
-          : `<button class="act small" data-order="${esc(r.id)}" data-act="fulfill">Принять</button>
-             <button class="act small risky" data-order="${esc(r.id)}" data-act="refund">Вернуть баллы</button>`}
+        <span class="len">${mmss(r.duration_ms)}</span>
+        <span class="deal">
+          <button class="icon-btn" data-queue="${r.id}" data-act="top" title="Наверх">${icon("arrow-up")}</button>
+          <button class="icon-btn" data-queue="${r.id}" data-act="remove" title="Удалить, баллы не возвращать">${icon("x")}</button>
+          <button class="icon-btn kill" data-queue="${r.id}" data-act="refund" title="Удалить и вернуть баллы">${icon("trash-2")}</button>
         </span>
       </li>`;
     }).join("")}</ul>`;
 
+    wireDrag(box);
     knownOrderIds = new Set(list.map((r) => r.id));
+  }
+
+  // Перетаскивание порядка. Родной drag&drop браузера: своя реализация на
+  // мышиных событиях ломается на каждом обновлении списка.
+  function wireDrag(box) {
+    box.querySelectorAll("li[draggable]").forEach((li) => {
+      li.ondragstart = (e) => {
+        dragId = li.dataset.id;
+        li.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+      };
+      li.ondragend = () => {
+        li.classList.remove("dragging");
+        box.querySelectorAll("li").forEach((x) => x.classList.remove("over"));
+        dragId = null;
+      };
+      li.ondragover = (e) => {
+        e.preventDefault();
+        if (li.dataset.id !== dragId) li.classList.add("over");
+      };
+      li.ondragleave = () => li.classList.remove("over");
+      li.ondrop = (e) => {
+        e.preventDefault();
+        li.classList.remove("over");
+        if (!dragId || li.dataset.id === dragId) return;
+
+        const ids = [...box.querySelectorAll("li")].map((x) => x.dataset.id);
+        const from = ids.indexOf(dragId);
+        ids.splice(from, 1);
+        ids.splice(ids.indexOf(li.dataset.id), 0, dragId);
+
+        fetch("/api/queue/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(ids.map(Number)),
+        }).catch(() => say("Не смог поменять порядок", true));
+      };
+    });
+  }
+
+  // Подтверждение прямо на кнопке: диалог браузера выглядит чужеродно и
+  // выбивает из панели, а отменить очистку очереди уже нельзя.
+  function confirmThen(btn, question, run) {
+    if (btn.dataset.armed === "1") {
+      btn.dataset.armed = "0";
+      btn.textContent = btn.dataset.label;
+      btn.classList.remove("armed");
+      run();
+      return;
+    }
+    btn.dataset.label = btn.textContent;
+    btn.dataset.armed = "1";
+    btn.textContent = question;
+    btn.classList.add("armed");
+    setTimeout(() => {
+      if (btn.dataset.armed !== "1") return;
+      btn.dataset.armed = "0";
+      btn.textContent = btn.dataset.label;
+      btn.classList.remove("armed");
+    }, 4000);
+  }
+
+  $("queue-pause").onclick = (e) => {
+    const on = !lastState || !lastState.paused;
+    post(`/api/queue/pause?on=${on ? 1 : 0}`, e.currentTarget);
+  };
+
+  $("queue-clear").onclick = (e) => {
+    confirmThen(e.currentTarget, "точно очистить?",
+      () => post("/api/queue/clear?refund=1"));
+  };
+
+  $("ban-add").onclick = (e) => {
+    const login = $("ban-login").value.trim().replace(/^@/, "");
+    if (!login) return;
+    confirmThen(e.currentTarget, `закрыть заказы для ${login}?`, async () => {
+      if (await post(`/api/bans?login=${encodeURIComponent(login)}`)) {
+        $("ban-login").value = "";
+      }
+    });
+  };
+
+  function renderBans(list) {
+    const box = $("banlist");
+    if (!list || !list.length) {
+      box.innerHTML = `<div class="hint">Пока никому не закрыт.</div>`;
+      return;
+    }
+    box.innerHTML = `<ul class="bans">${list.map((b) => `
+      <li>
+        <span class="who">${esc(b.login)}</span>
+        ${b.reason ? `<span class="why">${esc(b.reason)}</span>` : ""}
+        <button class="link-btn" data-unban="${esc(b.login)}">вернуть</button>
+      </li>`).join("")}</ul>`;
   }
 
   // Итоги сессии. Числа настоящие, и в тихий вечер это единственное, что на
@@ -383,36 +488,6 @@
       cell(ses.accepted, "принято") +
       cell(ses.refunded, "возвращено") +
       cell(uptime, "в работе");
-  }
-
-  // Что нашлось по тексту заказа. Пока трека нет, показываем сам текст —
-  // человек должен узнать сообщение зрителя.
-  function matchLine(r) {
-    const m = r.match || {};
-    if (m.state === "found" || m.state === "uncertain") {
-      return `${esc(m.artist)} — ${esc(m.title)}`;
-    }
-    return r.text ? esc(r.text) : `<span class="muted">без текста</span>`;
-  }
-
-  function matchNote(r) {
-    const m = r.match || {};
-    switch (m.state) {
-      case "searching":
-        return `<span class="tag searching">ищу…</span>`;
-      case "uncertain":
-        return `<span class="tag doubt" title="${esc(m.why || "")}">неточно</span>`;
-      case "missing":
-        return `<span class="tag miss">в Spotify нет</span>`;
-      case "failed":
-        return `<span class="tag miss" title="${esc(m.note || "")}">не искал</span>`;
-      case "found":
-        // Найденный трек и так виден строкой выше; исходный текст показываем
-        // рядом, чтобы было понятно, из чего он получился.
-        return r.text ? `<span class="asked" title="${esc(r.text)}">${esc(r.text)}</span>` : "";
-      default:
-        return "";
-    }
   }
 
   // ── хроника ────────────────────────────────────────────────────────
@@ -666,6 +741,7 @@
     logout: (btn) => post("/api/spotify/logout", btn),
     check: (btn) => post("/api/spotify/check", btn),
     snapshot: (btn) => post("/api/spotify/snapshot", btn),
+    skip: (btn) => post("/api/queue/skip", btn),
     restore: (btn) => post("/api/spotify/restore", btn),
     "twitch-login": (btn) => saveThenConnect("twitch-id", "twitch_client_id",
       (b) => post("/api/twitch/login", b), btn),
@@ -683,9 +759,21 @@
       return;
     }
 
-    const order = e.target.closest("[data-order]");
-    if (order) {
-      post(`/api/redemptions/${encodeURIComponent(order.dataset.order)}?action=${order.dataset.act}`, order);
+    const q = e.target.closest("[data-queue]");
+    if (q) {
+      const id = q.dataset.queue;
+      const path = {
+        top: `/api/queue/${id}/top`,
+        remove: `/api/queue/${id}/remove`,
+        refund: `/api/queue/${id}/remove?refund=1`,
+      }[q.dataset.act];
+      if (path) post(path, q);
+      return;
+    }
+
+    const unban = e.target.closest("[data-unban]");
+    if (unban) {
+      post(`/api/bans?login=${encodeURIComponent(unban.dataset.unban)}&undo=1`, unban);
       return;
     }
 
@@ -728,8 +816,6 @@
 
   let lastState = null;
 
-  const pendingOrders = (s) => s.redemptions.filter((r) => r.status === "new").length;
-
   function render(s) {
     lastState = s;
     document.body.classList.remove("stale");
@@ -737,7 +823,8 @@
     const sig = JSON.stringify;
     draw("bar", sig(s.connections) + s.version, () => renderBar(s));
     draw("stage", sig([s.now, s.spotify, s.connections]), () => renderStage(s));
-    draw("orders", sig([s.redemptions, s.twitch.reward_title]), () => renderOrders(s));
+    draw("orders", sig([s.queue, s.paused, s.twitch.reward_title, s.twitch.reward_cost]), () => renderOrders(s));
+    draw("bans", sig(s.bans), () => renderBans(s.bans));
     draw("feed", sig(s.notices), () => renderFeed(s));
     draw("tally", sig(s.session), () => renderTally(s));
     draw("banner", sig([s.twitch.pending_code, s.twitch.pending_expires]), () => renderBanner(s.twitch));
@@ -755,8 +842,8 @@
     // Заголовок вкладки — тоже часть панели: стример держит её в фоне.
     document.title = s.now
       ? `${s.now.artist} — ${s.now.title}`
-      : pendingOrders(s) > 0
-        ? `${pendingOrders(s)} · Заказ музыки`
+      : s.queue.length > 0
+        ? `${s.queue.length} в очереди · Заказ музыки`
         : "Заказ музыки";
   }
 

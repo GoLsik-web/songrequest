@@ -150,6 +150,7 @@ func (s *Server) startEventSub(ctx context.Context, rewardID string) {
 
 	events := twitch.NewEventSub(s.twitch)
 	events.OnRedemption = s.onRedemption
+	events.OnChat = s.onChat
 	events.OnStatus = func(connected bool, detail string) {
 		if connected {
 			s.state.SetConnOK("Twitch", detail)

@@ -14,6 +14,7 @@ import (
 	"songrequest/internal/config"
 	"songrequest/internal/logx"
 	"songrequest/internal/match"
+	"songrequest/internal/queue"
 	"songrequest/internal/spotify"
 	"songrequest/internal/store"
 	"songrequest/internal/twitch"
@@ -107,8 +108,12 @@ func newTestServer(t *testing.T, tune func(*config.Config), handler http.Handler
 		twitch:     twitch.NewForTest(cfg, log, keys, api.URL),
 		db:         db,
 		matchCache: match.NewCache(db.SQL()),
+		queue:      queue.New(db.SQL()),
 		dataDir:    dir,
 	}
+	// Плеер собираем как в настоящем сервере, но не запускаем: тесты
+	// проверяют очередь и отказы, а не проигрывание в реальном времени.
+	srv.setupPlayer(cfg)
 	return srv, &calls
 }
 

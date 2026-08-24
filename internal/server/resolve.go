@@ -8,6 +8,7 @@ import (
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
 	"songrequest/internal/match"
+	"songrequest/internal/queue"
 	"songrequest/internal/twitch"
 )
 
@@ -15,11 +16,10 @@ import (
 // повторами укладываются с запасом, а зритель не должен ждать минуту.
 const resolveTimeout = 25 * time.Second
 
-// resolveOrder ищет заказанный трек в Spotify.
+// resolveOrder ищет заказанный трек в Spotify и ставит его в очередь.
 //
-// Очереди ещё нет, поэтому найденный трек пока просто показывается в панели.
-// Но весь путь — разбор текста, поиск, оценка, кэш — уже настоящий, и именно
-// он определит, что заиграет, когда появится очередь.
+// Не нашли — баллы возвращаются, и зритель получает объяснение в чат. Заказ,
+// за который списали баллы и промолчали, — это жалоба в чат через минуту.
 func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
@@ -33,6 +33,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 			State: app.MatchFailed,
 			Note:  "Зритель не написал, что заказывает",
 		})
+		s.rejectRedemption(ctx, r, "ты не написал, что заказываешь")
 		return
 	}
 
@@ -48,6 +49,12 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 			Title:   hit.Title,
 			Artist:  hit.Artist,
 			Note:    memoryNote(hit.Manual),
+		})
+		s.enqueue(ctx, queue.Item{
+			Source: queue.SourcePoints, Requester: r.UserName, RawRequest: r.UserInput,
+			Provider: "spotify", TrackID: hit.TrackID, URI: "spotify:track:" + hit.TrackID,
+			Title: hit.Title, Artist: hit.Artist, DurationMs: hit.DurationMs,
+			CoverURL: hit.CoverURL, RedemptionID: r.ID, RewardID: r.RewardID,
 		})
 		return
 	}
@@ -70,6 +77,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		code, text := errs.Describe(err)
 		s.log.Error("поиск трека не удался", "заказ", r.UserInput, "код", code, "ошибка", err)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{State: app.MatchFailed, Note: text})
+		s.rejectRedemption(ctx, r, "не получилось поискать трек, попробуй ещё раз")
 		return
 	}
 
@@ -83,6 +91,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 			State: app.MatchMissing,
 			Note:  "В Spotify не нашлось",
 		})
+		s.rejectRedemption(ctx, r, "не нашёл такого трека в Spotify")
 		return
 	}
 
@@ -123,6 +132,35 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		Note:     note,
 		Why:      res.Score.Why,
 	})
+
+	s.enqueue(ctx, queue.Item{
+		Source:       queue.SourcePoints,
+		Requester:    r.UserName,
+		RawRequest:   r.UserInput,
+		Provider:     "spotify",
+		TrackID:      res.Track.ID,
+		URI:          res.Track.URI,
+		Title:        res.Track.Title,
+		Artist:       res.Track.Artists[0],
+		DurationMs:   res.Track.DurationMs,
+		CoverURL:     res.Track.CoverURL,
+		Uncertain:    res.Uncertain,
+		RedemptionID: r.ID,
+		RewardID:     r.RewardID,
+	})
+}
+
+// rejectRedemption возвращает баллы и объясняет зрителю, почему.
+func (s *Server) rejectRedemption(ctx context.Context, r twitch.Redemption, reason string) {
+	if r.ID != "" && r.RewardID != "" {
+		if err := s.twitch.RefundRedemption(ctx, r.RewardID, r.ID); err != nil {
+			s.log.Error("не смог вернуть баллы за неудачный заказ", "ошибка", err)
+			s.state.NotifyError(err)
+		} else {
+			s.state.SetRedemptionStatus(r.ID, app.OrderRefunded)
+		}
+	}
+	s.say(ctx, "@"+r.UserName+", "+reason+". Баллы вернул.")
 }
 
 func memoryNote(manual bool) string {

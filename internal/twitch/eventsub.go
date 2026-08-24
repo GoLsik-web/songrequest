@@ -41,6 +41,8 @@ type EventSub struct {
 	OnRedemption func(Redemption)
 	// OnStatus сообщает панели, жива ли подписка.
 	OnStatus func(connected bool, detail string)
+	// OnChat вызывается на каждое сообщение в чате канала.
+	OnChat func(ChatMessage)
 
 	wsURL string
 }
@@ -157,6 +159,9 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 				if err := e.subscribe(ctx, p.Session.ID, rewardID); err != nil {
 					return "", err
 				}
+				if e.OnChat != nil {
+					e.subscribeChat(ctx, p.Session.ID)
+				}
 			}
 			e.status(true, "заказы принимаются")
 			e.client.log.Info("подписка на заказы Twitch активна", "молчание_до", keepalive.String())
@@ -184,6 +189,11 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 				"Twitch отозвал доступ к заказам. Нажми «Подключить Twitch» заново.")
 
 		case "notification":
+			// Тип события разный, и разбирать их надо по-разному.
+			if msg.Metadata.SubscriptionType == "channel.chat.message" {
+				e.handleChat(msg.Payload)
+				break
+			}
 			e.handleNotification(msg.Payload)
 
 		default:

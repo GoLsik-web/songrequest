@@ -35,7 +35,12 @@
   <div class="lower">
     <section class="orders">
       <div class="kicker">
-        Заказы за баллы <span class="cnt zero" id="orders-count">0</span>
+        Очередь <span class="cnt zero" id="orders-count">0</span>
+        <span class="rest" id="queue-rest"></span>
+        <span class="queue-tools">
+          <button class="link-btn" id="queue-pause"></button>
+          <button class="link-btn danger" id="queue-clear">очистить</button>
+        </span>
       </div>
       <div id="orders"></div>
     </section>
@@ -119,6 +124,17 @@
         <select id="playlist"><option value="">— не выбран —</option></select>
       </label>
       <div class="hint" id="playlist-hint"></div>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Кому закрыт заказ музыки</div>
+      <div class="hint" style="margin-top:0">Отдельный список от бана в чате.</div>
+      <div id="banlist"></div>
+      <div class="acts">
+        <input type="text" id="ban-login" class="inline-input" placeholder="ник"
+               spellcheck="false" autocomplete="off">
+        <button class="act small risky" id="ban-add">Закрыть заказы</button>
+      </div>
     </div>
 
     <div class="col">

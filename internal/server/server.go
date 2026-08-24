@@ -20,6 +20,8 @@ import (
 	"songrequest/internal/config"
 	"songrequest/internal/logx"
 	"songrequest/internal/match"
+	"songrequest/internal/player"
+	"songrequest/internal/queue"
 	"songrequest/internal/spotify"
 	"songrequest/internal/store"
 	"songrequest/internal/twitch"
@@ -51,6 +53,8 @@ type Server struct {
 	db      *store.DB
 	// matchCache помнит, чем закончился поиск по такому же запросу.
 	matchCache *match.Cache
+	queue      *queue.Queue
+	player     *player.Player
 	dataDir    string
 	version    string
 
@@ -100,6 +104,8 @@ func New(d Deps) (*Server, error) {
 
 	if d.DB != nil {
 		s.matchCache = match.NewCache(d.DB.SQL())
+		s.queue = queue.New(d.DB.SQL())
+		s.setupPlayer(d.Cfg)
 	}
 
 	sub, err := fs.Sub(webFS, "web")
@@ -129,6 +135,17 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /api/twitch/login", s.handleTwitchLogin)
 	mux.HandleFunc("POST /api/twitch/logout", s.handleTwitchLogout)
 	mux.HandleFunc("POST /api/redemptions/{id}", s.handleRedemptionAction)
+
+	mux.HandleFunc("POST /api/queue/skip", s.handleSkip)
+	mux.HandleFunc("POST /api/queue/{id}/remove", s.handleQueueRemove)
+	mux.HandleFunc("POST /api/queue/{id}/top", s.handleQueueTop)
+	mux.HandleFunc("POST /api/queue/reorder", s.handleQueueReorder)
+	mux.HandleFunc("POST /api/queue/clear", s.handleQueueClear)
+	mux.HandleFunc("POST /api/queue/pause", s.handlePause)
+	mux.HandleFunc("POST /api/bans", s.handleBan)
+	mux.HandleFunc("GET /api/bans", s.handleBans)
+	mux.HandleFunc("GET /api/history", s.handleHistory)
+	mux.HandleFunc("GET /api/modlog", s.handleModLog)
 
 	s.http = &http.Server{
 		Handler:           s.guard(mux),

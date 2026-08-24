@@ -48,12 +48,16 @@ type NowPlaying struct {
 
 // QueueItem — заказ в очереди.
 type QueueItem struct {
-	ID         int64  `json:"id"`
-	Source     string `json:"source"`
-	Requester  string `json:"requester"`
-	Title      string `json:"title"`
-	Artist     string `json:"artist"`
-	Provider   string `json:"provider"`
+	ID        int64  `json:"id"`
+	Source    string `json:"source"`
+	Requester string `json:"requester"`
+	Title     string `json:"title"`
+	Artist    string `json:"artist"`
+	Provider  string `json:"provider"`
+	// RawRequest — что написал зритель. Показываем рядом с найденным треком:
+	// сразу видно, если подобралось не то.
+	RawRequest string `json:"raw_request"`
+	CoverURL   string `json:"cover_url"`
 	DurationMs int    `json:"duration_ms"`
 	Uncertain  bool   `json:"uncertain"`
 }
@@ -182,7 +186,17 @@ type Snapshot struct {
 	Twitch      TwitchInfo       `json:"twitch"`
 	Redemptions []RedemptionView `json:"redemptions"`
 	Session     Session          `json:"session"`
-	DebugLog    bool             `json:"debug_log"`
+	// Bans — бан-лист музыки. Отдельный от бана в чате: человек может быть
+	// нормальным в чате и неуместным в заказах.
+	Bans     []Ban `json:"bans"`
+	DebugLog bool  `json:"debug_log"`
+}
+
+// Ban — закрытый доступ к заказам.
+type Ban struct {
+	Login  string    `json:"login"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // State — потокобезопасное состояние с уведомлением подписчиков об изменениях.
@@ -199,6 +213,7 @@ type State struct {
 	twitch      TwitchInfo
 	redemptions []RedemptionView
 	session     Session
+	bans        []Ban
 	debug       bool
 
 	subs map[int]chan struct{}
@@ -385,6 +400,14 @@ func (s *State) SetRedemptionStatus(id, status string) {
 	s.notify()
 }
 
+// SetBans обновляет бан-лист в панели.
+func (s *State) SetBans(list []Ban) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bans = list
+	s.notify()
+}
+
 // SetDebugLog запоминает, включён ли подробный лог (галочка в панели).
 func (s *State) SetDebugLog(on bool) {
 	s.mu.Lock()
@@ -438,6 +461,7 @@ func (s *State) Snapshot() Snapshot {
 		Twitch:      s.twitch,
 		Redemptions: append(make([]RedemptionView, 0, len(s.redemptions)), s.redemptions...),
 		Session:     s.session,
+		Bans:        append(make([]Ban, 0, len(s.bans)), s.bans...),
 		DebugLog:    s.debug,
 	}
 	for _, name := range s.order {
