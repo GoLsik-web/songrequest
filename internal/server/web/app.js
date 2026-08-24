@@ -678,6 +678,7 @@
       $("twitch-id").value = config.twitch_client_id || "";
       $("da-id").value = config.donationalerts_client_id || "";
       $("dp-key").value = config.donatepay_key || "";
+      $("dx-key").value = config.donatex_key || "";
       $("donation-min").value = config.donation_min ?? "";
       $("yt-browser").value = config.youtube_browser || "";
       applyMode(config.resume_fail_mode);
@@ -838,6 +839,12 @@
       say("Ключ DonatePay сохранён. Перезапусти приложение, чтобы он заработал.");
     }
   };
+  $("save-dx-key").onclick = async () => {
+    if (await saveConfig({ donatex_key: $("dx-key").value.trim() })) {
+      say("Ключ DonateX сохранён. Перезапусти приложение, чтобы он заработал.");
+    }
+  };
+
   $("donation-min").onchange = async (e) => {
     const value = parseFloat(e.target.value.replace(",", "."));
     if (!isFinite(value) || value < 0) {

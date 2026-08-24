@@ -249,7 +249,7 @@ func New(version string) *State {
 	}
 	s.session.StartedAt = time.Now()
 
-	for _, name := range []string{"Spotify", "Twitch", "DonationAlerts", "DonatePay"} {
+	for _, name := range []string{"Spotify", "Twitch", "DonationAlerts", "DonatePay", "DonateX"} {
 		s.order = append(s.order, name)
 		s.conns[name] = ConnState{Name: name, Level: ConnIdle, Detail: "Не настроено"}
 	}

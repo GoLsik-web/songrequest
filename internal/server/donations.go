@@ -39,6 +39,9 @@ func (s *Server) setupDonations() {
 	s.donations.Add(donations.NewDonatePay(s.log,
 		func() string { return s.cfg.Get().DonatePayKey },
 		s.donations.Status("DonatePay")))
+	s.donations.Add(donations.NewDonateX(s.log,
+		func() string { return s.cfg.Get().DonateXKey },
+		s.donations.Status("DonateX")))
 }
 
 // StartDonations поднимает подключения к сервисам донатов.
