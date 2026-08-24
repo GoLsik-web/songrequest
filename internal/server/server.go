@@ -18,6 +18,7 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/config"
+	"songrequest/internal/donations"
 	"songrequest/internal/logx"
 	"songrequest/internal/match"
 	"songrequest/internal/player"
@@ -55,8 +56,11 @@ type Server struct {
 	matchCache *match.Cache
 	queue      *queue.Queue
 	player     *player.Player
-	dataDir    string
-	version    string
+
+	donations      *donations.Hub
+	donationAlerts *donations.DonationAlerts
+	dataDir        string
+	version        string
 
 	http *http.Server
 	ln   net.Listener
@@ -107,6 +111,7 @@ func New(d Deps) (*Server, error) {
 		s.queue = queue.New(d.DB.SQL())
 		s.setupPlayer(d.Cfg)
 	}
+	s.setupDonations()
 
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -146,6 +151,11 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("GET /api/bans", s.handleBans)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/modlog", s.handleModLog)
+
+	mux.HandleFunc("POST /api/donations/login", s.handleDonationAlertsLogin)
+	mux.HandleFunc("POST /api/donations/logout", s.handleDonationAlertsLogout)
+	mux.HandleFunc("POST /api/donations/token", s.handleDonationsToken)
+	mux.HandleFunc("GET /donations/callback", s.handleDonationAlertsCallback)
 
 	s.http = &http.Server{
 		Handler:           s.guard(mux),

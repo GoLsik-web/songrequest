@@ -48,6 +48,13 @@ const (
 	TwitchBadResponse  Code = "TW-11" // Twitch ответил не тем, чего мы ждали
 	TwitchForeignAward Code = "TW-12" // награду создали не мы, баллы не вернуть
 
+	// Донаты
+	DonationsNoClientID  Code = "DN-01" // не заполнен client_id сервиса
+	DonationsAuth        Code = "DN-02" // вход не выполнен или слетел
+	DonationsUnreachable Code = "DN-03" // сервис не отвечает
+	DonationsBadResponse Code = "DN-04" // сервис ответил не тем
+	DonationsTooSmall    Code = "DN-05" // донат меньше порога заказа
+
 	// Диагностика
 	DiagExport Code = "DIAG-01" // не собрался архив с логом
 )

@@ -119,6 +119,7 @@ func run() error {
 	srv.SyncTwitch()
 	srv.StartTwitchIfConnected(ctx)
 	srv.StartPlayer(ctx)
+	srv.StartDonations(ctx)
 
 	return srv.Serve(ctx)
 }

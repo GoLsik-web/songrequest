@@ -127,6 +127,36 @@
     </div>
 
     <div class="col">
+      <div class="kicker">Донаты</div>
+      <label class="field">
+        <span>Client ID DonationAlerts</span>
+        <input type="text" id="da-id" spellcheck="false" autocomplete="off"
+               placeholder="из инструкции по донатам">
+      </label>
+      <div class="acts">
+        <button class="act small" id="save-da-id">Сохранить</button>
+        <button class="act small key" data-do="da-login">Подключить DonationAlerts</button>
+        <button class="act small risky" data-do="da-logout">Отключить</button>
+      </div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Ключ DonatePay — из профиля DonatePay</span>
+        <input type="text" id="dp-key" spellcheck="false" autocomplete="off"
+               placeholder="вставь ключ">
+      </label>
+      <div class="acts">
+        <button class="act small" id="save-dp-key">Сохранить</button>
+      </div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Заказ за донат от какой суммы</span>
+        <input type="text" id="donation-min" spellcheck="false" autocomplete="off">
+      </label>
+      <div class="hint">Донаты меньше этой суммы просто показываются в хронике —
+        заказом они не становятся. Деньги в любом случае остаются у тебя.</div>
+    </div>
+
+    <div class="col">
       <div class="kicker">Кому закрыт заказ музыки</div>
       <div class="hint" style="margin-top:0">Отдельный список от бана в чате.</div>
       <div id="banlist"></div>
