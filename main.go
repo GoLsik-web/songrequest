@@ -118,6 +118,7 @@ func run() error {
 	// и подпишется на заказы, без единого нажатия.
 	srv.SyncTwitch()
 	srv.StartTwitchIfConnected(ctx)
+	srv.StartPlayer(ctx)
 
 	return srv.Serve(ctx)
 }

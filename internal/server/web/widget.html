@@ -2,31 +2,167 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>Виджет заказа музыки</title>
+<title>Заказ музыки — виджет</title>
+<link rel="stylesheet" href="/static/fonts/fonts.css">
 <style>
-  /* Прозрачный фон обязателен: в OBS это Browser Source поверх картинки.
-     Пока виджета нет, страница всё равно должна что-то говорить — открытая
-     пустая вкладка выглядит как поломка. */
-  html, body { margin: 0; background: transparent; }
-  body {
-    font: 15px/1.6 system-ui, "Segoe UI", sans-serif;
-    color: #f2f4f5;
-    background: #08090a;
-    display: grid; place-items: center; min-height: 100vh;
-    text-align: center;
-  }
-  div { max-width: 420px; padding: 0 24px; }
-  b { display: block; font-size: 20px; margin-bottom: 10px; }
-  p { color: #6f777e; margin: 0; }
-  i { display: block; width: 40px; height: 2px; background: #282c30; margin: 0 auto 20px; }
+/* Виджет для OBS. Прозрачный фон обязателен: это Browser Source поверх
+   картинки. Оформление отличается от панели: панель читает стример вблизи,
+   а это видят зрители поверх игры, часто мелко и в движении. */
+
+html, body { margin: 0; background: transparent; overflow: hidden; }
+
+body {
+  font: 15px/1.4 Manrope, system-ui, sans-serif;
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Позиция задаётся адресом: ?pos=left-bottom и так далее. */
+#card {
+  position: fixed;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px 12px 12px;
+  max-width: 460px;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity .4s cubic-bezier(.2,.7,.3,1), transform .4s cubic-bezier(.2,.7,.3,1);
+}
+#card.show { opacity: 1; transform: none; }
+
+/* Два оформления. Тёмное — по умолчанию: читается на любой картинке. */
+body[data-style="dark"] #card {
+  background: rgba(8, 9, 10, .82);
+  border-radius: 4px;
+  border-left: 3px solid #c8f751;
+  backdrop-filter: blur(8px);
+}
+/* Второе — без подложки, только текст с обводкой: не закрывает игру. */
+body[data-style="bare"] #card {
+  background: none;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, .9), 0 0 2px rgba(0, 0, 0, .9);
+}
+body[data-style="bare"] .art { box-shadow: 0 4px 16px rgba(0, 0, 0, .6); }
+
+.art {
+  width: 64px; height: 64px; flex: none;
+  border-radius: 3px; overflow: hidden;
+  background: #14171a;
+  display: grid; place-items: center;
+}
+.art img { width: 100%; height: 100%; object-fit: cover; }
+.art .no { width: 22px; height: 22px; opacity: .35; }
+
+.text { min-width: 0; flex: 1; }
+
+.title {
+  font-family: Unbounded, Manrope, sans-serif; font-weight: 600;
+  font-size: 17px; line-height: 1.15;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.artist {
+  font-size: 14px; opacity: .75; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.by {
+  font-size: 12px; margin-top: 6px; color: #c8f751;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.bar { height: 2px; background: rgba(255, 255, 255, .18); margin-top: 8px; border-radius: 2px; }
+.bar i { display: block; height: 100%; background: #c8f751; border-radius: 2px; width: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  #card { transition: none; }
+}
 </style>
 </head>
-<body>
-<div>
-  <i></i>
-  <b>Виджет ещё не готов</b>
-  <p>Здесь будет обложка, название трека и ник заказчика — то, что видят зрители.
-     Добавлять эту страницу в OBS пока рано.</p>
+<body data-style="dark">
+
+<div id="card">
+  <div class="art" id="art"></div>
+  <div class="text">
+    <div class="title" id="title"></div>
+    <div class="artist" id="artist"></div>
+    <div class="by" id="by"></div>
+    <div class="bar"><i id="bar"></i></div>
+  </div>
 </div>
+
+<script>
+// Виджет живёт на том же сокете, что и панель: отдельного опроса нет.
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+
+  // Оформление и позиция задаются адресом — в OBS его удобно поправить
+  // прямо в свойствах источника, не залезая в приложение.
+  document.body.dataset.style = params.get("style") === "bare" ? "bare" : "dark";
+
+  const pos = params.get("pos") || "left-bottom";
+  const card = $("card");
+  const gap = params.get("gap") || "40px";
+  if (pos.includes("left")) card.style.left = gap; else card.style.right = gap;
+  if (pos.includes("top")) card.style.top = gap; else card.style.bottom = gap;
+
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+
+  let shownTrack = null;
+  let progressTimer = null;
+
+  function render(state) {
+    const now = state.now;
+
+    if (!now) {
+      card.classList.remove("show");
+      shownTrack = null;
+      clearInterval(progressTimer);
+      return;
+    }
+
+    const key = now.title + "|" + now.artist;
+    if (key !== shownTrack) {
+      shownTrack = key;
+      $("title").textContent = now.title;
+      $("artist").textContent = now.artist;
+      $("by").textContent = now.requester ? "заказал " + now.requester : "";
+      $("art").innerHTML = now.cover_url
+        ? `<img src="${esc(now.cover_url)}" alt="">`
+        : `<svg class="no" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/>
+             <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
+      card.classList.add("show");
+    }
+
+    // Полосу двигаем сами: приложение присылает состояние только при
+    // изменениях, а прогресс должен идти плавно.
+    clearInterval(progressTimer);
+    if (now.duration_ms > 0) {
+      const started = Date.now() - now.position_ms;
+      const tick = () => {
+        const pct = Math.min(100, ((Date.now() - started) / now.duration_ms) * 100);
+        $("bar").style.width = pct + "%";
+      };
+      tick();
+      progressTimer = setInterval(tick, 1000);
+    }
+  }
+
+  let delay = 1000;
+  function connect() {
+    const socket = new WebSocket(`ws://${location.host}/ws`);
+    socket.onopen = () => { delay = 1000; };
+    socket.onmessage = (e) => render(JSON.parse(e.data));
+    socket.onclose = () => {
+      // Виджет висит в OBS сутками: долбиться каждую секунду нельзя.
+      card.classList.remove("show");
+      setTimeout(connect, delay);
+      delay = Math.min(delay * 2, 15000);
+    };
+  }
+  connect();
+})();
+</script>
 </body>
 </html>

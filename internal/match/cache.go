@@ -37,8 +37,12 @@ type Hit struct {
 	TrackID string
 	Title   string
 	Artist  string
-	Score   float64
-	Manual  bool
+	// DurationMs и CoverURL нужны очереди: заказ, взятый из памяти, должен
+	// проходить те же фильтры и выглядеть в панели так же, как найденный.
+	DurationMs int
+	CoverURL   string
+	Score      float64
+	Manual     bool
 }
 
 // Get ищет готовый ответ. ok=false означает, что надо искать заново.
@@ -53,9 +57,10 @@ func (c *Cache) Get(ctx context.Context, key string) (Hit, bool, error) {
 		created int64
 	)
 	err := c.db.QueryRowContext(ctx,
-		`SELECT track_id, title, artist, score, manual, created_at
+		`SELECT track_id, title, artist, duration_ms, cover_url, score, manual, created_at
 		   FROM match_cache WHERE query = ?`, key).
-		Scan(&hit.TrackID, &hit.Title, &hit.Artist, &hit.Score, &manual, &created)
+		Scan(&hit.TrackID, &hit.Title, &hit.Artist, &hit.DurationMs, &hit.CoverURL,
+			&hit.Score, &manual, &created)
 
 	if err == sql.ErrNoRows {
 		return Hit{}, false, nil
@@ -91,17 +96,21 @@ func (c *Cache) Put(ctx context.Context, key string, hit Hit) error {
 	// Ручное исправление важнее любого автоматического ответа: перезаписываем
 	// строку, только если новая запись тоже ручная.
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO match_cache(query, track_id, title, artist, score, manual, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO match_cache(query, track_id, title, artist, duration_ms, cover_url,
+		                         score, manual, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(query) DO UPDATE SET
-		   track_id   = excluded.track_id,
-		   title      = excluded.title,
-		   artist     = excluded.artist,
-		   score      = excluded.score,
-		   manual     = excluded.manual,
-		   created_at = excluded.created_at
+		   track_id    = excluded.track_id,
+		   title       = excluded.title,
+		   artist      = excluded.artist,
+		   duration_ms = excluded.duration_ms,
+		   cover_url   = excluded.cover_url,
+		   score       = excluded.score,
+		   manual      = excluded.manual,
+		   created_at  = excluded.created_at
 		 WHERE match_cache.manual = 0 OR excluded.manual = 1`,
-		key, hit.TrackID, hit.Title, hit.Artist, hit.Score, manual, time.Now().Unix())
+		key, hit.TrackID, hit.Title, hit.Artist, hit.DurationMs, hit.CoverURL,
+		hit.Score, manual, time.Now().Unix())
 	return err
 }
 

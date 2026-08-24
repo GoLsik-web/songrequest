@@ -679,3 +679,60 @@ footer.online { color: var(--dimmer); }
   font-size: 12px; color: var(--faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%;
 }
+
+/* ── Очередь ────────────────────────────────────────────────────────── */
+
+.kicker .rest { font-weight: 500; letter-spacing: var(--track-chip); color: var(--faint); }
+.kicker .queue-tools { margin-left: auto; display: flex; gap: var(--s3); }
+
+.link-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--dimmer); font: 600 var(--t-xs)/1 Manrope, system-ui, sans-serif;
+  letter-spacing: var(--track-chip); text-transform: uppercase;
+  padding: 2px 0;
+  transition: color var(--fast) var(--ease);
+}
+.link-btn:hover { color: var(--text); }
+.link-btn.on { color: var(--lime); }
+.link-btn.danger:hover { color: var(--bad); }
+.link-btn.armed { color: var(--bad); text-transform: none; letter-spacing: 0; }
+
+.queue-rows li { grid-template-columns: 16px 30px minmax(0, 1fr) auto auto; }
+
+/* Ручка перетаскивания: без неё непонятно, что строку можно двигать. */
+.grip {
+  color: var(--faint); cursor: grab; display: grid; place-items: center;
+  opacity: 0; transition: opacity var(--fast) var(--ease);
+}
+.grip svg { width: 14px; height: 14px; }
+.queue-rows li:hover .grip { opacity: 1; }
+.queue-rows li.dragging { opacity: .4; }
+.queue-rows li.over { box-shadow: inset 0 2px 0 var(--lime); }
+
+.icon-btn {
+  background: none; border: none; cursor: pointer; color: var(--dimmer);
+  padding: var(--s1); display: grid; place-items: center; border-radius: 2px;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.icon-btn:hover { color: var(--text); background: var(--hover); }
+.icon-btn.kill:hover { color: var(--bad); }
+.icon-btn svg { width: 15px; height: 15px; }
+
+/* ── Бан-лист ───────────────────────────────────────────────────────── */
+
+.bans { list-style: none; margin: var(--s3) 0 0; padding: 0; font-size: var(--t-sm); }
+.bans li {
+  display: flex; align-items: baseline; gap: var(--s2);
+  padding: var(--s2) 0; border-bottom: 1px solid var(--line);
+}
+.bans li:last-child { border-bottom: none; }
+.bans .who { font-weight: 600; }
+.bans .why { color: var(--dimmer); font-size: 12px; flex: 1; overflow-wrap: anywhere; }
+
+.inline-input {
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: 2px;
+  color: var(--text); padding: var(--s2) var(--s3); font: inherit; font-size: 12px;
+  width: 120px;
+  transition: border-color var(--fast) var(--ease);
+}
+.inline-input:focus { outline: none; border-color: var(--lime); }

@@ -85,6 +85,17 @@ var migrations = []string{
 		value TEXT NOT NULL
 	);
 	`,
+
+	// Для воспроизведения нужен не только идентификатор трека, но и его uri:
+	// именно его принимает Spotify. Отдельной миграцией, потому что база у
+	// тестера уже создана по первой.
+	`ALTER TABLE queue ADD COLUMN uri TEXT NOT NULL DEFAULT '';`,
+
+	// Заказ, взятый из памяти, должен проходить те же фильтры и выглядеть
+	// в панели так же, как найденный, — значит длительность и обложку тоже
+	// надо помнить.
+	`ALTER TABLE match_cache ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;
+	 ALTER TABLE match_cache ADD COLUMN cover_url TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open открывает базу в dir/songrequest.db и доводит схему до последней версии.
