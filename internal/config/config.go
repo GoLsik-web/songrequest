@@ -42,6 +42,7 @@ type Config struct {
 	// Донаты
 	DonationAlertsClientID string  `json:"donationalerts_client_id"`
 	DonatePayKey           string  `json:"donatepay_key"`
+	DonateXKey             string  `json:"donatex_key"`
 	DonationMin            float64 `json:"donation_min"` // от какой суммы принимаем заказ
 
 	// Лимиты заказов
