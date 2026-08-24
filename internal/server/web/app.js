@@ -574,6 +574,17 @@
 
   // ── карточки аккаунтов ─────────────────────────────────────────────
 
+  // Доступ к Twitch у публичных приложений живёт тридцать дней. Показываем
+  // дату всегда, а не только перед концом: тогда это не сюрприз.
+  function renewLine(tw) {
+    if (!tw.renew_at) return "";
+    const when = new Date(tw.renew_at).toLocaleDateString("ru-RU",
+      { day: "numeric", month: "long" });
+    return tw.renew_soon
+      ? `<div class="note"><b>TW-04</b> Доступ кончается ${when} — нажми «Подключить Twitch» ещё раз.</div>`
+      : `<div class="plan">доступ действует до ${when}</div>`;
+  }
+
   const note = (code, text) =>
     `<div class="note">${code ? `<b>${esc(code)}</b> ` : ""}${esc(text)}</div>`;
 
@@ -619,6 +630,7 @@
       <div class="plan">${tw.reward_ready
         ? `награда «${esc(tw.reward_title)}» · ${tw.reward_cost} ${plural(tw.reward_cost, "балл", "балла", "баллов")}`
         : tw.has_points ? "награда не создана" : "заказы за баллы недоступны"}</div>
+      ${renewLine(tw)}
       ${tw.note ? note(tw.note_code, tw.note) : ""}`;
   }
 
