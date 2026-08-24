@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -135,6 +136,16 @@ func (s *Server) startTwitch(ctx context.Context) {
 	})
 	s.state.Notify("info", "Награда «"+reward.Title+"» готова, стоит "+strconv.Itoa(reward.Cost)+" баллов")
 
+	// Предупреждаем заранее: доступ к Twitch у публичных приложений живёт
+	// тридцать дней, и «заказы перестали приходить» посреди стрима — худший
+	// момент, чтобы это выяснить.
+	if at, soon := s.twitch.RefreshExpiry(); soon {
+		days := int(time.Until(at).Hours() / 24)
+		s.state.NotifyWarn(errs.TwitchAuthExpired, fmt.Sprintf(
+			"Доступ к Twitch кончается через %d %s — нажми «Подключить Twitch» ещё раз, это займёт минуту.",
+			days, plural(days, "день", "дня", "дней")))
+	}
+
 	s.startEventSub(ctx, reward.ID)
 }
 
@@ -262,6 +273,15 @@ func (s *Server) syncTwitchInfo() {
 			t.RewardTitle = cfg.RewardTitle
 			t.RewardCost = cfg.RewardCost
 		}
+		if at, soon := s.twitch.RefreshExpiry(); !at.IsZero() {
+			when := at
+			t.RenewAt = &when
+			t.RenewSoon = soon
+		} else {
+			t.RenewAt = nil
+			t.RenewSoon = false
+		}
+
 		if user != nil {
 			t.Channel = user.Login
 			t.ChannelType = user.StatusLabel()

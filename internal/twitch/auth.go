@@ -29,7 +29,18 @@ type tokens struct {
 	RefreshToken string    `json:"refresh_token"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	Scope        string    `json:"scope"`
+	// RefreshedAt — когда получен нынешний ключ обновления. У публичных
+	// клиентов Twitch он живёт 30 дней с момента выдачи, поэтому за его
+	// возрастом надо следить и предупреждать заранее, а не ловить отказ
+	// посреди стрима.
+	RefreshedAt time.Time `json:"refreshed_at"`
 }
+
+// refreshLifetime — сколько живёт ключ обновления у публичного клиента.
+const refreshLifetime = 30 * 24 * time.Hour
+
+// warnBefore — за сколько до конца начинаем предупреждать.
+const warnBefore = 5 * 24 * time.Hour
 
 func (t tokens) valid() bool {
 	return t.AccessToken != "" && time.Now().Add(time.Minute).Before(t.ExpiresAt)
@@ -150,6 +161,7 @@ func (c *Client) WaitLogin(ctx context.Context) error {
 				RefreshToken: out.RefreshToken,
 				ExpiresAt:    time.Now().Add(time.Duration(out.ExpiresIn) * time.Second),
 				Scope:        strings.Join(out.Scope, " "),
+				RefreshedAt:  time.Now(),
 			}
 			if err := c.saveTokens(t); err != nil {
 				return errs.Wrap(errs.TwitchAuthStart, "Вход прошёл, но сохранить его не удалось.", err)
@@ -253,16 +265,34 @@ func (c *Client) token(ctx context.Context) (string, error) {
 
 	// У Twitch ключ обновления одноразовый: если не сохранить новый, следующее
 	// обновление провалится и стримеру придётся входить заново посреди стрима.
+	// Twitch присылает новый ключ обновления не всегда. Если прислал —
+	// тридцатидневный отсчёт начинается заново; если нет — продолжает идти
+	// от старой даты, и рано или поздно понадобится вход заново.
+	rotated := out.RefreshToken != "" && out.RefreshToken != t.RefreshToken
+	refreshedAt := t.RefreshedAt
+	if rotated {
+		refreshedAt = time.Now()
+	}
+	if refreshedAt.IsZero() {
+		refreshedAt = time.Now()
+	}
+
 	updated := tokens{
 		AccessToken:  out.AccessToken,
 		RefreshToken: firstNonEmpty(out.RefreshToken, t.RefreshToken),
 		ExpiresAt:    time.Now().Add(time.Duration(out.ExpiresIn) * time.Second),
 		Scope:        firstNonEmpty(strings.Join(out.Scope, " "), t.Scope),
+		RefreshedAt:  refreshedAt,
 	}
 	if err := c.saveTokens(updated); err != nil {
 		c.log.Warn("не сохранил обновлённый вход в Twitch", "ошибка", err)
 	}
-	c.log.Debug("ключ доступа Twitch обновлён")
+	// Пишем в лог, обновился ли ключ обновления: от этого зависит, придётся
+	// ли стримеру вводить код заново через месяц, и по одному этому полю
+	// потом будет видно, как оно на самом деле.
+	c.log.Info("ключ доступа Twitch обновлён",
+		"ключ_обновления_сменился", rotated,
+		"ему_дней", int(time.Since(refreshedAt).Hours()/24))
 	return updated.AccessToken, nil
 }
 
@@ -359,6 +389,24 @@ func (c *Client) Logout() {
 	c.forgetTokens()
 	c.clearPending()
 	c.log.Info("вход в Twitch сброшен")
+}
+
+// RefreshExpiry сообщает, когда придётся входить заново, и осталось ли до
+// этого меньше нескольких дней.
+//
+// Ноль означает «неизвестно»: вход был сделан старой версией приложения,
+// которая дату не записывала.
+func (c *Client) RefreshExpiry() (at time.Time, soon bool) {
+	c.mu.RLock()
+	refreshedAt := c.tokens.RefreshedAt
+	connected := c.tokens.RefreshToken != ""
+	c.mu.RUnlock()
+
+	if !connected || refreshedAt.IsZero() {
+		return time.Time{}, false
+	}
+	at = refreshedAt.Add(refreshLifetime)
+	return at, time.Until(at) < warnBefore
 }
 
 // GrantedScopes — права, которые стример выдал при входе.

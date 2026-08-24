@@ -115,6 +115,11 @@ type TwitchInfo struct {
 
 	Note     string `json:"note"`
 	NoteCode string `json:"note_code"`
+	// RenewAt — когда придётся вводить код заново. У публичных клиентов
+	// Twitch доступ живёт тридцать дней, и узнать об этом лучше заранее,
+	// а не в момент, когда заказы перестали приходить.
+	RenewAt   *time.Time `json:"renew_at"`
+	RenewSoon bool       `json:"renew_soon"`
 }
 
 // RedemptionView — заказ за баллы. На этом этапе очереди ещё нет, поэтому
