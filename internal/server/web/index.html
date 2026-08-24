@@ -168,6 +168,33 @@
     </div>
 
     <div class="col">
+      <div class="kicker">Если трека нет в Spotify</div>
+      <div class="account" id="yt-status"></div>
+      <label class="field" style="margin-top:14px">
+        <span>Браузер, из которого брать доступ к YouTube</span>
+        <select id="yt-browser">
+          <option value="">выбрать самому</option>
+          <option value="chrome">Chrome</option>
+          <option value="edge">Edge</option>
+          <option value="firefox">Firefox</option>
+          <option value="opera">Opera</option>
+          <option value="brave">Brave</option>
+          <option value="vivaldi">Vivaldi</option>
+        </select>
+        <span class="hint">YouTube иногда требует подтвердить, что запросы не от
+          робота. Приложение берёт доступ из браузера, в котором ты вошёл в YouTube.</span>
+      </label>
+
+      <label class="field" style="margin-top:14px">
+        <span>Куда выводить звук с YouTube</span>
+        <select id="yt-device"><option value="">системное устройство</option></select>
+        <span class="hint">Отдельное устройство нужно, чтобы в OBS это был отдельный
+          источник звука: его можно приглушить в записи и дать зрителям громкость
+          отдельно от фоновой музыки.</span>
+      </label>
+    </div>
+
+    <div class="col">
       <div class="kicker">Диагностика</div>
       <label class="check">
         <input type="checkbox" id="debug-log">

@@ -622,6 +622,37 @@
       ${tw.note ? note(tw.note_code, tw.note) : ""}`;
   }
 
+  // Запасной проигрыватель. Не готов — это не поломка: просто часть заказов
+  // не сыграет, и об этом надо сказать заранее, а не в момент заказа.
+  function renderYouTube(y) {
+    const box = $("yt-status");
+    box.className = "account " + (y.ready ? "ok" : "iffy");
+    box.innerHTML = y.ready
+      ? `<div class="who">Готов</div>
+         <div class="plan">заказы, которых нет в Spotify, заиграют с YouTube</div>`
+      : `<div class="who">Не готов</div>
+         ${y.note ? note(y.note_code, y.note) : `<div class="plan">проверяю программы…</div>`}`;
+
+    const select = $("yt-device");
+    if (y.devices && y.devices.length && select.options.length <= 1) {
+      select.innerHTML = `<option value="">системное устройство</option>` +
+        y.devices.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join("");
+    }
+    if (y.device && select.value !== y.device) select.value = y.device;
+  }
+
+  $("yt-browser").onchange = async (e) => {
+    if (await saveConfig({ youtube_browser: e.target.value })) {
+      say("Сохранено. Применится к следующему заказу с YouTube.");
+    }
+  };
+
+  $("yt-device").onchange = async (e) => {
+    if (await saveConfig({ audio_device: e.target.value })) {
+      say("Устройство сохранено. Оно применится к следующему заказу с YouTube.");
+    }
+  };
+
   // ── настройки ──────────────────────────────────────────────────────
 
   let config = null;
@@ -648,6 +679,7 @@
       $("da-id").value = config.donationalerts_client_id || "";
       $("dp-key").value = config.donatepay_key || "";
       $("donation-min").value = config.donation_min ?? "";
+      $("yt-browser").value = config.youtube_browser || "";
       applyMode(config.resume_fail_mode);
       refreshModeHints();
     } catch {
@@ -852,6 +884,7 @@
     draw("stage", sig([s.now, s.spotify, s.connections]), () => renderStage(s));
     draw("orders", sig([s.queue, s.paused, s.twitch.reward_title, s.twitch.reward_cost]), () => renderOrders(s));
     draw("bans", sig(s.bans), () => renderBans(s.bans));
+    draw("yt", sig(s.youtube), () => renderYouTube(s.youtube));
     draw("feed", sig(s.notices), () => renderFeed(s));
     draw("tally", sig(s.session), () => renderTally(s));
     draw("banner", sig([s.twitch.pending_code, s.twitch.pending_expires]), () => renderBanner(s.twitch));

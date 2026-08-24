@@ -62,8 +62,11 @@ type Config struct {
 
 	// YouTube-фоллбэк
 	AudioDevice string `json:"audio_device"` // имя устройства для mpv, пусто = системное
-	YtDlpPath   string `json:"ytdlp_path"`   // пусто = встроенная копия
-	MpvPath     string `json:"mpv_path"`
+	// YouTubeBrowser — откуда брать куки, когда YouTube требует подтвердить,
+	// что запросы не от робота. Пусто = приложение переберёт браузеры само.
+	YouTubeBrowser string `json:"youtube_browser"`
+	YtDlpPath      string `json:"ytdlp_path"` // пусто = встроенная копия
+	MpvPath        string `json:"mpv_path"`
 
 	// Фильтр «это не музыка»
 	RejectKeywords []string `json:"reject_keywords"`

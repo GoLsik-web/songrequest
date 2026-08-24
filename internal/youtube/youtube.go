@@ -1,0 +1,414 @@
+package youtube
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+
+	"songrequest/internal/errs"
+	"songrequest/internal/logx"
+)
+
+// Track — то, что нашлось на YouTube.
+type Track struct {
+	ID         string
+	Title      string
+	Artist     string
+	URL        string
+	DurationMs int
+	CoverURL   string
+	// IsLive и Category нужны фильтру: стрим или подкаст музыкой не считается.
+	IsLive   bool
+	Category string
+}
+
+// Player играет звук с YouTube через mpv.
+type Player struct {
+	log   *logx.Logger
+	tools *Tools
+
+	// Device — имя аудиоустройства для mpv. Пустое значение означает
+	// системное по умолчанию.
+	Device string
+
+	mu      sync.Mutex
+	cmd     *exec.Cmd
+	playing string
+	// cookieBrowser — браузер, куки которого подошли. Запоминаем, чтобы не
+	// перебирать список на каждом заказе.
+	cookieBrowser string
+	// Preferred — браузер, выбранный стримером вручную. Если он задан,
+	// перебор не нужен.
+	Preferred string
+}
+
+// NewPlayer создаёт плеер.
+func NewPlayer(log *logx.Logger, tools *Tools) *Player {
+	return &Player{log: log, tools: tools}
+}
+
+// Search ищет трек на YouTube по тексту заказа.
+//
+// Берём первый разумный результат: yt-dlp умеет искать сам, и отдельный
+// ключ к YouTube API приложению не нужен — это ещё одна вещь, которую
+// стримеру пришлось бы настраивать.
+func (p *Player) Search(ctx context.Context, query string) (*Track, error) {
+	ytdlp, _ := p.tools.Paths()
+	if ytdlp == "" {
+		return nil, errs.New(errs.YouTubeNoTool, "yt-dlp не найден.")
+	}
+	return p.metadata(ctx, "ytsearch1:"+query)
+}
+
+// Lookup достаёт метаданные по прямой ссылке.
+func (p *Player) Lookup(ctx context.Context, url string) (*Track, error) {
+	return p.metadata(ctx, url)
+}
+
+// browsers — откуда пробуем взять куки. YouTube всё чаще требует
+// подтверждения «я не бот», и без куки живого браузера отвечает отказом.
+var browsers = []string{"chrome", "edge", "firefox", "opera", "brave", "vivaldi"}
+
+// metadata спрашивает у yt-dlp сведения о ролике, не качая его.
+//
+// Сначала пробуем без куки: так быстрее и не трогает чужой браузер. Если
+// YouTube потребовал подтвердить, что мы не бот, — повторяем с куками из
+// браузера стримера. Найденный браузер запоминаем, чтобы не перебирать
+// список на каждом заказе.
+func (p *Player) metadata(ctx context.Context, target string) (*Track, error) {
+	ytdlp, _ := p.tools.Paths()
+	if ytdlp == "" {
+		return nil, errs.New(errs.YouTubeNoTool, "yt-dlp не найден.")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	// Порядок попыток: как есть, потом запомненный браузер, потом перебор.
+	attempts := []string{""}
+	switch {
+	case p.Preferred != "":
+		attempts = []string{p.Preferred, ""}
+	case p.browser() != "":
+		attempts = []string{p.browser(), ""}
+	default:
+		attempts = append(attempts, browsers...)
+	}
+
+	var (
+		lastErr    error
+		lastStderr string
+		// botCheck запоминаем отдельно: причина отказа именно в нём, а
+		// жалобы последнего браузера её уже не содержат.
+		botCheck bool
+	)
+	for _, browser := range attempts {
+		out, stderr, err := p.runYtdlp(ctx, ytdlp, browser, target)
+		if stderr != "" {
+			lastStderr = stderr
+		}
+		if err == nil {
+			track, perr := parseInfo(out)
+			if perr == nil {
+				p.rememberBrowser(browser)
+				return track, nil
+			}
+			lastErr = perr
+			continue
+		}
+
+		lastErr = err
+
+		if browser == "" {
+			// Первая попытка была без куки. Если YouTube отказал не из-за
+			// проверки «я не бот», перебирать браузеры бессмысленно.
+			if !needsCookies(stderr) {
+				break
+			}
+			botCheck = true
+			p.log.Info("YouTube просит подтвердить, что мы не бот — пробую куки браузера")
+			continue
+		}
+
+		// Куки конкретного браузера не подошли — это нормально: Chrome на
+		// Windows часто не отдаёт их вовсе. Пробуем следующий.
+		p.log.Debug("не подошли куки браузера", "браузер", browser)
+	}
+
+	p.log.Warn("yt-dlp не смог найти ролик",
+		"запрос", target, "ошибка", lastErr, "жалобы", strings.TrimSpace(lastStderr))
+	if botCheck {
+		return nil, errs.Wrap(errs.YouTubeCookies, notFoundText("bot"), lastErr)
+	}
+	return nil, errs.Wrap(errs.YouTubeNotFound, notFoundText(lastStderr), lastErr)
+}
+
+// runYtdlp запускает yt-dlp и отдельно возвращает его жалобы: без них
+// разобрать чужую проблему по логу невозможно.
+func (p *Player) runYtdlp(ctx context.Context, ytdlp, browser, target string) (out []byte, stderr string, err error) {
+	args := []string{"--dump-single-json", "--no-warnings", "--no-playlist", "--skip-download"}
+	if browser != "" {
+		args = append(args, "--cookies-from-browser", browser)
+	}
+	args = append(args, target)
+
+	cmd := exec.CommandContext(ctx, ytdlp, args...)
+	hideWindow(cmd)
+
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+
+	out, err = cmd.Output()
+	stderr = errBuf.String()
+	if stderr != "" {
+		p.log.Debug("yt-dlp", "браузер", browser, "жалобы", strings.TrimSpace(stderr))
+	}
+	// yt-dlp умеет выйти с нулевым кодом, ничего не найдя.
+	if err == nil && len(bytes.TrimSpace(out)) == 0 {
+		err = errors.New("yt-dlp вернул пустой ответ")
+	}
+	return out, stderr, err
+}
+
+// needsCookies распознаёт требование YouTube подтвердить, что мы не бот.
+func needsCookies(stderr string) bool {
+	low := strings.ToLower(stderr)
+	return strings.Contains(low, "confirm you") && strings.Contains(low, "bot") ||
+		strings.Contains(low, "cookies") ||
+		strings.Contains(low, "sign in to confirm")
+}
+
+// notFoundText объясняет отказ человеческими словами.
+func notFoundText(stderr string) string {
+	if needsCookies(stderr) {
+		return "YouTube требует подтвердить, что запросы не от робота, и не отдал трек. " +
+			"Открой YouTube в браузере и войди в аккаунт — приложение возьмёт доступ оттуда. " +
+			"Если не поможет, укажи браузер в настройках."
+	}
+	return "На YouTube ничего не нашлось."
+}
+
+// browser отдаёт запомненный браузер.
+func (p *Player) browser() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cookieBrowser
+}
+
+func (p *Player) rememberBrowser(b string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if b != "" && p.cookieBrowser != b {
+		p.log.Info("беру куки YouTube из браузера", "браузер", b)
+	}
+	p.cookieBrowser = b
+}
+
+// parseInfo разбирает ответ yt-dlp. Отдельной функцией, чтобы разбор можно
+// было проверить тестами, не запуская сам yt-dlp.
+func parseInfo(out []byte) (*Track, error) {
+	var raw struct {
+		ID       string  `json:"id"`
+		Title    string  `json:"title"`
+		Uploader string  `json:"uploader"`
+		Artist   string  `json:"artist"`
+		Track    string  `json:"track"`
+		Duration float64 `json:"duration"`
+		IsLive   bool    `json:"is_live"`
+		Category string  `json:"categories_str"`
+		Thumb    string  `json:"thumbnail"`
+		WebURL   string  `json:"webpage_url"`
+		// Поиск возвращает список — берём первый.
+		Entries []json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, errs.Wrap(errs.YouTubeBadResponse, "yt-dlp ответил непонятным образом.", err)
+	}
+
+	if len(raw.Entries) > 0 {
+		if err := json.Unmarshal(raw.Entries[0], &raw); err != nil {
+			return nil, errs.Wrap(errs.YouTubeBadResponse, "yt-dlp ответил непонятным образом.", err)
+		}
+	}
+	if raw.ID == "" {
+		return nil, errs.New(errs.YouTubeNotFound, "На YouTube ничего не нашлось.")
+	}
+
+	t := &Track{
+		ID:         raw.ID,
+		Title:      strings.TrimSpace(raw.Title),
+		Artist:     firstNonEmpty(raw.Artist, raw.Uploader),
+		URL:        firstNonEmpty(raw.WebURL, "https://www.youtube.com/watch?v="+raw.ID),
+		DurationMs: int(raw.Duration * 1000),
+		CoverURL:   raw.Thumb,
+		IsLive:     raw.IsLive,
+		Category:   raw.Category,
+	}
+	// yt-dlp иногда знает отдельно название трека — оно точнее заголовка
+	// ролика, в котором обычно мусор.
+	if raw.Track != "" {
+		t.Title = raw.Track
+	}
+	return t, nil
+}
+
+// isLink распознаёт ссылку на ролик: по ней искать бессмысленно, зритель
+// уже сказал, что именно хочет.
+func IsLink(s string) bool {
+	s = strings.ToLower(s)
+	return strings.Contains(s, "youtube.com/") || strings.Contains(s, "youtu.be/")
+}
+
+// Play включает звук ролика через mpv.
+//
+// Без видео и на отдельное устройство: смысл в том, чтобы в OBS это был
+// отдельный источник звука — его можно приглушить в записи ради VOD и дать
+// зрителям громкость отдельно от фоновой музыки.
+func (p *Player) Play(ctx context.Context, url string) error {
+	_, mpv := p.tools.Paths()
+	if mpv == "" {
+		return errs.New(errs.YouTubeNoMpv, "mpv не найден — играть звук нечем.")
+	}
+	p.Stop()
+
+	args := []string{
+		"--no-video",
+		"--no-terminal",
+		"--really-quiet",
+		// Свой заголовок окна: если mpv всё же покажется, будет понятно, что это.
+		"--title=Заказ музыки",
+		"--force-window=no",
+	}
+	if p.Device != "" {
+		args = append(args, "--audio-device="+p.Device)
+	}
+	// mpv отдаёт ссылку тому же yt-dlp, и ему нужны те же куки: иначе
+	// метаданные найдутся, а поток — нет.
+	if b := p.browser(); b != "" {
+		args = append(args, "--ytdl-raw-options=cookies-from-browser="+b)
+	}
+	args = append(args, url)
+
+	cmd := exec.Command(mpv, args...)
+	hideWindow(cmd)
+
+	if err := cmd.Start(); err != nil {
+		return errs.Wrap(errs.YouTubePlay, "Не получилось запустить mpv.", err)
+	}
+
+	p.mu.Lock()
+	p.cmd = cmd
+	p.playing = url
+	p.mu.Unlock()
+
+	p.log.Info("играю с YouTube", "адрес", url, "устройство", p.Device)
+	return nil
+}
+
+// Wait ждёт, пока ролик доиграет. Возвращает false, если его оборвали.
+func (p *Player) Wait(ctx context.Context) bool {
+	p.mu.Lock()
+	cmd := p.cmd
+	p.mu.Unlock()
+
+	if cmd == nil {
+		return true
+	}
+
+	done := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		p.clear()
+		return true
+	case <-ctx.Done():
+		p.Stop()
+		return false
+	}
+}
+
+// Stop убивает mpv.
+//
+// Процесс не должен пережить трек: висящий mpv занимает звуковое устройство,
+// и следующий заказ окажется без звука, а причину искать будут долго.
+func (p *Player) Stop() {
+	p.mu.Lock()
+	cmd := p.cmd
+	p.cmd = nil
+	p.playing = ""
+	p.mu.Unlock()
+
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		p.log.Debug("mpv уже завершился")
+	}
+	cmd.Wait()
+}
+
+// Playing сообщает, играет ли что-нибудь сейчас.
+func (p *Player) Playing() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.playing != ""
+}
+
+func (p *Player) clear() {
+	p.mu.Lock()
+	p.cmd = nil
+	p.playing = ""
+	p.mu.Unlock()
+}
+
+// Devices перечисляет доступные аудиоустройства mpv — чтобы стример выбрал
+// виртуальный кабель из списка, а не вписывал его имя руками.
+func (p *Player) Devices(ctx context.Context) ([]string, error) {
+	_, mpv := p.tools.Paths()
+	if mpv == "" {
+		return nil, errs.New(errs.YouTubeNoMpv, "mpv не найден.")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, mpv, "--audio-device=help")
+	hideWindow(cmd)
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, errs.Wrap(errs.YouTubePlay, "Не получилось спросить у mpv список устройств.", err)
+	}
+
+	var devices []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		// Строки вида «  'wasapi/{...}' (VB-Cable)».
+		if !strings.HasPrefix(line, "'") {
+			continue
+		}
+		name, _, ok := strings.Cut(strings.TrimPrefix(line, "'"), "'")
+		if ok && name != "" {
+			devices = append(devices, name)
+		}
+	}
+	return devices, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
