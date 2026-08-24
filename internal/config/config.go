@@ -39,6 +39,11 @@ type Config struct {
 	CommandPrefix    string `json:"command_prefix"`
 	AutoCreateReward bool   `json:"auto_create_reward"`
 
+	// Донаты
+	DonationAlertsClientID string  `json:"donationalerts_client_id"`
+	DonatePayKey           string  `json:"donatepay_key"`
+	DonationMin            float64 `json:"donation_min"` // от какой суммы принимаем заказ
+
 	// Лимиты заказов
 	MaxTrackSeconds  int  `json:"max_track_seconds"`
 	MaxPerUser       int  `json:"max_per_user"`
@@ -84,6 +89,7 @@ func Defaults() Config {
 		MaxTrackSeconds:    8 * 60,
 		MaxPerUser:         3,
 		DonationPriority:   true,
+		DonationMin:        100,
 		ResumeFail:         ResumeFallbackPlaylist,
 		ResumeDelaySeconds: 3,
 		MatchAccept:        0.80,

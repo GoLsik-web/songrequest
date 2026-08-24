@@ -645,6 +645,9 @@
       config = await (await fetch("/api/config")).json();
       $("client-id").value = config.spotify_client_id || "";
       $("twitch-id").value = config.twitch_client_id || "";
+      $("da-id").value = config.donationalerts_client_id || "";
+      $("dp-key").value = config.donatepay_key || "";
+      $("donation-min").value = config.donation_min ?? "";
       applyMode(config.resume_fail_mode);
       refreshModeHints();
     } catch {
@@ -745,6 +748,11 @@
     restore: (btn) => post("/api/spotify/restore", btn),
     "twitch-login": (btn) => saveThenConnect("twitch-id", "twitch_client_id",
       (b) => post("/api/twitch/login", b), btn),
+    "da-login": (btn) => saveThenConnect("da-id", "donationalerts_client_id",
+      (b) => post("/api/donations/login", b), btn).then((d) => {
+        if (d && d.url) window.open(d.url, "_blank", "noopener");
+      }),
+    "da-logout": (btn) => post("/api/donations/logout", btn),
     "twitch-logout": (btn) => post("/api/twitch/logout", btn),
   };
 
@@ -788,6 +796,25 @@
       say("Client ID сохранён. Теперь нажми «Подключить Spotify».");
     }
   };
+  $("save-da-id").onclick = async () => {
+    if (await saveConfig({ donationalerts_client_id: $("da-id").value.trim() })) {
+      say("Сохранено. Теперь нажми «Подключить DonationAlerts».");
+    }
+  };
+  $("save-dp-key").onclick = async () => {
+    if (await saveConfig({ donatepay_key: $("dp-key").value.trim() })) {
+      say("Ключ DonatePay сохранён. Перезапусти приложение, чтобы он заработал.");
+    }
+  };
+  $("donation-min").onchange = async (e) => {
+    const value = parseFloat(e.target.value.replace(",", "."));
+    if (!isFinite(value) || value < 0) {
+      say("Сумма должна быть числом", true);
+      return;
+    }
+    await saveConfig({ donation_min: value });
+  };
+
   $("save-twitch-id").onclick = async () => {
     if (await saveConfig({ twitch_client_id: $("twitch-id").value.trim() })) {
       say("Client ID Twitch сохранён. Теперь нажми «Подключить Twitch».");
