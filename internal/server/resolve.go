@@ -91,7 +91,12 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 			State: app.MatchMissing,
 			Note:  "В Spotify не нашлось",
 		})
-		s.rejectRedemption(ctx, r, "не нашёл такого трека в Spotify")
+		// Spotify не всесилен: в нём нет половины русского андеграунда и
+		// почти ничего из мемов. Такой заказ играем с YouTube.
+		if s.tryYouTube(ctx, r, req.Clean) {
+			return
+		}
+		s.rejectRedemption(ctx, r, "не нашёл такого трека ни в Spotify, ни на YouTube")
 		return
 	}
 

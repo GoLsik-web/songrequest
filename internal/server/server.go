@@ -26,6 +26,7 @@ import (
 	"songrequest/internal/spotify"
 	"songrequest/internal/store"
 	"songrequest/internal/twitch"
+	"songrequest/internal/youtube"
 )
 
 //go:embed all:web
@@ -59,8 +60,11 @@ type Server struct {
 
 	donations      *donations.Hub
 	donationAlerts *donations.DonationAlerts
-	dataDir        string
-	version        string
+
+	ytTools *youtube.Tools
+	youtube *youtube.Player
+	dataDir string
+	version string
 
 	http *http.Server
 	ln   net.Listener

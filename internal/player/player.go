@@ -11,10 +11,19 @@ import (
 	"sync"
 	"time"
 
+	"songrequest/internal/errs"
 	"songrequest/internal/logx"
 	"songrequest/internal/queue"
 	"songrequest/internal/spotify"
 )
+
+// YouTube — запасной проигрыватель для того, чего нет в Spotify.
+// Интерфейсом, чтобы плеер не зависел от yt-dlp и mpv в тестах.
+type YouTube interface {
+	Play(ctx context.Context, url string) error
+	Wait(ctx context.Context) bool
+	Stop()
+}
 
 // Spotify — то, что умеет играть. Интерфейсом ради тестов.
 type Spotify interface {
@@ -43,6 +52,7 @@ func (n *Now) Elapsed() time.Duration {
 type Player struct {
 	q       *queue.Queue
 	spotify Spotify
+	youtube YouTube
 	log     *logx.Logger
 
 	// ResumeDelay — пауза перед возвратом. Заказы часто идут подряд, и
@@ -63,6 +73,13 @@ type Player struct {
 	wake    chan struct{}
 	skip    chan struct{}
 	running bool
+}
+
+// SetYouTube подключает запасной проигрыватель.
+func (p *Player) SetYouTube(y YouTube) {
+	p.mu.Lock()
+	p.youtube = y
+	p.mu.Unlock()
 }
 
 // New создаёт плеер.
@@ -200,7 +217,15 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 		}
 	}
 
-	if err := p.spotify.PlayTrack(ctx, item.URI, ""); err != nil {
+	// Заказ с YouTube играется иначе: Spotify ставится на паузу, звук идёт
+	// отдельной программой на отдельное устройство.
+	if item.Provider == "youtube" {
+		if err := p.playYouTube(ctx, item); err != nil {
+			p.fail(err)
+			p.finish(item)
+			return
+		}
+	} else if err := p.spotify.PlayTrack(ctx, item.URI, ""); err != nil {
 		p.log.Error("не смог включить заказ",
 			"трек", item.Artist+" — "+item.Title, "ошибка", err)
 		p.fail(err)
@@ -215,9 +240,13 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 
 	p.log.Info("играет заказ",
 		"трек", item.Artist+" — "+item.Title, "заказал", item.Requester,
-		"длительность_мс", item.DurationMs)
+		"откуда", item.Provider, "длительность_мс", item.DurationMs)
 
-	p.await(ctx, item)
+	if item.Provider == "youtube" {
+		p.awaitYouTube(ctx, item)
+	} else {
+		p.await(ctx, item)
+	}
 
 	p.mu.Lock()
 	p.now = nil
@@ -225,6 +254,50 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 	p.changed()
 
 	p.finish(item)
+}
+
+// playYouTube ставит Spotify на паузу и запускает звук с YouTube.
+func (p *Player) playYouTube(ctx context.Context, item queue.Item) error {
+	p.mu.Lock()
+	yt := p.youtube
+	p.mu.Unlock()
+
+	if yt == nil {
+		return errs.New(errs.YouTubeNoTool, "Проигрыватель YouTube не готов.")
+	}
+
+	// Spotify обязательно на паузу: иначе два трека заиграют одновременно.
+	if err := p.spotify.Pause(ctx, ""); err != nil {
+		p.log.Warn("не поставил Spotify на паузу перед заказом с YouTube", "ошибка", err)
+	}
+	return yt.Play(ctx, item.URI)
+}
+
+// awaitYouTube ждёт, пока mpv доиграет, и убивает его после.
+func (p *Player) awaitYouTube(ctx context.Context, item queue.Item) {
+	p.mu.Lock()
+	yt := p.youtube
+	p.mu.Unlock()
+	if yt == nil {
+		return
+	}
+
+	// mpv не должен пережить трек: висящий процесс занимает звуковое
+	// устройство, и следующий заказ окажется без звука.
+	defer yt.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		yt.Wait(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+	case <-p.skip:
+		p.log.Info("заказ с YouTube скипнут", "трек", item.Title)
+	case <-done:
+	}
 }
 
 // await ждёт конца трека.

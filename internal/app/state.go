@@ -164,6 +164,19 @@ type OrderMatch struct {
 	Why string `json:"why"`
 }
 
+// YouTubeInfo — состояние запасного проигрывателя.
+type YouTubeInfo struct {
+	// Ready означает, что оба инструмента на месте и заказ, которого нет
+	// в Spotify, всё-таки заиграет.
+	Ready    bool     `json:"ready"`
+	YtDlp    string   `json:"ytdlp"`
+	Mpv      string   `json:"mpv"`
+	Device   string   `json:"device"`
+	Devices  []string `json:"devices"`
+	Note     string   `json:"note"`
+	NoteCode string   `json:"note_code"`
+}
+
 // Session — итоги с момента запуска. Панель на этапе, когда заказов ещё нет,
 // иначе состоит из одних пустых блоков; это настоящие числа, а не украшение.
 type Session struct {
@@ -188,8 +201,9 @@ type Snapshot struct {
 	Session     Session          `json:"session"`
 	// Bans — бан-лист музыки. Отдельный от бана в чате: человек может быть
 	// нормальным в чате и неуместным в заказах.
-	Bans     []Ban `json:"bans"`
-	DebugLog bool  `json:"debug_log"`
+	Bans     []Ban       `json:"bans"`
+	YouTube  YouTubeInfo `json:"youtube"`
+	DebugLog bool        `json:"debug_log"`
 }
 
 // Ban — закрытый доступ к заказам.
@@ -214,6 +228,7 @@ type State struct {
 	redemptions []RedemptionView
 	session     Session
 	bans        []Ban
+	youtube     YouTubeInfo
 	debug       bool
 
 	subs map[int]chan struct{}
@@ -408,6 +423,14 @@ func (s *State) SetBans(list []Ban) {
 	s.notify()
 }
 
+// UpdateYouTube меняет сведения о запасном проигрывателе.
+func (s *State) UpdateYouTube(fn func(*YouTubeInfo)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn(&s.youtube)
+	s.notify()
+}
+
 // SetDebugLog запоминает, включён ли подробный лог (галочка в панели).
 func (s *State) SetDebugLog(on bool) {
 	s.mu.Lock()
@@ -462,6 +485,7 @@ func (s *State) Snapshot() Snapshot {
 		Redemptions: append(make([]RedemptionView, 0, len(s.redemptions)), s.redemptions...),
 		Session:     s.session,
 		Bans:        append(make([]Ban, 0, len(s.bans)), s.bans...),
+		YouTube:     s.youtube,
 		DebugLog:    s.debug,
 	}
 	for _, name := range s.order {

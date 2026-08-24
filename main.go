@@ -120,6 +120,11 @@ func run() error {
 	srv.StartTwitchIfConnected(ctx)
 	srv.StartPlayer(ctx)
 	srv.StartDonations(ctx)
+	srv.StartYouTube(ctx)
+
+	// mpv не должен пережить приложение: иначе он останется занимать
+	// звуковое устройство, а музыка продолжит играть после закрытия.
+	defer srv.StopYouTube()
 
 	return srv.Serve(ctx)
 }

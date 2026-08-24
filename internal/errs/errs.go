@@ -55,6 +55,14 @@ const (
 	DonationsBadResponse Code = "DN-04" // сервис ответил не тем
 	DonationsTooSmall    Code = "DN-05" // донат меньше порога заказа
 
+	// YouTube
+	YouTubeNoTool      Code = "YT-01" // нет yt-dlp
+	YouTubeNoMpv       Code = "YT-02" // нет mpv
+	YouTubeNotFound    Code = "YT-03" // на YouTube ничего не нашлось
+	YouTubePlay        Code = "YT-04" // не получилось включить
+	YouTubeBadResponse Code = "YT-05" // yt-dlp ответил не тем
+	YouTubeCookies     Code = "YT-06" // YouTube требует подтвердить, что мы не робот
+
 	// Диагностика
 	DiagExport Code = "DIAG-01" // не собрался архив с логом
 )
