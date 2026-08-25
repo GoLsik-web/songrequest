@@ -38,20 +38,57 @@ func FindMarkers(s string) []string {
 	}
 	padded := " " + norm + " "
 
+	tokens := strings.Fields(norm)
+
 	var found []string
 	seen := map[string]bool{}
 	for kind, words := range markerWords {
 		for _, w := range words {
-			if strings.Contains(padded, " "+Normalize(w)+" ") {
-				if !seen[kind] {
-					seen[kind] = true
-					found = append(found, kind)
-				}
-				break
+			if !markerHit(padded, tokens, Normalize(w)) {
+				continue
 			}
+			if !seen[kind] {
+				seen[kind] = true
+				found = append(found, kind)
+			}
+			break
 		}
 	}
 	return found
+}
+
+// markerHit проверяет, написал ли зритель эту пометку.
+//
+// Слово «ремикс» пишут как угодно: «ремекс», «римикс», «remiks», «ремих».
+// Требовать точного написания — значит отдавать оригинал там, где человек
+// явно просил ремикс, и наоборот. Поэтому одиночные слова сравниваем на
+// слух, а составные («sped up») — целиком: у них опечатка почти не
+// встречается, зато ложных срабатываний было бы много.
+func markerHit(padded string, tokens []string, want string) bool {
+	if strings.Contains(padded, " "+want+" ") {
+		return true
+	}
+	if strings.ContainsRune(want, ' ') || len([]rune(want)) < 4 {
+		return false
+	}
+	// Короткому слову хватает одной буквы разницы, чтобы стать другим словом:
+	// «over» и «lover» на слух отличаются от «cover» ровно на неё. С порогом
+	// 0.8 заказ «дрейк овер» получал пометку «кавер», терял почти треть
+	// оценки и объявлялся ненайденным — при том что нужный трек был найден.
+	limit := 0.8
+	if len([]rune(want)) <= 5 {
+		limit = 0.9
+	}
+
+	for _, t := range tokens {
+		if len([]rune(t)) < 4 {
+			continue
+		}
+		if looseRatio(t, want) >= limit {
+			return true
+		}
+	}
+	return false
 }
 
 // SameMarkers сравнивает наборы пометок.

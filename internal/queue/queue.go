@@ -24,6 +24,10 @@ type Item struct {
 	Position  int    `json:"position"`
 	Source    string `json:"source"`
 	Requester string `json:"requester"`
+	// RequesterLogin — логин на Twitch, в нижнем регистре. Отличается от
+	// Requester у всех, кто поставил себе отображаемое имя на другом языке,
+	// а бан-лист работает именно по логину.
+	RequesterLogin string `json:"requester_login"`
 	// RawRequest — что написал зритель. Показываем рядом с найденным треком.
 	RawRequest string `json:"raw_request"`
 
@@ -72,13 +76,14 @@ func (q *Queue) Add(item Item, donationsFirst bool) (Item, error) {
 	item.CreatedAt = time.Now()
 
 	res, err := tx.Exec(`
-		INSERT INTO queue(position, source, requester, raw_request, provider, track_id,
-		                  uri, title, artist, duration_ms, cover_url, uncertain,
-		                  redemption_id, reward_id, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		item.Position, item.Source, item.Requester, item.RawRequest, item.Provider,
-		item.TrackID, item.URI, item.Title, item.Artist, item.DurationMs, item.CoverURL,
-		boolToInt(item.Uncertain), item.RedemptionID, item.RewardID, item.CreatedAt.Unix())
+		INSERT INTO queue(position, source, requester, requester_login, raw_request,
+		                  provider, track_id, uri, title, artist, duration_ms, cover_url,
+		                  uncertain, redemption_id, reward_id, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		item.Position, item.Source, item.Requester, item.RequesterLogin, item.RawRequest,
+		item.Provider, item.TrackID, item.URI, item.Title, item.Artist, item.DurationMs,
+		item.CoverURL, boolToInt(item.Uncertain), item.RedemptionID, item.RewardID,
+		item.CreatedAt.Unix())
 	if err != nil {
 		return item, err
 	}
@@ -128,10 +133,19 @@ func insertPosition(tx *sql.Tx, source string, donationsFirst bool) (int, error)
 }
 
 // List отдаёт очередь по порядку.
-func (q *Queue) List() ([]Item, error) {
-	rows, err := q.db.Query(`
-		SELECT id, position, source, requester, raw_request, provider, track_id, uri,
-		       title, artist, duration_ms, cover_url, uncertain, redemption_id, reward_id, created_at
+func (q *Queue) List() ([]Item, error) { return readQueue(q.db) }
+
+// rowsSource — то, у чего можно спросить строки: и база, и открытая сделка.
+type rowsSource interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// readQueue читает очередь по порядку.
+func readQueue(src rowsSource) ([]Item, error) {
+	rows, err := src.Query(`
+		SELECT id, position, source, requester, requester_login, raw_request, provider,
+		       track_id, uri, title, artist, duration_ms, cover_url, uncertain,
+		       redemption_id, reward_id, created_at
 		  FROM queue ORDER BY position`)
 	if err != nil {
 		return nil, err
@@ -143,9 +157,10 @@ func (q *Queue) List() ([]Item, error) {
 		var it Item
 		var uncertain int
 		var created int64
-		if err := rows.Scan(&it.ID, &it.Position, &it.Source, &it.Requester, &it.RawRequest,
-			&it.Provider, &it.TrackID, &it.URI, &it.Title, &it.Artist, &it.DurationMs,
-			&it.CoverURL, &uncertain, &it.RedemptionID, &it.RewardID, &created); err != nil {
+		if err := rows.Scan(&it.ID, &it.Position, &it.Source, &it.Requester,
+			&it.RequesterLogin, &it.RawRequest, &it.Provider, &it.TrackID, &it.URI,
+			&it.Title, &it.Artist, &it.DurationMs, &it.CoverURL, &uncertain,
+			&it.RedemptionID, &it.RewardID, &created); err != nil {
 			return nil, err
 		}
 		it.Uncertain = uncertain == 1
@@ -156,18 +171,47 @@ func (q *Queue) List() ([]Item, error) {
 }
 
 // Next забирает первый заказ из очереди и удаляет его оттуда.
+//
+// Одной сделкой: между «посмотреть» и «удалить» стример успевал удалить тот
+// же заказ из панели с возвратом баллов — и трек всё равно играл, уже
+// бесплатно.
 func (q *Queue) Next() (Item, error) {
-	items, err := q.List()
+	tx, err := q.db.Begin()
 	if err != nil {
 		return Item{}, err
 	}
-	if len(items) == 0 {
+	defer tx.Rollback()
+
+	var (
+		it        Item
+		uncertain int
+		created   int64
+	)
+	err = tx.QueryRow(`
+		SELECT id, position, source, requester, requester_login, raw_request, provider,
+		       track_id, uri, title, artist, duration_ms, cover_url, uncertain,
+		       redemption_id, reward_id, created_at
+		  FROM queue ORDER BY position LIMIT 1`).
+		Scan(&it.ID, &it.Position, &it.Source, &it.Requester, &it.RequesterLogin,
+			&it.RawRequest, &it.Provider, &it.TrackID, &it.URI, &it.Title, &it.Artist,
+			&it.DurationMs, &it.CoverURL, &uncertain, &it.RedemptionID, &it.RewardID, &created)
+	if errors.Is(err, sql.ErrNoRows) {
 		return Item{}, ErrEmpty
 	}
-	if err := q.Remove(items[0].ID); err != nil {
+	if err != nil {
 		return Item{}, err
 	}
-	return items[0], nil
+
+	if _, err := tx.Exec(`DELETE FROM queue WHERE id = ?`, it.ID); err != nil {
+		return Item{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Item{}, err
+	}
+
+	it.Uncertain = uncertain == 1
+	it.CreatedAt = time.Unix(created, 0)
+	return it, nil
 }
 
 // Peek смотрит на первый заказ, не забирая его.
@@ -205,11 +249,23 @@ func (q *Queue) Remove(id int64) error {
 // Clear очищает очередь и возвращает то, что в ней было, — чтобы вызывающий
 // код мог вернуть за эти заказы баллы.
 func (q *Queue) Clear() ([]Item, error) {
-	items, err := q.List()
+	// Одной сделкой: между «посмотреть» и «удалить» плеер успевал забрать
+	// заказ через Next(), и тот отыгрывал уже после очистки — бесплатно и
+	// без всякой возможности его остановить.
+	tx, err := q.db.Begin()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := q.db.Exec(`DELETE FROM queue`); err != nil {
+	defer tx.Rollback()
+
+	items, err := readQueue(tx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM queue`); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -280,4 +336,26 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// Replace подменяет трек в уже стоящем заказе.
+//
+// Нужно для ручного исправления: подбор ошибся, стример выбрал правильный
+// трек. Всё остальное — кто заказал, что написал, место в очереди, чем
+// возвращать баллы — остаётся прежним, меняется только сама музыка. Метка
+// «неточное совпадение» снимается: выбор сделан человеком.
+func (q *Queue) Replace(id int64, track Item) (Item, error) {
+	res, err := q.db.Exec(
+		`UPDATE queue SET provider = ?, track_id = ?, uri = ?, title = ?, artist = ?,
+		                  duration_ms = ?, cover_url = ?, uncertain = 0
+		 WHERE id = ?`,
+		track.Provider, track.TrackID, track.URI, track.Title, track.Artist,
+		track.DurationMs, track.CoverURL, id)
+	if err != nil {
+		return Item{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Item{}, fmt.Errorf("заказа %d в очереди нет", id)
+	}
+	return q.Get(id)
 }

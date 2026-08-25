@@ -1,6 +1,10 @@
 package logx
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestRedactorHidesKnownSecrets(t *testing.T) {
 	r := &Redactor{}
@@ -64,4 +68,38 @@ func indexOf(h, n string) int {
 		}
 	}
 	return -1
+}
+
+// Подробный лог теперь пишется всегда, а приложение у стримера живёт неделями.
+// Значит подрезать файл при старте мало: он обязан подрезаться на ходу, иначе
+// к концу недели его нельзя будет ни переслать, ни открыть.
+func TestLogRotatesWhileRunning(t *testing.T) {
+	dir := t.TempDir()
+
+	f, err := openLog(filepath.Join(dir, LogFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	line := make([]byte, 64<<10)
+	for i := range line {
+		line[i] = 'x'
+	}
+	for written := 0; written < maxLogBytes+(1<<20); written += len(line) {
+		if _, err := f.Write(line); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	info, err := os.Stat(filepath.Join(dir, LogFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() >= maxLogBytes {
+		t.Fatalf("лог разросся до %d байт и не подрезался", info.Size())
+	}
+	if _, err := os.Stat(filepath.Join(dir, LogFileName+".1")); err != nil {
+		t.Fatal("предыдущая часть лога должна сохраниться рядом:", err)
+	}
 }

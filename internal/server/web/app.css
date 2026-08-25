@@ -458,14 +458,21 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 
 .field { display: block; margin-bottom: var(--s3); }
 .field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: var(--s1); }
-.field input[type="text"], .field select {
+.field input[type="text"], .field input[type="number"], .field textarea, .field select {
   width: 100%;
   background: var(--bg); border: 1px solid var(--line-2); border-radius: 2px;
   color: var(--text); padding: var(--s2) var(--s3); font: inherit; font-size: var(--t-sm);
   transition: border-color var(--fast) var(--ease);
 }
-.field input:hover, .field select:hover { border-color: var(--dim); }
-.field input:focus, .field select:focus { outline: none; border-color: var(--lime); }
+.field input:hover, .field textarea:hover, .field select:hover { border-color: var(--dim); }
+.field input:focus, .field textarea:focus, .field select:focus { outline: none; border-color: var(--lime); }
+.field textarea { resize: vertical; min-height: 60px; line-height: 1.5; }
+.field input[readonly] { color: var(--dim); }
+/* Числа здесь набирают редко, а стрелки съедают ширину и приглашают
+   крутить значение мышью — для «сколько стоит награда» это лишнее. */
+.field input[type="number"] { -moz-appearance: textfield; }
+.field input[type="number"]::-webkit-outer-spin-button,
+.field input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 .hint { font-size: 12px; color: var(--dimmer); margin-top: var(--s2); line-height: 1.5; }
 .hint.warn { color: var(--bad); }
@@ -736,3 +743,339 @@ footer.online { color: var(--dimmer); }
   transition: border-color var(--fast) var(--ease);
 }
 .inline-input:focus { outline: none; border-color: var(--lime); }
+
+
+/* ── «не тот трек» ─────────────────────────────────────────────────────
+   Единственное окно поверх панели во всём приложении. Оно здесь оправдано:
+   выбор из списка требует внимания целиком, а всё остальное в это время
+   всё равно не трогают. */
+#fix[hidden] { display: none; }
+#fix {
+  position: fixed; inset: 0; z-index: 40;
+  display: grid; place-items: start center;
+  padding: 8vh var(--s5) var(--s5);
+  background: rgba(4, 5, 6, .72);
+  backdrop-filter: blur(3px);
+  animation: fade var(--slow) var(--ease);
+}
+@keyframes fade { from { opacity: 0 } }
+
+.sheet {
+  width: min(560px, 100%);
+  background: var(--raise); border: 1px solid var(--line-2); border-radius: 3px;
+  padding: var(--s5);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+  animation: rise var(--slow) var(--ease);
+}
+@keyframes rise { from { opacity: 0; transform: translateY(-8px) } }
+
+.sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s4); }
+.sheet-sub { font-size: var(--t-sm); color: var(--dim); margin-top: var(--s1); }
+.sheet-sub b { color: var(--text); font-weight: 600; }
+
+.sheet-find { display: flex; gap: var(--s2); margin: var(--s4) 0 0; }
+.sheet-find input {
+  flex: 1; min-width: 0;
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: 2px;
+  color: var(--text); padding: var(--s2) var(--s3); font: inherit; font-size: var(--t-sm);
+  transition: border-color var(--fast) var(--ease);
+}
+.sheet-find input:focus { outline: none; border-color: var(--lime); }
+
+.picks { list-style: none; margin: var(--s3) 0 0; padding: 0; max-height: 46vh; overflow-y: auto; }
+.picks li + li { border-top: 1px solid var(--line); }
+.pick {
+  display: flex; align-items: center; gap: var(--s3); width: 100%;
+  padding: var(--s2); background: none; border: 0; border-radius: 2px;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+.pick:hover, .pick:focus-visible { background: var(--hover); outline: none; }
+.pick:disabled { opacity: .4; cursor: default; }
+
+.pick-art {
+  width: 40px; height: 40px; flex: none; border-radius: 2px; overflow: hidden;
+  background: var(--line);
+}
+.pick-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pick-text { min-width: 0; flex: 1; }
+.pick-title { display: block; font-size: var(--t-sm); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick-sub { display: block; font-size: 12px; color: var(--dim); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick-len { font-size: 12px; color: var(--dimmer); font-variant-numeric: tabular-nums; flex: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  #fix, .sheet { animation: none; }
+}
+
+/* ── Хроника ───────────────────────────────────────────────────────────
+   Тот же список, что и очередь, но без номеров и кнопок: здесь ничего не
+   делают, сюда приходят читать. */
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+
+.log-rows { margin-top: var(--s3); max-height: 62vh; overflow-y: auto; }
+.log-rows li { grid-template-columns: minmax(0, 1fr) auto; }
+.log-rows .len { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.log-rows .ttl { font-size: var(--t-sm); }
+.log-rows .asked { max-width: 60%; }
+.log-rows li.none {
+  display: block; border: 0; color: var(--dimmer); font-size: var(--t-sm);
+  padding: var(--s3) 0;
+}
+
+.tag.ok   { color: var(--dim);  border: 1px solid var(--line-2); }
+.tag.warn { color: var(--lime); border: 1px solid var(--lime-lo); }
+.tag.bad  { color: var(--bad);  border: 1px solid rgba(255, 77, 77, .4); }
+
+/* ── Раздел «Виджет» ───────────────────────────────────────────────────
+   Слева кадр с настоящей плашкой, справа ручки, ниже галерея наборов.
+   Плашка в кадре нарисована тем же widget.css, что и виджет в OBS: своей
+   «похожей» вёрстки здесь нет намеренно — она разошлась бы с настоящей
+   в первый же день. */
+
+.wx {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: var(--s7);
+  align-items: start;
+}
+
+/* Кадр всегда тёмный или светлый по выбору, а не по теме панели: это не
+   часть интерфейса, а изображение — то, что увидят зрители. */
+.wx-stage {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  background: #0b0d0e;
+  isolation: isolate;
+}
+
+.wx-scene { position: absolute; inset: 0; }
+.wx-scene::before, .wx-scene::after { content: ""; position: absolute; inset: 0; }
+
+.wx-stage[data-scene="dark"] .wx-scene {
+  background: radial-gradient(120% 90% at 72% 18%, #24313d 0%, #131a20 45%, #0b0d0e 100%);
+}
+.wx-stage[data-scene="dark"] .wx-scene::before {
+  background:
+    radial-gradient(38% 46% at 24% 74%, rgba(88, 132, 160, .3), transparent 70%),
+    radial-gradient(30% 34% at 82% 62%, rgba(150, 96, 70, .26), transparent 70%);
+  filter: blur(6px);
+}
+
+.wx-stage[data-scene="light"] .wx-scene {
+  background: radial-gradient(120% 95% at 40% 12%, #e2e8ec 0%, #b9c6cd 48%, #8fa2ad 100%);
+}
+.wx-stage[data-scene="light"] .wx-scene::before {
+  background:
+    radial-gradient(34% 40% at 78% 74%, rgba(255, 255, 255, .75), transparent 70%),
+    radial-gradient(40% 46% at 18% 30%, rgba(255, 240, 205, .55), transparent 70%);
+  filter: blur(8px);
+}
+
+/* Пёстрая сцена — главная проверка: оформление без подложки читается
+   далеко не на всякой картинке, и увидеть это надо здесь, а не на стриме. */
+.wx-stage[data-scene="busy"] .wx-scene {
+  background:
+    repeating-linear-gradient(58deg, #7d3f8c 0 42px, #2b6ea8 42px 84px, #d0763a 84px 126px),
+    #333;
+}
+.wx-stage[data-scene="busy"] .wx-scene::before {
+  background:
+    radial-gradient(45% 55% at 70% 30%, rgba(255, 255, 255, .55), transparent 70%),
+    radial-gradient(40% 50% at 20% 80%, rgba(0, 0, 0, .55), transparent 70%);
+  filter: blur(10px);
+}
+
+.wx-scene::after {
+  background: radial-gradient(100% 100% at 50% 45%, transparent 55%, rgba(0, 0, 0, .35) 100%);
+}
+
+.wx-stage-bar {
+  display: flex; align-items: center; gap: var(--s4);
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--line);
+}
+.wx-stage-bar .link-btn { margin-left: auto; }
+
+.chips { display: flex; gap: var(--s1); }
+.chips button {
+  font: 500 12px/1 inherit;
+  color: var(--dimmer); background: none;
+  border: 1px solid var(--line); border-radius: 2px;
+  padding: 6px 10px; cursor: pointer;
+  transition: color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.chips button:hover { color: var(--text); border-color: var(--line-2); }
+.chips button.on { color: var(--lime); border-color: var(--lime-lo); }
+.chips button:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+
+.wx-right .kicker { display: flex; align-items: baseline; }
+
+/* Ползунки. Родной вид у них разный в каждом браузере, поэтому дорожку
+   и бегунок задаём сами — иначе панель в Chrome и Firefox выглядит
+   по-разному именно там, где настраивают внешний вид. */
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 18px; background: none; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px; background: var(--line-2); border-radius: 2px;
+}
+input[type="range"]::-moz-range-track {
+  height: 2px; background: var(--line-2); border-radius: 2px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; margin-top: -5.5px;
+  background: var(--lime); border-radius: 50%; border: 0;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 13px; height: 13px;
+  background: var(--lime); border-radius: 50%; border: 0;
+}
+input[type="range"]:focus-visible { outline: 2px solid var(--lime); outline-offset: 4px; }
+input[type="range"]:disabled { opacity: .35; cursor: default; }
+input[type="range"]:disabled::-webkit-slider-thumb { background: var(--dimmer); }
+input[type="range"]:disabled::-moz-range-thumb { background: var(--dimmer); }
+
+.field > span b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ── ручная настройка ─────────────────────────────────────────────── */
+
+#wx-tweaks { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s3); }
+
+.tweak {
+  display: flex; align-items: center; gap: var(--s2);
+  font-size: var(--t-sm); color: var(--dim);
+  cursor: pointer;
+}
+.tweak.wide { flex-direction: column; align-items: stretch; gap: var(--s1); cursor: default; }
+.tweak-name { display: flex; align-items: center; gap: var(--s2); flex: 1; }
+.tweak-name b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Тронутое руками помечено: иначе через неделю не вспомнить, что здесь
+   набор, а что своя правка. */
+.tweak.set .tweak-name { color: var(--lime); }
+
+.tweak input[type="color"] {
+  -webkit-appearance: none; appearance: none;
+  width: 30px; height: 24px; padding: 0; flex: none; cursor: pointer;
+  background: none; border: 1px solid var(--line-2); border-radius: 2px;
+}
+.tweak input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+.tweak input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 1px; }
+.tweak input[type="color"]::-moz-color-swatch { border: 0; border-radius: 1px; }
+
+.tweak-off {
+  background: none; border: 0; color: var(--dimmer);
+  font-size: 15px; line-height: 1; padding: 0 2px; cursor: pointer;
+  transition: color var(--fast) var(--ease);
+}
+.tweak-off:hover { color: var(--bad); }
+.tweak-off:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+
+/* ── галерея наборов ──────────────────────────────────────────────── */
+
+.wx-gallery { margin-top: var(--s7); display: flex; flex-direction: column; gap: var(--s7); }
+
+.fam { display: flex; flex-direction: column; gap: var(--s3); }
+.fam-head { display: flex; align-items: baseline; gap: var(--s4); flex-wrap: wrap; }
+.fam-head h3 {
+  margin: 0; font-family: Unbounded, sans-serif; font-size: var(--t-sm);
+  font-weight: 600; letter-spacing: var(--track-chip);
+}
+.fam-head p { margin: 0; font-size: 12px; color: var(--dimmer); flex: 1; min-width: 200px; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--s3); }
+
+.tile {
+  display: flex; flex-direction: column; gap: var(--s2);
+  padding: 0; background: none; border: 0; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.tile-stage {
+  display: block; position: relative; overflow: hidden;
+  aspect-ratio: 16 / 7;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(120% 100% at 70% 20%, #26333f 0%, #141b21 50%, #0c0e10 100%);
+  transition: border-color var(--fast) var(--ease);
+}
+/* Плитка — не сцена, а образец: плашка стоит по центру, а не в углу. */
+.tile-stage .card {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 92%;
+}
+.tile-stage .card.show { transform: translate(-50%, -50%); }
+/* Тикер тянется во всю ширину и по горизонтали не центрируется: сдвиг на
+   половину увёл бы его за край плитки. */
+.tile-stage .card[data-family="ticker"],
+.tile-stage .card[data-family="ticker"].show { transform: translate(0, -50%); }
+/* Постоянные анимации в плитках оставлены: пластинка крутится, катушки
+   идут, каретка мигает — ради этого на них и смотрят. А вот появление в
+   плитках не играет: сорок штук разом — это припадок, а не показ.
+   Появление смотрят в кадре наверху, по кнопке. */
+.tile-stage .card { animation: none !important; }
+
+.tile-name {
+  font-size: 12px; color: var(--dimmer);
+  transition: color var(--fast) var(--ease);
+}
+.tile:hover .tile-stage { border-color: var(--line-2); }
+.tile:hover .tile-name { color: var(--text); }
+.tile:focus-visible .tile-stage { outline: 2px solid var(--lime); outline-offset: 2px; }
+
+.tile.on .tile-stage { border-color: var(--lime); }
+.tile.on .tile-name { color: var(--lime); }
+.tile.on .tile-name::after { content: " · выбран"; color: var(--dimmer); }
+
+@media (max-width: 900px) {
+  .wx { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Метка «сохранено». Поля настроек сохраняются сами, как только уходит фокус,
+   и без метки это выглядит так, будто ничего не произошло: человек правит
+   цену награды, ничего не видит и решает, что настройка сломана. */
+.field, .check { position: relative; }
+
+.field.saved > span::after,
+.check.saved::after {
+  content: "сохранено";
+  margin-left: var(--s2);
+  font-size: 11px; font-weight: 600;
+  letter-spacing: var(--track-chip);
+  color: var(--lime);
+  animation: savedMark 1.8s var(--ease) forwards;
+}
+
+@keyframes savedMark {
+  0%   { opacity: 0; transform: translateX(-4px); }
+  12%  { opacity: 1; transform: none; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field.saved > span::after, .check.saved::after { animation: none; opacity: 1; }
+}
+
+/* Выключенный список должен выглядеть выключенным. Без этого правила базовый
+   цвет текста перебивает вид браузера, и «Угол кадра» у тикера выглядит
+   рабочим, хотя не нажимается. */
+.field select:disabled,
+.field input:disabled {
+  color: var(--faint);
+  border-color: var(--line);
+  cursor: not-allowed;
+}
+.field input[type="range"]:disabled { cursor: not-allowed; }
+
+/* Приложение умерло — гаснет всё, включая баннер с кодом входа и окно
+   «не тот трек». Раньше они горели поверх серого и отвечали «приложение не
+   ответило» на любое нажатие. */
+body.stale #banner,
+body.stale #fix { opacity: .35; pointer-events: none; }

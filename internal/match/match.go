@@ -20,6 +20,12 @@ type Options struct {
 	// Maybe — между Maybe и Accept берём, но помечаем как неточное совпадение.
 	Maybe   float64
 	Weights Weights
+	// Market — страна аккаунта, двухбуквенный код. Треки, не лицензированные
+	// в ней, играть нельзя: Spotify откажет уже при попытке включить. Лучше
+	// отсеять их здесь и честно сказать, чем поставить в очередь заведомо
+	// мёртвый заказ.
+	Market string
+
 	// WantMs — длительность из ссылки, если она известна.
 	WantMs int
 }
@@ -40,6 +46,24 @@ type Result struct {
 	Attempts []string
 	// Considered — сколько разных треков попало в общий пул.
 	Considered int
+	// AbroadOnly — сколько подходящих треков отсеяно из-за страны аккаунта.
+	// Больше нуля означает, что трек в Spotify есть, но в стране стримера
+	// не лицензирован: искать дальше бесполезно, надо менять страну.
+	AbroadOnly int
+	// Rejected — лучшие из тех, кого не взяли, с их оценками.
+	//
+	// Без этого «не найден» неразличим: то ли Spotify ничего не вернул, то ли
+	// вернул, а подбор всё забраковал. Это два совершенно разных диагноза, и
+	// по телефону их не различить никак.
+	Rejected []Rejected
+}
+
+// Rejected — кандидат, который не прошёл.
+type Rejected struct {
+	Title  string
+	Artist string
+	Score  float64
+	Why    string
 }
 
 // Explain — короткое объяснение выбора для лога и панели.
@@ -48,6 +72,19 @@ func (r Result) Explain() string {
 		return fmt.Sprintf("ничего подходящего среди %d кандидатов", r.Considered)
 	}
 	return fmt.Sprintf("%.2f · %s", r.Score.Total, r.Score.Why)
+}
+
+// fits — похож ли кандидат на заказ настолько, чтобы о нём вообще стоило
+// говорить. Нужна одна: недоступный в стране трек считается «отсеянным
+// страной» только если без этой преграды он бы прошёл.
+func fits(req Request, c Candidate, opts Options) bool {
+	score := Rate(req, c, opts.WantMs, opts.Weights)
+	for _, variant := range readings(req) {
+		if alt := Rate(variant, c, opts.WantMs, opts.Weights); alt.Total > score.Total {
+			score = alt
+		}
+	}
+	return score.Total >= opts.Maybe
 }
 
 // Find ищет заказанный трек.
@@ -59,6 +96,9 @@ func (r Result) Explain() string {
 func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, error) {
 	pool := map[string]Candidate{}
 	var result Result
+	// lastErr — последняя беда со связью. Нужна в самом конце: пустой пул
+	// после сбоя означает «не дозвонились», а не «такого трека нет».
+	var lastErr error
 
 	for _, q := range queries(req) {
 		if q == "" {
@@ -70,9 +110,12 @@ func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, e
 		if err != nil {
 			// Одна неудачная попытка не повод бросать поиск: остальные могут
 			// сработать. Ошибку вернём, только если не нашлось совсем ничего.
-			if len(pool) == 0 && len(result.Attempts) == len(queries(req)) {
-				return result, err
-			}
+			//
+			// Держим её до самого конца, а не проверяем «сломалась ли именно
+			// последняя попытка»: если связь оборвалась на пяти запросах из
+			// шести, а шестой вернул пустоту, зритель получал «такого трека
+			// нет» вместо правды про связь.
+			lastErr = err
 			continue
 		}
 		for _, c := range found {
@@ -81,7 +124,7 @@ func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, e
 
 		// Останавливаемся, как только набрали уверенного кандидата: остальные
 		// запросы только потратят лимит Spotify.
-		if best, score := pick(req, pool, opts); best.ID != "" && score.Total >= opts.Accept {
+		if best, score, _ := pick(req, pool, opts); best.ID != "" && score.Total >= opts.Accept {
 			result.Found = true
 			result.Track = best
 			result.Score = score
@@ -90,9 +133,25 @@ func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, e
 		}
 	}
 
+	// Обычные запросы не дали ничего годного — заходим через артиста.
+	// Это дорого (лишние запросы к Spotify), поэтому только здесь, в самом
+	// конце, и только когда иначе заказ всё равно пропадёт.
+	if best, score, _ := pick(req, pool, opts); best.ID == "" || score.Total < opts.Maybe {
+		found, tried := byArtist(ctx, s, req)
+		result.Attempts = append(result.Attempts, tried...)
+		for _, c := range found {
+			pool[c.ID] = c
+		}
+	}
+
 	result.Considered = len(pool)
-	best, score := pick(req, pool, opts)
+	best, score, abroad := pick(req, pool, opts)
+	result.AbroadOnly = abroad
 	if best.ID == "" || score.Total < opts.Maybe {
+		if len(pool) == 0 && lastErr != nil {
+			return result, lastErr
+		}
+		result.Rejected = topRejected(req, pool, opts)
 		return result, nil
 	}
 
@@ -104,7 +163,7 @@ func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, e
 }
 
 // pick выбирает лучшего кандидата из пула.
-func pick(req Request, pool map[string]Candidate, opts Options) (Candidate, Score) {
+func pick(req Request, pool map[string]Candidate, opts Options) (Candidate, Score, int) {
 	// Порядок обхода карты в Go случайный, поэтому при равных оценках выбор
 	// был бы разным от запуска к запуску. Сортируем по идентификатору.
 	ids := make([]string, 0, len(pool))
@@ -115,9 +174,25 @@ func pick(req Request, pool map[string]Candidate, opts Options) (Candidate, Scor
 
 	var best Candidate
 	var bestScore Score
+	abroad := 0
 
 	for _, id := range ids {
 		c := pool[id]
+
+		// Недоступное в стране аккаунта не берём, но запоминаем: если под
+		// конец окажется, что отсеяли именно подходящее, стример должен
+		// узнать настоящую причину, а не «не нашлось».
+		//
+		// Считаем только то, что вообще похоже на заказ. Иначе достаточно
+		// одного постороннего трека из двадцати найденных, не изданного в
+		// Индии, — и приложение говорит зрителю «трек не издан в стране
+		// аккаунта стримера» про трек, которого в Spotify нет вовсе.
+		if !c.PlayableIn(opts.Market) {
+			if fits(req, c, opts) {
+				abroad++
+			}
+			continue
+		}
 
 		// Примеряем все прочтения запроса: прямое, с переставленными
 		// артистом и названием, и переписанное другим алфавитом. Берём
@@ -133,7 +208,7 @@ func pick(req Request, pool map[string]Candidate, opts Options) (Candidate, Scor
 			best, bestScore = c, score
 		}
 	}
-	return best, bestScore
+	return best, bestScore, abroad
 }
 
 // readings — все разумные прочтения одного и того же заказа.
@@ -218,4 +293,38 @@ func primaryArtist(s string) string {
 		return parts[0]
 	}
 	return s
+}
+
+// topRejected собирает лучших из непрошедших — чтобы в логе было видно, что
+// именно Spotify вернул и почему это не подошло.
+func topRejected(req Request, pool map[string]Candidate, opts Options) []Rejected {
+	type scored struct {
+		c Candidate
+		s Score
+	}
+
+	all := make([]scored, 0, len(pool))
+	for _, c := range pool {
+		all = append(all, scored{c, Rate(req, c, opts.WantMs, opts.Weights)})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].s.Total > all[j].s.Total })
+
+	// Трёх хватает: если верные варианты не попали даже в тройку, дело не в
+	// пороге, а в самом запросе.
+	if len(all) > 3 {
+		all = all[:3]
+	}
+
+	out := make([]Rejected, 0, len(all))
+	for _, x := range all {
+		artist := ""
+		if len(x.c.Artists) > 0 {
+			artist = x.c.Artists[0]
+		}
+		out = append(out, Rejected{
+			Title: x.c.Title, Artist: artist,
+			Score: x.s.Total, Why: x.s.Why,
+		})
+	}
+	return out
 }

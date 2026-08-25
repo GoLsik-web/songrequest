@@ -31,6 +31,11 @@ type Config struct {
 
 	// Spotify
 	SpotifyClientID string `json:"spotify_client_id"`
+	// SpotifyProxy — посредник только для запросов к Spotify. Пусто — прямое
+	// соединение. Нужен там, где до Spotify не достучаться напрямую; всё
+	// остальное (Twitch, чат, донаты) при этом идёт своим путём и не теряет
+	// в скорости, в отличие от системного VPN.
+	SpotifyProxy string `json:"spotify_proxy"`
 
 	// Twitch
 	TwitchClientID   string `json:"twitch_client_id"`
@@ -55,6 +60,10 @@ type Config struct {
 	FallbackPlaylistID string         `json:"fallback_playlist_id"`
 	FallbackPlaylist   string         `json:"fallback_playlist_name"` // для показа в панели
 	ResumeDelaySeconds int            `json:"resume_delay_seconds"`
+	// WaitForCurrent — не обрывать трек, который играет у стримера: первый
+	// заказ дожидается его конца. По умолчанию включено — обрывать музыку
+	// на середине хуже, чем подождать.
+	WaitForCurrent bool `json:"wait_for_current"`
 
 	// Матчинг: пороги уверенности и веса. Вынесены наружу, чтобы крутить без пересборки.
 	MatchAccept float64      `json:"match_accept"` // выше — берём молча
@@ -71,6 +80,9 @@ type Config struct {
 
 	// Фильтр «это не музыка»
 	RejectKeywords []string `json:"reject_keywords"`
+
+	// Виджет для OBS
+	Widget Widget `json:"widget"`
 }
 
 // MatchWeights — веса слагаемых в оценке кандидата из Spotify.
@@ -95,7 +107,8 @@ func Defaults() Config {
 		DonationPriority:   true,
 		DonationMin:        100,
 		ResumeFail:         ResumeFallbackPlaylist,
-		ResumeDelaySeconds: 3,
+		ResumeDelaySeconds: 1,
+		WaitForCurrent:     true,
 		MatchAccept:        0.80,
 		MatchMaybe:         0.55,
 		MatchWeight: MatchWeights{
@@ -105,6 +118,7 @@ func Defaults() Config {
 			Popularity: 0.1,
 			Version:    1.0,
 		},
+		Widget: DefaultWidget(),
 		RejectKeywords: []string{
 			"нарезка", "нарезки", "подкаст", "стрим", "compilation", "mix",
 			"1 hour", "1 час", "10 hours", "podcast", "livestream", "best moments",
@@ -118,6 +132,11 @@ type File struct {
 	mu   sync.RWMutex
 	cfg  Config
 	path string
+
+	// saveMu отдельный: он держится на всю запись файла, а mu — только на
+	// снятие копии настроек. Один замок на оба дела заставил бы панель ждать
+	// диска ради обычного чтения.
+	saveMu sync.Mutex
 }
 
 // Load читает конфиг из dir/config.json. Если файла нет — создаёт со значениями
@@ -140,12 +159,23 @@ func Load(dir string) (*File, error) {
 	if err := json.Unmarshal(data, &f.cfg); err != nil {
 		return nil, fmt.Errorf("настройки повреждены (%s): %w", f.path, err)
 	}
+	// Конфиг мог быть от прошлой версии или поправлен руками: приводим в
+	// рабочий вид сразу, а не когда виджет уже висит на стриме.
+	f.cfg.Widget.Normalize()
 	return f, nil
 }
 
 // Save записывает конфиг атомарно: сначала во временный файл, потом переименование.
 // Так недописанный файл не заменит рабочий, если приложение убьют посреди записи.
 func (f *File) Save() error {
+	// Запись целиком под своим замком, и вот почему. Панель сохраняет
+	// настройки целым файлом, а стример успевает нажать две галочки подряд.
+	// Без замка две записи шли одновременно в один и тот же .tmp: одна правка
+	// молча пропадала, а на Windows переименование ещё и упиралось в чужой
+	// открытый файл — «не смог сохранить настройки» на ровном месте.
+	f.saveMu.Lock()
+	defer f.saveMu.Unlock()
+
 	f.mu.RLock()
 	data, err := json.MarshalIndent(f.cfg, "", "  ")
 	f.mu.RUnlock()
@@ -153,11 +183,14 @@ func (f *File) Save() error {
 		return err
 	}
 
-	tmp := f.path + ".tmp"
+	// Имя временного файла своё у каждой записи: если приложение убьют
+	// посреди сохранения, чужой огрызок не помешает следующему запуску.
+	tmp := fmt.Sprintf("%s.%d.tmp", f.path, os.Getpid())
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("запись настроек: %w", err)
 	}
 	if err := os.Rename(tmp, f.path); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("запись настроек: %w", err)
 	}
 	return nil

@@ -37,7 +37,6 @@ func main() {
 }
 
 func run() error {
-	debug := flag.Bool("подробный-лог", false, "писать в лог все подробности с самого старта")
 	noBrowser := flag.Bool("без-браузера", false, "не открывать панель автоматически")
 	flag.Parse()
 
@@ -46,7 +45,10 @@ func run() error {
 		return err
 	}
 
-	log, err := logx.New(dir, *debug)
+	// Подробный лог включён всегда. Приложение чинится по логу с чужого
+	// компьютера, а просить человека «включи галочку и повтори» — значит
+	// потерять тот единственный раз, когда всё сломалось.
+	log, err := logx.New(dir, true)
 	if err != nil {
 		return err
 	}
@@ -64,7 +66,6 @@ func run() error {
 	defer db.Close()
 
 	state := app.New(version)
-	state.SetDebugLog(*debug)
 
 	keys := secrets.New()
 	sp := spotify.New(cfg, log, keys)

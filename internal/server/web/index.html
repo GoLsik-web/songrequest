@@ -6,6 +6,7 @@
 <title>Заказ музыки</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/fonts/fonts.css">
+<link rel="stylesheet" href="/static/widget.css">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -17,11 +18,18 @@
 <header class="status-bar">
   <div class="conns" id="conns"></div>
   <div class="bar-tail">
+    <button class="tail-btn" id="widget-toggle" aria-expanded="false">
+      <svg aria-hidden="true"><use href="#i-monitor"></use></svg>
+      виджет
+    </button>
+    <button class="tail-btn" id="log-toggle" aria-expanded="false">
+      <svg aria-hidden="true"><use href="#i-history"></use></svg>
+      хроника
+    </button>
     <button class="tail-btn" id="settings-toggle" aria-expanded="false">
       <svg aria-hidden="true"><use href="#i-settings"></use></svg>
       настройки
     </button>
-    <a class="tail-btn" href="/widget" target="_blank" rel="noopener">виджет</a>
     <span class="ver" id="version"></span>
   </div>
 </header>
@@ -56,6 +64,133 @@
   </div>
 </main>
 
+<section class="panel" id="widget" hidden>
+  <div class="wx">
+
+    <div class="wx-left">
+      <div class="wx-stage" id="wx-stage" data-scene="dark">
+        <div class="wx-scene"></div>
+        <div class="card show" id="wx-card">
+          <div class="art" id="wx-art"></div>
+          <div class="text">
+            <div class="title" id="wx-title">Bohemian Rhapsody</div>
+            <div class="artist" id="wx-artist">Queen</div>
+            <div class="by" id="wx-by">заказал zritel</div>
+            <div class="bar"><i id="wx-bar"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wx-stage-bar">
+        <div class="chips" id="wx-source-pick">
+          <button data-source="order" class="on">заказ</button>
+          <button data-source="own">своя музыка</button>
+        </div>
+        <div class="chips" id="wx-scene-pick">
+          <button data-scene="dark" class="on">тёмная сцена</button>
+          <button data-scene="light">светлая</button>
+          <button data-scene="busy">пёстрая</button>
+        </div>
+        <button class="link-btn" id="wx-play">появление</button>
+        <button class="link-btn" id="wx-leave">уход</button>
+        <button class="link-btn" id="wx-next">следующий трек</button>
+      </div>
+
+      <div class="hint">Так плашка выглядит в кадре, в натуральную величину.
+        Правки видны в OBS сразу — адрес переклеивать не нужно.</div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Адрес для OBS — один раз и навсегда</span>
+        <input type="text" id="wx-url" readonly spellcheck="false">
+      </label>
+      <div class="acts">
+        <button class="act small key" id="wx-copy">Скопировать адрес</button>
+        <a class="act small" id="wx-open" target="_blank" rel="noopener">Открыть в браузере</a>
+      </div>
+    </div>
+
+    <div class="wx-right">
+      <div class="kicker">Как поставить</div>
+
+      <label class="field">
+        <span>Угол кадра</span>
+        <select id="wx-pos">
+          <option value="left-bottom">Слева снизу</option>
+          <option value="right-bottom">Справа снизу</option>
+          <option value="left-top">Слева сверху</option>
+          <option value="right-top">Справа сверху</option>
+        </select>
+        <span class="hint" id="wx-pos-hint"></span>
+      </label>
+
+      <label class="field">
+        <span>Размер <b id="wx-scale-val">100%</b></span>
+        <input type="range" id="wx-scale" min="50" max="200" step="5">
+      </label>
+
+      <label class="field">
+        <span>Отступ от края <b id="wx-gap-val">40</b></span>
+        <input type="range" id="wx-gap" min="0" max="160" step="4">
+      </label>
+
+      <div class="kicker" style="margin-top:24px">Что показывать</div>
+      <label class="check"><input type="checkbox" id="wx-art-on"> Обложку</label>
+      <label class="check"><input type="checkbox" id="wx-by-on"> Ник заказчика</label>
+      <label class="check"><input type="checkbox" id="wx-bar-on"> Полосу времени</label>
+      <label class="check"><input type="checkbox" id="wx-motion-on"> Движение</label>
+      <div class="hint">Сними, если анимация мешает — плашка станет неподвижной,
+        но останется на месте.</div>
+
+      <label class="check" style="margin-top:12px"><input type="checkbox" id="wx-own-on"> Свою музыку тоже</label>
+      <div class="hint">Виджет показывает и то, что ты слушаешь сам, а не только
+        заказы. Под артистом всегда написано, откуда трек: «заказал ник» или
+        «музыка канала». Сними галочку, если свой плейлист светить не хочешь —
+        тогда и в панели «В эфире» будет только во время заказов.</div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Убирать через <b id="wx-hold-val">не убирать</b></span>
+        <input type="range" id="wx-hold" min="0" max="60" step="5">
+        <span class="hint">Ноль — плашка висит весь трек. Иначе исчезнет через
+          столько секунд после его начала.</span>
+      </label>
+
+      <div class="kicker" style="margin-top:24px">
+        Своими руками
+        <button class="link-btn" id="wx-reset" style="margin-left:auto">вернуть как в наборе</button>
+      </div>
+      <div class="hint" style="margin-top:0">Поверх выбранного набора. Что не тронул —
+        остаётся как в наборе.</div>
+      <div id="wx-tweaks"></div>
+    </div>
+
+  </div>
+
+  <div class="wx-gallery" id="wx-gallery"></div>
+</section>
+
+<section class="panel" id="log" hidden>
+  <div class="grid two">
+
+    <div class="col">
+      <div class="kicker">Что заказывали</div>
+      <div class="sheet-find" style="margin-top:var(--s3)">
+        <input type="text" id="hist-q" spellcheck="false" autocomplete="off"
+               placeholder="ник, артист или название">
+      </div>
+      <div class="hint" id="hist-note"></div>
+      <ul class="rows log-rows" id="hist"></ul>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Что делали модераторы</div>
+      <div class="hint" style="margin-top:var(--s3)">Скипы, удаления и запреты —
+        видно, кто и когда.</div>
+      <ul class="rows log-rows" id="modlog"></ul>
+    </div>
+
+  </div>
+</section>
+
 <section class="panel" id="settings" hidden>
   <div class="grid">
 
@@ -74,6 +209,35 @@
       </div>
       <div class="account" id="account"></div>
       <div class="hint" id="redirect"></div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Прокси для Spotify — если напрямую не пускает</span>
+        <input type="text" id="proxy" spellcheck="false" autocomplete="off"
+               placeholder="socks5://адрес:порт">
+      </label>
+      <div class="acts">
+        <button class="act small key" data-do="proxy-detect">Найти автоматически</button>
+        <button class="act small" id="save-proxy">Сохранить</button>
+        <button class="act small" data-do="check">Проверить связь</button>
+      </div>
+      <div class="hint">
+        Через него пойдут <b>только запросы этого приложения к Spotify</b>.
+        Twitch, чат, донаты и сам стрим останутся на прямом канале — в отличие
+        от VPN, который уводит туда же игру и загрузку на Twitch.
+        <br><br>
+        Нечего вписывать? Запусти <b>Psiphon</b> (psiphon.ca, бесплатный,
+        без регистрации) и нажми «Найти автоматически» — подробности в файле
+        «Инструкция-Прокси».
+        <br><br>
+        <b>Программе Spotify прокси не нужен.</b> Она ходит другими адресами,
+        и если музыка у тебя играет без VPN — в ней ничего менять не надо.
+        Блокируют обычно только адреса, по которым работают приложения вроде
+        этого.
+        <br><br>
+        <b>Вход всё равно один раз через VPN.</b> Кнопка «Подключить Spotify»
+        открывает страницу входа в браузере, а браузер про этот прокси не знает.
+        Включи VPN, войди, выключи VPN — дальше приложение живёт на прокси само.
+      </div>
     </div>
 
     <div class="col">
@@ -166,6 +330,55 @@
     </div>
 
     <div class="col">
+      <div class="kicker">Правила заказа</div>
+      <label class="field">
+        <span>Название награды на Twitch</span>
+        <input type="text" id="reward-title" spellcheck="false" autocomplete="off"
+               placeholder="Заказ музыки">
+      </label>
+      <label class="field">
+        <span>Сколько стоит, баллов</span>
+        <input type="number" id="reward-cost" min="1" step="1" inputmode="numeric">
+      </label>
+      <label class="check">
+        <input type="checkbox" id="auto-reward">
+        Создать награду самому
+      </label>
+      <div class="hint">Название и цена уезжают на канал сразу, как только ты их
+        здесь поменяешь. Править их на самом Twitch бесполезно — приложение
+        вернёт своё.
+        <br>Сними галочку, если хочешь завести награду сам: тогда приложение
+        не будет её создавать.</div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Не длиннее, минут</span>
+        <input type="number" id="max-minutes" min="1" max="60" step="1" inputmode="numeric">
+      </label>
+      <div class="hint">Отсекает часовые лупы и концерты целиком. Баллы за такой
+        заказ возвращаются зрителю.</div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Сколько заказов держит один зритель</span>
+        <input type="number" id="max-per-user" min="1" max="20" step="1" inputmode="numeric">
+      </label>
+      <div class="hint">Считаются только те, что ещё стоят в очереди.
+        Отыгравшие место не занимают.</div>
+
+      <label class="check" style="margin-top:16px">
+        <input type="checkbox" id="donation-priority">
+        Донаты вперёд баллов
+      </label>
+
+      <label class="field" style="margin-top:16px">
+        <span>Стоп-слова</span>
+        <textarea id="reject-words" rows="3" spellcheck="false"
+                  placeholder="по одному в строке"></textarea>
+      </label>
+      <div class="hint">Заказ с таким словом в названии не пройдёт, баллы вернутся.
+        Регистр и раскладка значения не имеют.</div>
+    </div>
+
+    <div class="col">
       <div class="kicker">Кому закрыт заказ музыки</div>
       <div class="hint" style="margin-top:0">Отдельный список от бана в чате.</div>
       <div id="banlist"></div>
@@ -191,7 +404,8 @@
           <option value="vivaldi">Vivaldi</option>
         </select>
         <span class="hint">YouTube иногда требует подтвердить, что запросы не от
-          робота. Приложение берёт доступ из браузера, в котором ты вошёл в YouTube.</span>
+          робота. Приложение берёт доступ из браузера, в котором ты вошёл в YouTube.
+          Применяется к следующему заказу, перезапуск не нужен.</span>
       </label>
 
       <label class="field" style="margin-top:14px">
@@ -205,18 +419,16 @@
 
     <div class="col">
       <div class="kicker">Диагностика</div>
-      <label class="check">
-        <input type="checkbox" id="debug-log">
-        Подробный лог
-      </label>
       <div class="hint">
-        Включи, повтори то, что не работало, и выгрузи лог. Ключи доступа,
-        Client ID и почта из архива вырезаются.
+        Подробный лог пишется всегда — ничего включать не нужно. Если что-то
+        сломалось, повтори это и нажми кнопку: в архив попадут лог, история
+        заказов с возвратами баллов, действия в панели и настройки. Ключи
+        доступа, Client ID и почта из архива вырезаются.
       </div>
       <div class="acts">
         <a class="act small" href="/api/diag/export">
           <svg aria-hidden="true"><use href="#i-download"></use></svg>
-          Выгрузить лог
+          Сохранить лог и историю
         </a>
       </div>
     </div>
@@ -224,7 +436,35 @@
   </div>
 </section>
 
+<div id="fix" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="fix-head">
+    <div class="sheet-head">
+      <div>
+        <div class="kicker" id="fix-head">Не тот трек</div>
+        <div class="sheet-sub">Зритель просил: <b id="fix-asked"></b></div>
+        <div class="sheet-sub">Сейчас стоит: <b id="fix-was"></b></div>
+      </div>
+      <button class="icon-btn" id="fix-close" title="Закрыть (Esc)">
+        <svg aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+
+    <div class="sheet-find">
+      <input type="text" id="fix-query" spellcheck="false" autocomplete="off"
+             placeholder="артист и название или ссылка Spotify">
+      <button class="act small key" id="fix-find">Искать</button>
+    </div>
+
+    <div class="hint" id="fix-note"></div>
+    <ul class="picks" id="fix-results"></ul>
+
+    <div class="hint">Выбранный трек запомнится: такой же заказ впредь
+      найдётся сразу и правильно, у любого зрителя.</div>
+  </div>
+</div>
+
 <footer id="status" class="offline">Подключаюсь к приложению…</footer>
+<script src="/static/widget-presets.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

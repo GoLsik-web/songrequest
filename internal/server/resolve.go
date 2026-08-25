@@ -2,13 +2,14 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
+	"songrequest/internal/links"
 	"songrequest/internal/match"
-	"songrequest/internal/queue"
 	"songrequest/internal/twitch"
 )
 
@@ -21,19 +22,44 @@ const resolveTimeout = 25 * time.Second
 // Не нашли — баллы возвращаются, и зритель получает объяснение в чат. Заказ,
 // за который списали баллы и промолчали, — это жалоба в чат через минуту.
 func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
+	// Срок ограничивает только поиск. Возврат баллов и сообщение зрителю
+	// живут отдельно: раньше они шли с тем же контекстом, и если поиск съел
+	// все двадцать пять секунд, возврат падал сразу — баллы не возвращались,
+	// зритель ничего не узнавал, в логе оставалась одна строка.
+	base := ctx
 	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
 
-	req := match.Parse(r.UserInput)
+	// Ссылка важнее текста: зритель уже указал конкретный трек, и гадать
+	// по названию незачем.
+	link, hasLink := s.fromLink(ctx, r.UserInput)
+	if hasLink && link.Track != nil {
+		s.acceptTrack(ctx, r, *link.Track, false, "Взято по ссылке")
+		return
+	}
+
+	// Адрес в поисковом запросе бесполезен всегда — и когда мы ссылку
+	// разобрали, и когда она от незнакомого сервиса.
+	text := links.Strip(r.UserInput)
+	if hasLink && link.Query != "" {
+		text = link.Query
+	}
+
+	req := match.Parse(text)
 	key := match.Key(req)
 
 	if req.Title == "" {
+		// Текста нет, но есть ссылка, которую умеет сыграть YouTube.
+		if hasLink && link.YouTube != nil {
+			s.acceptYouTube(ctx, r, *link.YouTube)
+			return
+		}
 		s.log.Info("заказ без текста", "зритель", r.UserLogin)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{
 			State: app.MatchFailed,
 			Note:  "Зритель не написал, что заказывает",
 		})
-		s.rejectRedemption(ctx, r, "ты не написал, что заказываешь")
+		s.rejectRedemption(s.afterSearch(base), r, "ты не написал, что заказываешь")
 		return
 	}
 
@@ -43,60 +69,81 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	} else if ok {
 		s.log.Info("трек взят из памяти",
 			"заказ", r.UserInput, "трек", hit.Artist+" — "+hit.Title, "ручное", hit.Manual)
-		s.state.SetOrderMatch(r.ID, app.OrderMatch{
-			State:   app.MatchFound,
-			TrackID: hit.TrackID,
-			Title:   hit.Title,
-			Artist:  hit.Artist,
-			Note:    memoryNote(hit.Manual),
-		})
-		s.enqueue(ctx, queue.Item{
-			Source: queue.SourcePoints, Requester: r.UserName, RawRequest: r.UserInput,
-			Provider: "spotify", TrackID: hit.TrackID, URI: "spotify:track:" + hit.TrackID,
-			Title: hit.Title, Artist: hit.Artist, DurationMs: hit.DurationMs,
-			CoverURL: hit.CoverURL, RedemptionID: r.ID, RewardID: r.RewardID,
-		})
+		s.acceptTrack(ctx, r, match.Candidate{
+			ID: hit.TrackID, URI: "spotify:track:" + hit.TrackID,
+			Title: hit.Title, Artists: []string{hit.Artist},
+			DurationMs: hit.DurationMs, CoverURL: hit.CoverURL,
+		}, false, memoryNote(hit.Manual))
 		return
 	}
 
 	cfg := s.cfg.Get()
-	opts := match.Options{
-		Accept: cfg.MatchAccept,
-		Maybe:  cfg.MatchMaybe,
-		Weights: match.Weights{
-			Title:      cfg.MatchWeight.Title,
-			Artist:     cfg.MatchWeight.Artist,
-			Duration:   cfg.MatchWeight.Duration,
-			Popularity: cfg.MatchWeight.Popularity,
-			Version:    cfg.MatchWeight.Version,
-		},
+	opts := matchOptionsFromConfig(cfg)
+	// Страна аккаунта: у Spotify свой каталог в каждой стране, и трек,
+	// не лицензированный в ней, попросту не заиграет.
+	if me := s.spotify.Account(); me != nil {
+		opts.Market = me.Country
 	}
+	// Длительность из ссылки — самый сильный сигнал против каверов,
+	// ускоренных версий и часовых лупов.
+	opts.WantMs = link.WantMs
 
 	res, err := match.Find(ctx, s.spotify, req, opts)
 	if err != nil {
 		code, text := errs.Describe(err)
 		s.log.Error("поиск трека не удался", "заказ", r.UserInput, "код", code, "ошибка", err)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{State: app.MatchFailed, Note: text})
-		s.rejectRedemption(ctx, r, "не получилось поискать трек, попробуй ещё раз")
+		s.rejectRedemption(s.afterSearch(base), r, "не получилось поискать трек, попробуй ещё раз")
 		return
 	}
 
 	if !res.Found {
-		// Честный отказ лучше случайного трека: дальше такой заказ уйдёт на
-		// YouTube, а пока просто говорим, что не нашли.
+		// «Кандидатов 0» и «кандидатов 20, но все мимо» — два разных диагноза,
+		// и по телефону их не различить. Поэтому пишем и то, что Spotify
+		// вернул, и почему это не подошло.
+		why := make([]string, 0, len(res.Rejected))
+		for _, bad := range res.Rejected {
+			why = append(why, fmt.Sprintf("%s — %s (%.2f, %s)",
+				bad.Artist, bad.Title, bad.Score, bad.Why))
+		}
 		s.log.Info("трек не найден",
 			"заказ", r.UserInput, "артист", req.Artist, "название", req.Title,
-			"запросы", res.Attempts, "кандидатов", res.Considered)
+			"запросы", res.Attempts, "кандидатов", res.Considered,
+			"порог", cfg.MatchMaybe, "страна_аккаунта", opts.Market,
+			"отсеяно_страной", res.AbroadOnly, "лучшие_из_отвергнутых", why)
+
+		// «Нет в Spotify» и «есть, но не в твоей стране» — разные вещи.
+		// Первое лечится другим запросом, второе — только сменой страны
+		// аккаунта, и пока об этом не сказать, стример будет думать, что
+		// сломан поиск.
+		note := "В Spotify не нашлось"
+		if res.AbroadOnly > 0 {
+			note = "Есть в Spotify, но не в стране аккаунта (" + opts.Market + ")"
+			s.state.NotifyWarn(errs.SpotifyCountry,
+				"«"+req.Clean+"» есть в Spotify, но не издан в стране твоего аккаунта ("+
+					opts.Market+"). Такие треки играть нельзя — их не найдёт и поиск.")
+		}
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{
 			State: app.MatchMissing,
-			Note:  "В Spotify не нашлось",
+			Note:  note,
 		})
+
+		// Ссылка на ролик уже разобрана — играем прямо её, искать нечего.
+		if hasLink && link.YouTube != nil {
+			s.acceptYouTube(ctx, r, *link.YouTube)
+			return
+		}
 		// Spotify не всесилен: в нём нет половины русского андеграунда и
-		// почти ничего из мемов. Такой заказ играем с YouTube.
+		// почти ничего из мемов. Такой заказ ищем на YouTube.
 		if s.tryYouTube(ctx, r, req.Clean) {
 			return
 		}
-		s.rejectRedemption(ctx, r, "не нашёл такого трека ни в Spotify, ни на YouTube")
+		if res.AbroadOnly > 0 {
+			s.rejectRedemption(s.afterSearch(base), r,
+				"этот трек не издан в стране аккаунта стримера, Spotify его не отдаёт")
+			return
+		}
+		s.rejectRedemption(s.afterSearch(base), r, "не нашёл такого трека ни в Spotify, ни на YouTube")
 		return
 	}
 
@@ -112,47 +159,24 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		if err := s.matchCache.Put(ctx, key, match.Hit{
 			TrackID: res.Track.ID,
 			Title:   res.Track.Title,
-			Artist:  res.Track.Artists[0],
-			Score:   res.Score.Total,
+			Artist:  artistOf(res.Track),
+			// Длительность и обложка обязательны: по ним считается лимит
+			// длины, время до конца трека и картинка в панели. Без них заказ
+			// из памяти обрывался на сорок пятой секунде.
+			DurationMs: res.Track.DurationMs,
+			CoverURL:   res.Track.CoverURL,
+			Score:      res.Score.Total,
 		}); err != nil {
 			s.log.Warn("не запомнил подбор", "ошибка", err)
 		}
 	}
 
-	state := app.MatchFound
 	note := ""
 	if res.Uncertain {
-		state = app.MatchUncertain
 		note = "Совпадение неточное — проверь, тот ли трек"
 	}
 
-	s.state.SetOrderMatch(r.ID, app.OrderMatch{
-		State:    state,
-		TrackID:  res.Track.ID,
-		URI:      res.Track.URI,
-		Title:    res.Track.Title,
-		Artist:   res.Track.Artists[0],
-		CoverURL: res.Track.CoverURL,
-		Duration: res.Track.DurationMs,
-		Note:     note,
-		Why:      res.Score.Why,
-	})
-
-	s.enqueue(ctx, queue.Item{
-		Source:       queue.SourcePoints,
-		Requester:    r.UserName,
-		RawRequest:   r.UserInput,
-		Provider:     "spotify",
-		TrackID:      res.Track.ID,
-		URI:          res.Track.URI,
-		Title:        res.Track.Title,
-		Artist:       res.Track.Artists[0],
-		DurationMs:   res.Track.DurationMs,
-		CoverURL:     res.Track.CoverURL,
-		Uncertain:    res.Uncertain,
-		RedemptionID: r.ID,
-		RewardID:     r.RewardID,
-	})
+	s.acceptTrack(ctx, r, res.Track, res.Uncertain, note)
 }
 
 // rejectRedemption возвращает баллы и объясняет зрителю, почему.
@@ -189,4 +213,26 @@ func matchOptionsFromConfig(cfg config.Config) match.Options {
 			Version:    cfg.MatchWeight.Version,
 		},
 	}
+}
+
+// artistOf — первый артист кандидата или пусто.
+func artistOf(c match.Candidate) string {
+	if len(c.Artists) == 0 {
+		return ""
+	}
+	return c.Artists[0]
+}
+
+// afterSearch даёт свежий срок на то, что делается после поиска: возврат
+// баллов и ответ зрителю. Поиск мог израсходовать весь свой, а эти два дела
+// обязаны случиться в любом случае.
+func (s *Server) afterSearch(base context.Context) context.Context {
+	ctx, cancel := context.WithTimeout(base, 20*time.Second)
+	// Отменяем по сроку, а не по возврату из функции: вызывающий уходит
+	// сразу, а запросу надо дожить.
+	go func() {
+		<-ctx.Done()
+		cancel()
+	}()
+	return ctx
 }

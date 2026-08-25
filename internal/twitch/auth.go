@@ -137,8 +137,18 @@ func (c *Client) WaitLogin(ctx context.Context) error {
 		if !sleepCtx(ctx, interval) {
 			return ctx.Err()
 		}
+
+		// Начали новый вход — этот больше никому не нужен: продолжать опрос
+		// значит соревноваться с ним за одно и то же поле.
+		c.mu.RLock()
+		current := c.pending
+		c.mu.RUnlock()
+		if current != flow {
+			c.log.Info("вход в Twitch начат заново, старое ожидание брошено")
+			return nil
+		}
 		if time.Now().After(flow.ExpiresAt) {
-			c.clearPending()
+			c.clearThisPending(flow)
 			return errs.New(errs.TwitchAuthPending,
 				"Код не подтвердили вовремя. Нажми «Подключить Twitch» и введи новый код.")
 		}
@@ -155,7 +165,7 @@ func (c *Client) WaitLogin(ctx context.Context) error {
 
 		switch {
 		case err == nil && out.AccessToken != "":
-			c.clearPending()
+			c.clearThisPending(flow)
 			t := tokens{
 				AccessToken:  out.AccessToken,
 				RefreshToken: out.RefreshToken,
@@ -177,7 +187,7 @@ func (c *Client) WaitLogin(ctx context.Context) error {
 			c.log.Debug("Twitch просит опрашивать реже", "новый_интервал", interval.String())
 
 		case err != nil:
-			c.clearPending()
+			c.clearThisPending(flow)
 			return err
 		}
 	}
@@ -203,6 +213,20 @@ func (c *Client) PendingCode() *DeviceLogin {
 func (c *Client) clearPending() {
 	c.mu.Lock()
 	c.pending = nil
+	c.mu.Unlock()
+}
+
+// clearThisPending убирает только тот вход, который сам же и ждал.
+//
+// Иначе выходит так: стример нажал «Подключить Twitch», не успел ввести код,
+// нажал ещё раз. Старая горутина живёт до получаса, дожидается «код истёк» и
+// стирает ожидание — но уже новое. У человека на глазах пропадает код,
+// который он в эту секунду вводит, и всплывает «Код истёк, нажми заново».
+func (c *Client) clearThisPending(flow *deviceFlow) {
+	c.mu.Lock()
+	if c.pending == flow {
+		c.pending = nil
+	}
 	c.mu.Unlock()
 }
 
@@ -258,6 +282,20 @@ func (c *Client) token(ctx context.Context) (string, error) {
 
 	var out tokenResponse
 	if err := c.postForm(ctx, "/token", form, &out); err != nil {
+		// Моргнувшая сеть — не повод выбрасывать вход.
+		//
+		// Раньше ключи стирались от любой ошибки, включая «Twitch не
+		// отвечает». Ключ доступа живёт около четырёх часов, то есть
+		// обновление приходится ровно на середину стрима: одна неудачная
+		// попытка — и заказы за баллы перестают приходить, а стримеру надо
+		// заново вводить код с телефона. Выбрасываем вход только когда Twitch
+		// прямо сказал, что ключ ему больше не нравится.
+		switch errs.CodeOf(err) {
+		case errs.TwitchUnreachable, errs.TwitchRateLimit, errs.TwitchBadResponse:
+			c.log.Warn("не обновил ключ доступа Twitch, вход сохраняю", "ошибка", err)
+			return "", err
+		}
+		c.log.Warn("Twitch отказал в обновлении ключа, вход сброшен", "ошибка", err)
 		c.forgetTokens()
 		return "", errs.Wrap(errs.TwitchAuthExpired,
 			"Слетела авторизация Twitch. Нажми «Подключить Twitch» заново.", err)

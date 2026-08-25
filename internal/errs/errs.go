@@ -17,22 +17,24 @@ const (
 	ConfigBroken Code = "CFG-03" // файл настроек повреждён
 
 	// Spotify
-	SpotifyAuthStart   Code = "SP-01" // не удалось открыть страницу входа
-	SpotifyAuthDenied  Code = "SP-02" // вход отклонён или подделан ответ
-	SpotifyAuthToken   Code = "SP-03" // не удалось завершить вход
-	SpotifyAuthExpired Code = "SP-04" // авторизация слетела, нужен повторный вход
-	SpotifyNoPremium   Code = "SP-05" // на аккаунте нет Premium
-	SpotifyNoDevice    Code = "SP-06" // нет устройства, где играть
-	SpotifyUnreachable Code = "SP-07" // Spotify не отвечает
-	SpotifyRateLimit   Code = "SP-08" // Spotify просит подождать
-	SpotifySnapshot    Code = "SP-09" // не удалось запомнить, что играло
-	SpotifyRestore     Code = "SP-10" // не удалось вернуть воспроизведение
-	SpotifyStale       Code = "SP-11" // за время заказа музыку переключили руками
-	SpotifyNothing     Code = "SP-12" // возвращать нечего
-	SpotifyBadResponse Code = "SP-13" // Spotify ответил не тем, чего мы ждали
-	SpotifyNoScope     Code = "SP-14" // не выданы права, нужен повторный вход
-	SpotifyPlanUnknown Code = "SP-15" // Spotify не сказал, какая подписка
-	SpotifyCountry     Code = "SP-16" // Spotify недоступен в стране аккаунта
+	SpotifyAuthStart    Code = "SP-01" // не удалось открыть страницу входа
+	SpotifyAuthDenied   Code = "SP-02" // вход отклонён или подделан ответ
+	SpotifyAuthToken    Code = "SP-03" // не удалось завершить вход
+	SpotifyAuthExpired  Code = "SP-04" // авторизация слетела, нужен повторный вход
+	SpotifyNoPremium    Code = "SP-05" // на аккаунте нет Premium
+	SpotifyNoDevice     Code = "SP-06" // нет устройства, где играть
+	SpotifyUnreachable  Code = "SP-07" // Spotify не отвечает
+	SpotifyRateLimit    Code = "SP-08" // Spotify просит подождать
+	SpotifySnapshot     Code = "SP-09" // не удалось запомнить, что играло
+	SpotifyRestore      Code = "SP-10" // не удалось вернуть воспроизведение
+	SpotifyStale        Code = "SP-11" // за время заказа музыку переключили руками
+	SpotifyNothing      Code = "SP-12" // возвращать нечего
+	SpotifyBadResponse  Code = "SP-13" // Spotify ответил не тем, чего мы ждали
+	SpotifyNoScope      Code = "SP-14" // не выданы права, нужен повторный вход
+	SpotifyPlanUnknown  Code = "SP-15" // Spotify не сказал, какая подписка
+	SpotifyCountry      Code = "SP-16" // Spotify недоступен в стране аккаунта
+	SpotifyProxy        Code = "SP-17" // прокси для Spotify настроен неверно
+	SpotifyForeignTrack Code = "SP-18" // трек не издан в стране аккаунта стримера
 
 	// Twitch
 	TwitchNoClientID   Code = "TW-01" // не заполнен client_id Twitch
@@ -62,6 +64,9 @@ const (
 	YouTubePlay        Code = "YT-04" // не получилось включить
 	YouTubeBadResponse Code = "YT-05" // yt-dlp ответил не тем
 	YouTubeCookies     Code = "YT-06" // YouTube требует подтвердить, что мы не робот
+
+	// Яндекс.Музыка
+	YandexRead Code = "YM-01" // не удалось прочитать страницу трека
 
 	// Диагностика
 	DiagExport Code = "DIAG-01" // не собрался архив с логом

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"songrequest/internal/match"
 )
@@ -25,7 +26,11 @@ func (c *Client) SearchTracks(ctx context.Context, query string, limit int) ([]m
 				Name       string `json:"name"`
 				DurationMs int    `json:"duration_ms"`
 				Popularity int    `json:"popularity"`
-				Artists    []struct {
+				// AvailableMarkets Spotify присылает, когда в запросе не задан
+				// market. Именно по нему видно, что трек существует, но в
+				// стране стримера не играет.
+				AvailableMarkets []string `json:"available_markets"`
+				Artists          []struct {
 					Name string `json:"name"`
 				} `json:"artists"`
 				Album struct {
@@ -55,6 +60,7 @@ func (c *Client) SearchTracks(ctx context.Context, query string, limit int) ([]m
 			AlbumType:  t.Album.AlbumType,
 			DurationMs: t.DurationMs,
 			Popularity: t.Popularity,
+			Markets:    t.AvailableMarkets,
 		}
 		for _, a := range t.Artists {
 			cand.Artists = append(cand.Artists, a.Name)
@@ -69,4 +75,55 @@ func (c *Client) SearchTracks(ctx context.Context, query string, limit int) ([]m
 
 	c.log.Debug("поиск в Spotify", "запрос", query, "нашлось", len(candidates))
 	return candidates, nil
+}
+
+// ResolveArtist опознаёт артиста по кривому написанию.
+//
+// Поиск Spotify по артистам снисходительнее нашего сравнения: «marshmelo» он
+// опознаёт как Marshmello, «bilie ailish» — как Billie Eilish. Нам этого
+// достаточно, чтобы дальше искать трек внутри одного артиста, а не среди
+// всей музыки мира.
+func (c *Client) ResolveArtist(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+
+	var out struct {
+		Artists struct {
+			Items []struct {
+				Name       string `json:"name"`
+				Popularity int    `json:"popularity"`
+			} `json:"items"`
+		} `json:"artists"`
+	}
+
+	path := "/search?type=artist&limit=5&q=" + url.QueryEscape(name)
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return "", err
+	}
+
+	// Spotify возвращает похожих по своему разумению, и первый не всегда
+	// тот: на «marshmelo» приходят и Marshmello, и подражатели с похожими
+	// именами. Выбираем сами, по звучанию.
+	best, bestScore := "", 0.0
+	for _, a := range out.Artists.Items {
+		score := match.LooseSimilar(name, a.Name)
+		// Популярность решает споры между одинаково похожими: подражатели
+		// у Spotify всегда заметно ниже оригинала.
+		score += float64(a.Popularity) / 10000
+		if score > bestScore {
+			best, bestScore = a.Name, score
+		}
+	}
+
+	// Ниже этого совпадение уже случайное, и сузить поиск таким именем —
+	// значит увести его совсем не туда.
+	if bestScore < 0.7 {
+		c.log.Debug("артист не опознан", "запрос", name, "лучшее", best, "оценка", bestScore)
+		return "", nil
+	}
+
+	c.log.Info("артист опознан", "как_написали", name, "в_spotify", best)
+	return best, nil
 }

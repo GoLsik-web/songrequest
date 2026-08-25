@@ -2,6 +2,7 @@ package spotify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -68,7 +69,12 @@ func (c *Client) Playlists(ctx context.Context) ([]Playlist, error) {
 			return nil, err
 		}
 
+		// Тестер видит «0 треков» у непустых плейлистов, и по разобранному
+		// ответу этого не понять. Пишем в отладку то, что реально пришло.
 		for _, it := range page.Items {
+			c.log.Debug("плейлист от Spotify",
+				"название", it.Name, "треков", it.Tracks.Total,
+				"владелец", it.Owner.DisplayName, "id", it.ID)
 			out = append(out, Playlist{
 				ID:     it.ID,
 				Name:   it.Name,
@@ -83,7 +89,35 @@ func (c *Client) Playlists(ctx context.Context) ([]Playlist, error) {
 	}
 
 	c.log.Debug("прочитал список плейлистов", "штук", len(out))
+	// Spotify иногда отдаёт в списке ноль треков у непустых плейлистов.
+	// Спорить с ним бесполезно — спрашиваем число там, где оно точно есть:
+	// у самого плейлиста. Один лишний запрос на плейлист, и только на те,
+	// что показались пустыми.
+	c.fillEmptyCounts(ctx, out)
+
+	total := 0
+	empty := 0
+	for _, p := range out {
+		total += p.Tracks
+		if p.Tracks == 0 {
+			empty++
+		}
+	}
+	c.log.Info("плейлисты прочитаны",
+		"всего", len(out), "суммарно_треков", total, "пустых", empty,
+		"страна_аккаунта", c.country())
+
 	return out, nil
+}
+
+// country — страна вошедшего аккаунта, если она уже известна.
+func (c *Client) country() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.me == nil {
+		return ""
+	}
+	return c.me.Country
 }
 
 // PlaylistTrackURIs берёт первые треки плейлиста — ими дозаполняем
@@ -162,4 +196,68 @@ func (c *Client) PlayTracks(ctx context.Context, uris []string, deviceID string)
 	}
 	return c.do(ctx, http.MethodPut, "/me/player/play"+deviceQuery(deviceID),
 		&playBody{URIs: uris}, nil)
+}
+
+// fillEmptyCounts дозапрашивает число треков у плейлистов, где список отдал ноль.
+//
+// Ограничение по числу запросов не от жадности: у иного стримера полторы
+// сотни плейлистов, и опрашивать каждый — значит заставить его ждать минуту
+// ради подписи в выпадающем списке.
+func (c *Client) fillEmptyCounts(ctx context.Context, list []Playlist) {
+	const maxAsks = 25
+
+	asked := 0
+	for i := range list {
+		if list[i].Tracks > 0 {
+			continue
+		}
+		if asked >= maxAsks {
+			return
+		}
+		asked++
+
+		// Без `fields`: сокращённый ответ — лишний повод для Spotify отдать
+		// не то, а разбирать потом придётся по чужому логу, вслепую.
+		// Сырой ответ забираем целиком, чтобы в логе было видно, что пришло.
+		var raw json.RawMessage
+		path := "/playlists/" + url.PathEscape(list[i].ID) + "/tracks?limit=1"
+		if err := c.do(ctx, http.MethodGet, path, nil, &raw); err != nil {
+			c.log.Warn("не переспросил число треков",
+				"плейлист", list[i].Name, "id", list[i].ID, "ошибка", err)
+			continue
+		}
+
+		var page struct {
+			Total int `json:"total"`
+		}
+		if err := json.Unmarshal(raw, &page); err != nil {
+			c.log.Warn("ответ про число треков не разобрался",
+				"плейлист", list[i].Name, "ответ", head(raw), "ошибка", err)
+			continue
+		}
+
+		if page.Total <= 0 {
+			// Тестер видел «0 треков» у плейлиста, который сам же и слушал.
+			// Если Spotify упорствует, пусть в логе останется его ответ:
+			// иначе следующий разбор снова упрётся в догадки.
+			c.log.Warn("Spotify второй раз говорит, что плейлист пуст",
+				"плейлист", list[i].Name, "id", list[i].ID, "ответ", head(raw))
+			continue
+		}
+
+		c.log.Info("число треков уточнено",
+			"плейлист", list[i].Name, "было", 0, "стало", page.Total)
+		list[i].Tracks = page.Total
+	}
+}
+
+// head — начало ответа для лога. Целиком класть незачем: в списке треков
+// плейлиста первый же трек занимает пару килобайт, а нам нужна только форма
+// ответа.
+func head(data []byte) string {
+	const limit = 400
+	if len(data) <= limit {
+		return string(data)
+	}
+	return string(data[:limit]) + "…"
 }

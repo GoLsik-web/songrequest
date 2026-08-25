@@ -225,7 +225,7 @@ func (c *Client) postToken(ctx context.Context, form url.Values) (*tokenResponse
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := c.http.Do(req)
+	resp, err := c.client().Do(req)
 	if err != nil {
 		return nil, errs.Wrap(errs.SpotifyUnreachable,
 			"Spotify не отвечает. Проверь интернет и попробуй ещё раз.", err)

@@ -16,6 +16,23 @@ type Candidate struct {
 	DurationMs int
 	Popularity int // 0..100
 	CoverURL   string
+	// Markets — страны, где трек можно слушать. Пустой список означает, что
+	// Spotify их не прислал, и тогда мы никого не отсеиваем: лучше отдать
+	// стримеру трек, который, возможно, не заиграет, чем молча съесть заказ.
+	Markets []string
+}
+
+// PlayableIn сообщает, доступен ли трек в стране аккаунта.
+func (c Candidate) PlayableIn(country string) bool {
+	if country == "" || len(c.Markets) == 0 {
+		return true
+	}
+	for _, m := range c.Markets {
+		if strings.EqualFold(m, country) {
+			return true
+		}
+	}
+	return false
 }
 
 // Weights — вес каждого слагаемого. Вынесены наружу, чтобы крутить их без
@@ -103,7 +120,9 @@ func titleScore(req Request, c Candidate) float64 {
 		return 0
 	}
 
-	direct := math.Max(ratio(want, got), tokenSetRatio(want, got))
+	// looseRatio вместо ratio: зритель пишет на слух, и «элон» должно
+	// доставать Alone. Побуквенное совпадение при этом всё равно ценится выше.
+	direct := math.Max(looseRatio(want, got), tokenSetRatio(want, got))
 
 	// Зритель мог не разделить артиста и название вовсе — тогда сравниваем
 	// весь его текст с «артист название» кандидата.
@@ -129,7 +148,7 @@ func artistScore(req Request, c Candidate) float64 {
 	best := 0.0
 	for _, a := range c.Artists {
 		got := Clean(a)
-		best = math.Max(best, math.Max(ratio(want, got), tokenSetRatio(want, got)))
+		best = math.Max(best, math.Max(looseRatio(want, got), tokenSetRatio(want, got)))
 	}
 
 	// Доп. артисты: их отсутствие у кандидата — не беда, а совпадение —

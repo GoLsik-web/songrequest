@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"songrequest/internal/config"
@@ -33,7 +34,11 @@ type Client struct {
 	cfg     *config.File
 	log     *logx.Logger
 	secrets SecretStore
-	http    *http.Client
+
+	// httpClient меняется на ходу: стример включает прокси прямо во время
+	// стрима, а запросы в это время идут из горутин плеера и подбора. Голое
+	// поле здесь — гонка, поэтому только через client()/setHTTP.
+	httpClient atomic.Pointer[http.Client]
 
 	// Адреса вынесены в поля, чтобы тесты подставляли свой сервер.
 	tokenURL string
@@ -44,6 +49,12 @@ type Client struct {
 	pending     *pending
 	redirectURI string
 	me          *Me
+	// checked и checkErr — чем кончилась последняя проверка аккаунта.
+	// Нужны панели: без них красная лампочка не может назвать код.
+	checked  bool
+	checkErr error
+	// proxyLabel — через кого ходим к Spotify, без пароля.
+	proxyLabel string
 
 	refreshMu sync.Mutex
 }
@@ -110,10 +121,8 @@ func New(cfg *config.File, log *logx.Logger, sec SecretStore) *Client {
 		secrets:  sec,
 		tokenURL: "https://accounts.spotify.com/api/token",
 		apiBase:  "https://api.spotify.com/v1",
-		http: &http.Client{
-			Timeout: 15 * time.Second,
-		},
 	}
+	c.setHTTP(&http.Client{Timeout: 15 * time.Second})
 
 	var saved tokens
 	switch err := sec.GetJSON(keyringName, &saved); {
@@ -141,6 +150,39 @@ func (c *Client) Account() *Me {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.me
+}
+
+// LastCheck сообщает, чем кончилась последняя проверка аккаунта.
+//
+// done=false означает, что проверка ещё ни разу не доходила до конца — при
+// запуске это обычное дело, и показывать в этот момент красную лампочку
+// нечестно. Ошибка нужна панели, чтобы назвать код: без кода человек может
+// сказать мне только «не работает».
+func (c *Client) LastCheck() (done bool, err error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.checked, c.checkErr
+}
+
+// Страны, где Spotify не работает. Список короткий и меняется редко, но
+// именно он объясняет самый непонятный случай: вход есть, Premium есть,
+// а поиск пустой и в плейлистах ноль треков.
+var deadMarkets = map[string]string{
+	"RU": "России",
+	"BY": "Беларуси",
+}
+
+// MarketProblem объясняет, если страна аккаунта делает Spotify бесполезным.
+// Пусто — значит со страной всё в порядке.
+func MarketProblem(country string) string {
+	where, dead := deadMarkets[strings.ToUpper(strings.TrimSpace(country))]
+	if !dead {
+		return ""
+	}
+	return "Аккаунт зарегистрирован в " + where + ", а Spotify там не работает. " +
+		"Поиск будет находить мало или ничего, а плейлисты покажут ноль треков — " +
+		"даже с включённым VPN: Spotify смотрит на страну аккаунта, а не на адрес. " +
+		"Лечится только сменой страны в настройках аккаунта Spotify."
 }
 
 // GrantedScopes — права, которые стример выдал при входе.
@@ -191,17 +233,22 @@ func (c *Client) CheckAccount(ctx context.Context) (*Me, error) {
 	if err := c.do(ctx, http.MethodGet, "/me", nil, &raw); err != nil {
 		code, _ := errs.Describe(err)
 		c.log.Error("не смог получить данные аккаунта Spotify", "код", code, "ошибка", err)
+		c.rememberCheck(err)
 		return nil, err
 	}
 
 	var me Me
 	if err := json.Unmarshal(raw, &me); err != nil {
 		c.log.Error("не разобрал ответ о аккаунте", "ответ", string(raw))
-		return nil, errs.Wrap(errs.SpotifyBadResponse, "Spotify ответил непонятным образом.", err)
+		wrapped := errs.Wrap(errs.SpotifyBadResponse, "Spotify ответил непонятным образом.", err)
+		c.rememberCheck(wrapped)
+		return nil, wrapped
 	}
 
 	c.mu.Lock()
 	c.me = &me
+	c.checked = true
+	c.checkErr = nil
 	c.mu.Unlock()
 
 	fields := []any{
@@ -222,6 +269,15 @@ func (c *Client) CheckAccount(ctx context.Context) (*Me, error) {
 	// Почту в панели показываем, а из лога вычищаем — архив уходит наружу.
 	c.log.Redactor.Add(me.Email)
 	return &me, nil
+}
+
+// rememberCheck запоминает неудачу, чтобы панель назвала код, а не разводила
+// руками.
+func (c *Client) rememberCheck(err error) {
+	c.mu.Lock()
+	c.checked = true
+	c.checkErr = err
+	c.mu.Unlock()
 }
 
 // do выполняет запрос к API: подставляет ключ доступа, повторяет при временных
@@ -254,7 +310,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		resp, err := c.http.Do(req)
+		resp, err := c.client().Do(req)
 		if err != nil {
 			// Сеть моргнула — это самый частый сбой на домашнем интернете,
 			// и он не должен превращаться в ошибку на стриме.
@@ -309,8 +365,19 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			continue
 
 		case resp.StatusCode == http.StatusTooManyRequests:
-			// Spotify сам говорит, сколько ждать. Уважаем и не спорим.
+			// Spotify сам говорит, сколько ждать. Уважаем — но не до бесконечности.
+			//
+			// При блокировке приложения Spotify просит подождать тысячи секунд.
+			// Раньше это отсыпалось как есть, четыре раза подряд, и очередь на
+			// стриме просто вставала на часы без единого слова в панели.
 			wait := retryAfter(resp, attempt)
+			if wait > maxRateWait {
+				c.log.Error("Spotify просит слишком долгую паузу, ждать не будем",
+					"путь", path, "пауза", wait.String())
+				return errs.New(errs.SpotifyRateLimit,
+					"Spotify временно ограничил приложение и просит долгую паузу ("+
+						wait.Round(time.Second).String()+"). Музыка вернётся сама, когда он её снимет.")
+			}
 			c.log.Warn("Spotify просит подождать", "путь", path, "пауза", wait.String())
 			lastErr = errs.New(errs.SpotifyRateLimit,
 				"Spotify попросил сделать паузу. Приложение подождёт и попробует снова.")
@@ -332,7 +399,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			// 4xx кроме 401 и 429 повторять бессмысленно.
 			c.log.Error("Spotify отказал", "путь", path, "метод", method,
 				"код_http", resp.StatusCode, "ответ", string(data))
-			return apiError(resp.StatusCode, data)
+			return apiError(resp.StatusCode, path, data)
 		}
 	}
 
@@ -343,7 +410,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 var errNoContent = errors.New("spotify: пустой ответ")
 
 // apiError переводит отказ Spotify в понятную стримеру формулировку.
-func apiError(statusCode int, data []byte) error {
+func apiError(statusCode int, path string, data []byte) error {
 	var e struct {
 		Error struct {
 			Status  int    `json:"status"`
@@ -370,13 +437,23 @@ func apiError(statusCode int, data []byte) error {
 	case statusCode == http.StatusForbidden:
 		return errs.New(errs.SpotifyNoPremium,
 			"Spotify запретил это действие. Чаще всего дело в отсутствии Premium или в том, что приложению не выдали нужные права при входе.")
-	case statusCode == http.StatusNotFound:
+	case statusCode == http.StatusNotFound && strings.HasPrefix(path, "/me/player"):
 		return errs.New(errs.SpotifyNoDevice,
-			"Spotify не нашёл устройство или трек. Открой Spotify и включи любую песню, потом попробуй снова.")
+			"Spotify не нашёл устройство. Открой Spotify и включи любую песню, потом попробуй снова.")
+	case statusCode == http.StatusNotFound:
+		// Совет «открой Spotify» здесь не поможет никогда: чаще всего это
+		// удалённый запасной плейлист или трек, которого больше нет.
+		return errs.New(errs.SpotifyNothing,
+			"Spotify не нашёл того, что мы просим: плейлист или трек удалён. Выбери другой.")
 	}
 	return errs.New(errs.SpotifyBadResponse,
 		fmt.Sprintf("Spotify отказал (%d). Подробности в логе.", statusCode))
 }
+
+// maxRateWait — самая долгая пауза, которую готовы отсидеть. Тридцать секунд
+// на стриме уже слышно, а всё, что дольше, — это не «подожди», а «приходи
+// потом»: об этом надо сказать человеку, а не молчать в спящей горутине.
+const maxRateWait = 30 * time.Second
 
 // retryAfter читает заголовок Retry-After, а если его нет — берёт паузу сам.
 func retryAfter(resp *http.Response, attempt int) time.Duration {
@@ -428,3 +505,14 @@ func readBody(resp *http.Response) ([]byte, error) {
 func contains(haystack, needle string) bool {
 	return len(haystack) >= len(needle) && bytes.Contains([]byte(haystack), []byte(needle))
 }
+
+// client отдаёт текущий транспорт: прямой или через прокси.
+func (c *Client) client() *http.Client {
+	if h := c.httpClient.Load(); h != nil {
+		return h
+	}
+	return http.DefaultClient
+}
+
+// setHTTP подменяет транспорт целиком — так включается и выключается прокси.
+func (c *Client) setHTTP(h *http.Client) { c.httpClient.Store(h) }

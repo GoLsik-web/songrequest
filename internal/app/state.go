@@ -35,8 +35,20 @@ type ConnState struct {
 }
 
 // NowPlaying — что играет прямо сейчас.
+// Откуда взялся трек.
+const (
+	// SourceOrder — заказ зрителя.
+	SourceOrder = "order"
+	// SourceOwn — стример поставил сам.
+	SourceOwn = "own"
+)
+
 type NowPlaying struct {
-	Provider   string `json:"provider"` // spotify | youtube | ""
+	Provider string `json:"provider"` // spotify | youtube | ""
+	// Source — откуда взялся трек: "order" — заказ зрителя, "own" — стример
+	// поставил сам. Зритель должен видеть разницу: иначе он решит, что
+	// заказы кто-то занял на полчаса вперёд.
+	Source     string `json:"source"`
 	Title      string `json:"title"`
 	Artist     string `json:"artist"`
 	CoverURL   string `json:"cover_url"`
@@ -88,6 +100,14 @@ type SpotifyInfo struct {
 	Email       string `json:"email"`
 	// Plan: premium | free | unknown. Три состояния, а не флаг: «не смогли
 	// определить» — это не то же самое, что «подписки нет».
+	// Country — страна аккаунта, двухбуквенный код. Spotify фильтрует по ней
+	// и поиск, и содержимое плейлистов, поэтому она нужна на виду: в стране,
+	// где Spotify не работает, всё будет пустым при живом входе.
+	Country string `json:"country"`
+	// Proxy — через кого ходим к Spotify, без пароля. Пусто — напрямую.
+	Proxy       string `json:"proxy"`
+	CountryNote string `json:"country_note"`
+
 	Plan         string     `json:"plan"`
 	PlanLabel    string     `json:"plan_label"`
 	PlanNote     string     `json:"plan_note"` // что делать, если что-то не так
@@ -206,9 +226,11 @@ type Snapshot struct {
 	Session     Session          `json:"session"`
 	// Bans — бан-лист музыки. Отдельный от бана в чате: человек может быть
 	// нормальным в чате и неуместным в заказах.
-	Bans     []Ban       `json:"bans"`
-	YouTube  YouTubeInfo `json:"youtube"`
-	DebugLog bool        `json:"debug_log"`
+	Bans    []Ban       `json:"bans"`
+	YouTube YouTubeInfo `json:"youtube"`
+	// Widget — оформление виджета. Едет вместе с состоянием, чтобы правка в
+	// панели доезжала до OBS сразу: перезагружать источник не нужно.
+	Widget any `json:"widget"`
 }
 
 // Ban — закрытый доступ к заказам.
@@ -234,7 +256,7 @@ type State struct {
 	session     Session
 	bans        []Ban
 	youtube     YouTubeInfo
-	debug       bool
+	widget      any
 
 	subs map[int]chan struct{}
 	next int
@@ -312,6 +334,14 @@ func (s *State) setConn(c ConnState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.conns[c.Name] = c
+	s.notify()
+}
+
+// SetWidget запоминает оформление виджета.
+func (s *State) SetWidget(w any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.widget = w
 	s.notify()
 }
 
@@ -420,6 +450,18 @@ func (s *State) SetRedemptionStatus(id, status string) {
 	s.notify()
 }
 
+// CountOrder засчитывает заказ, который не проходил через список наград.
+//
+// Заказы за баллы попадают в счётчик через AddRedemption, а донаты идут прямо
+// в очередь и мимо него: в итогах сессии их просто не было, и при включённых
+// донатах числа выходили меньше настоящих.
+func (s *State) CountOrder() {
+	s.mu.Lock()
+	s.session.Orders++
+	s.mu.Unlock()
+	s.notify()
+}
+
 // SetBans обновляет бан-лист в панели.
 func (s *State) SetBans(list []Ban) {
 	s.mu.Lock()
@@ -433,14 +475,6 @@ func (s *State) UpdateYouTube(fn func(*YouTubeInfo)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fn(&s.youtube)
-	s.notify()
-}
-
-// SetDebugLog запоминает, включён ли подробный лог (галочка в панели).
-func (s *State) SetDebugLog(on bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.debug = on
 	s.notify()
 }
 
@@ -491,7 +525,7 @@ func (s *State) Snapshot() Snapshot {
 		Session:     s.session,
 		Bans:        append(make([]Ban, 0, len(s.bans)), s.bans...),
 		YouTube:     s.youtube,
-		DebugLog:    s.debug,
+		Widget:      s.widget,
 	}
 	for _, name := range s.order {
 		snap.Connections = append(snap.Connections, s.conns[name])

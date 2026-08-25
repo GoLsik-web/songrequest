@@ -37,7 +37,8 @@ func TestExportedArchiveHasNoSecrets(t *testing.T) {
 	red := &logx.Redactor{}
 	red.Add(accessToken)
 
-	data, name, err := Build(dir, configPath, red, Info{Version: "тест"})
+	data, name, err := Build(dir, configPath, red, Info{Version: "тест"},
+		map[string][]byte{"история-заказов.csv": []byte("когда;зритель\n2026-08-25 12:00:00;" + accessToken + "\n")})
 	if err != nil {
 		t.Fatalf("архив не собрался: %v", err)
 	}
@@ -47,6 +48,9 @@ func TestExportedArchiveHasNoSecrets(t *testing.T) {
 
 	whole := readAll(t, data)
 
+	if !strings.Contains(whole, "история-заказов.csv") {
+		t.Fatal("история заказов в архив не попала — по одному логу возврат баллов не разобрать")
+	}
 	if strings.Contains(whole, accessToken) {
 		t.Fatal("ключ доступа попал в архив")
 	}
@@ -71,7 +75,7 @@ func TestExportWorksWithoutLogFile(t *testing.T) {
 
 	// Лога может ещё не быть, если приложение только поставили. Выгрузка
 	// всё равно обязана отработать, а не падать с ошибкой.
-	data, _, err := Build(dir, filepath.Join(dir, "нет-такого.json"), &logx.Redactor{}, Info{Version: "тест"})
+	data, _, err := Build(dir, filepath.Join(dir, "нет-такого.json"), &logx.Redactor{}, Info{Version: "тест"}, nil)
 	if err != nil {
 		t.Fatalf("выгрузка без лога должна работать: %v", err)
 	}
