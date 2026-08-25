@@ -39,6 +39,9 @@ type Player struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	playing string
+	// gen — номер запуска. По нему завершившийся процесс понимает, что его
+	// уже сменил следующий, и не стирает чужую ссылку.
+	gen uint64
 	// cookieBrowser — браузер, куки которого подошли. Запоминаем, чтобы не
 	// перебирать список на каждом заказе.
 	cookieBrowser string
@@ -303,6 +306,7 @@ func (p *Player) Play(ctx context.Context, url string) error {
 
 	p.mu.Lock()
 	p.cmd = cmd
+	p.gen++
 	p.playing = url
 	p.mu.Unlock()
 
@@ -311,9 +315,16 @@ func (p *Player) Play(ctx context.Context, url string) error {
 }
 
 // Wait ждёт, пока ролик доиграет. Возвращает false, если его оборвали.
+//
+// Ждёт ровно тот процесс, который сам и запускал. Раньше сюда приезжал общий
+// p.cmd, и после скипа получалось сразу два cmd.Wait() на один процесс —
+// гонка в стандартной библиотеке, — а завершившийся mpv стирал ссылку уже на
+// следующий. Тот следующий потом никто не убивал: он оставался висеть и
+// держать звуковое устройство, а причину искали долго.
 func (p *Player) Wait(ctx context.Context) bool {
 	p.mu.Lock()
 	cmd := p.cmd
+	mine := p.gen
 	p.mu.Unlock()
 
 	if cmd == nil {
@@ -328,12 +339,23 @@ func (p *Player) Wait(ctx context.Context) bool {
 
 	select {
 	case <-done:
-		p.clear()
+		p.clearIfMine(mine)
 		return true
 	case <-ctx.Done():
 		p.Stop()
 		return false
 	}
+}
+
+// clearIfMine убирает ссылку на процесс, только если это всё ещё он.
+func (p *Player) clearIfMine(gen uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.gen != gen {
+		return // уже играет следующий заказ, его трогать нельзя
+	}
+	p.cmd = nil
+	p.playing = ""
 }
 
 // Stop убивает mpv.
@@ -345,6 +367,7 @@ func (p *Player) Stop() {
 	cmd := p.cmd
 	p.cmd = nil
 	p.playing = ""
+	p.gen++
 	p.mu.Unlock()
 
 	if cmd == nil || cmd.Process == nil {
@@ -353,7 +376,8 @@ func (p *Player) Stop() {
 	if err := cmd.Process.Kill(); err != nil {
 		p.log.Debug("mpv уже завершился")
 	}
-	cmd.Wait()
+	// Wait здесь не зовём: его уже ждёт горутина из Wait(), а второй вызов на
+	// том же процессе — гонка. Убитый процесс она подберёт сама.
 }
 
 // Playing сообщает, играет ли что-нибудь сейчас.
@@ -361,13 +385,6 @@ func (p *Player) Playing() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.playing != ""
-}
-
-func (p *Player) clear() {
-	p.mu.Lock()
-	p.cmd = nil
-	p.playing = ""
-	p.mu.Unlock()
 }
 
 // Devices перечисляет доступные аудиоустройства mpv — чтобы стример выбрал
@@ -411,4 +428,15 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// SetOptions меняет устройство звука и браузер на ходу.
+//
+// Поля читает горутина проигрывания, поэтому только под блокировкой: голое
+// присваивание снаружи — гонка.
+func (p *Player) SetOptions(device, browser string) {
+	p.mu.Lock()
+	p.Device = device
+	p.Preferred = browser
+	p.mu.Unlock()
 }

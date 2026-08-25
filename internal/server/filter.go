@@ -26,7 +26,14 @@ func (r *Rejection) Error() string { return r.Reason }
 // Порядок проверок от дешёвых к дорогим: бан и лимит считаются локально, а
 // длительность известна только после подбора трека.
 func (s *Server) check(requester string, item queue.Item, cfg config.Config) *Rejection {
-	if banned, reason := s.isMusicBanned(requester); banned {
+	// Бан-лист хранит логин. Отображаемое имя может быть совсем другим —
+	// у зрителей с кириллическим ником оно другое всегда, — и по нему бан
+	// не срабатывал вовсе.
+	who := item.RequesterLogin
+	if who == "" {
+		who = requester // старые заказы из базы, до появления логина
+	}
+	if banned, reason := s.isMusicBanned(who); banned {
 		if reason != "" {
 			return &Rejection{Reason: "тебе закрыт заказ музыки: " + reason}
 		}
@@ -67,13 +74,29 @@ func notMusic(item queue.Item, cfg config.Config) string {
 		if w == "" {
 			continue
 		}
-		if strings.Contains(" "+haystack+" ", " "+w+" ") || strings.Contains(haystack, w) {
+		// Только целым словом. Вторая половина условия («просто вхождение»)
+		// сводила первую на нет: в списке по умолчанию есть «mix», и из-за
+		// него отсеивался любой Remix — то есть ровно то, что заказывают чаще
+		// всего. Так же ловилось «стрим» внутри других слов.
+		//
+		// Составные стоп-слова («1 hour») по-прежнему ищутся как есть: там
+		// пробел внутри, и границы слова уже заданы им самим.
+		if strings.Contains(" "+haystack+" ", " "+w+" ") {
 			return "это не похоже на музыку (" + word + ")"
 		}
 	}
 
 	// Часовой луп по одной длительности: даже если в названии ничего нет.
-	if item.DurationMs > 20*60*1000 {
+	//
+	// Порог берём из настроек, но не ниже двадцати минут: настройку «не
+	// длиннее восьми минут» проверяет отдельное правило со своим текстом, а
+	// здесь речь про заведомую не-музыку. Раньше двадцать минут стояли
+	// намертво и молча перекрывали настройку, поднятую выше.
+	limit := 20 * time.Minute
+	if want := time.Duration(cfg.MaxTrackSeconds) * time.Second; want > limit {
+		limit = want
+	}
+	if time.Duration(item.DurationMs)*time.Millisecond > limit {
 		return "это слишком длинное для песни"
 	}
 	return ""

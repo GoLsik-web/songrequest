@@ -100,6 +100,11 @@ func (s *Server) startTwitch(ctx context.Context) {
 			t.Note = problem.Message
 			t.NoteCode = string(problem.Code)
 		})
+
+		// Соединение с Twitch всё равно поднимаем: через него работает чат,
+		// то есть команды и все ответы зрителям. Без него на канале без
+		// баллов молчала половина приложения.
+		s.startEventSub(ctx, "")
 		return
 	}
 
@@ -153,11 +158,28 @@ func (s *Server) startTwitch(ctx context.Context) {
 func (s *Server) startEventSub(ctx context.Context, rewardID string) {
 	s.mu.Lock()
 	if s.eventsRunning {
-		s.mu.Unlock()
-		return
+		if s.eventsReward == rewardID {
+			s.mu.Unlock()
+			return
+		}
+		// Награду пересоздали, и у неё новый номер. Старая подписка ждёт
+		// события по прежнему — то есть заказы не придут вообще, при зелёной
+		// лампочке. Гасим её и поднимаем заново.
+		s.log.Info("награда сменилась, переподписываюсь",
+			"было", s.eventsReward, "стало", rewardID)
+		if s.stopEvents != nil {
+			s.stopEvents()
+		}
 	}
 	s.eventsRunning = true
+	s.eventsReward = rewardID
+
+	// Свой контекст, чтобы подписку можно было погасить, не гася приложение.
+	subCtx, stop := context.WithCancel(ctx)
+	s.stopEvents = stop
 	s.mu.Unlock()
+
+	ctx = subCtx
 
 	events := twitch.NewEventSub(s.twitch)
 	events.OnRedemption = s.onRedemption
@@ -173,7 +195,11 @@ func (s *Server) startEventSub(ctx context.Context, rewardID string) {
 	go func() {
 		events.Run(ctx, rewardID)
 		s.mu.Lock()
-		s.eventsRunning = false
+		// Гасим флаг, только если это всё ещё наша подписка: более свежая
+		// могла подняться, пока эта доживала.
+		if s.eventsReward == rewardID {
+			s.eventsRunning = false
+		}
 		s.mu.Unlock()
 	}()
 }
@@ -225,7 +251,18 @@ func (s *Server) handleRedemptionAction(w http.ResponseWriter, r *http.Request) 
 	var status string
 	switch action {
 	case "refund":
+		// Сначала баллы, потом очередь — порядок здесь важен.
+		//
+		// Раньше заказ вычёркивался первым. Если Twitch не отвечал, заказ уже
+		// пропал, а баллы у зрителя не вернулись: и трека нет, и баллов нет,
+		// и повторить нечем. Теперь очередь трогаем только после того, как
+		// Twitch подтвердил возврат: иначе заказ просто останется на месте.
 		err, status = s.twitch.RefundRedemption(ctx, rewardID, id), app.OrderRefunded
+		if err == nil {
+			// Оставить его в очереди нельзя: он отыграет бесплатно, а в конце
+			// приложение попробует отметить выполненным уже отменённый заказ.
+			s.dropFromQueue(id)
+		}
 	case "fulfill":
 		err, status = s.twitch.FulfillRedemption(ctx, rewardID, id), app.OrderFulfilled
 	default:
@@ -269,10 +306,11 @@ func (s *Server) syncTwitchInfo() {
 		t.HasClientID = strings.TrimSpace(cfg.TwitchClientID) != ""
 		t.Connected = s.twitch.Connected()
 		t.RewardReady = rewardID != ""
-		if t.RewardTitle == "" {
-			t.RewardTitle = cfg.RewardTitle
-			t.RewardCost = cfg.RewardCost
-		}
+		// Название и цену берём из настроек всегда, а не только пока они
+		// пусты: иначе стример правит цену, а панель до перезапуска
+		// показывает старую — и это выглядит как «не сохранилось».
+		t.RewardTitle = cfg.RewardTitle
+		t.RewardCost = cfg.RewardCost
 		if at, soon := s.twitch.RefreshExpiry(); !at.IsZero() {
 			when := at
 			t.RenewAt = &when
@@ -300,7 +338,14 @@ func (s *Server) syncTwitchInfo() {
 	case !info.Connected:
 		s.state.SetConnIdle("Twitch", "Не подключён")
 	case user == nil:
-		s.state.SetConnFail("Twitch", "Вход есть, но связи не было")
+		if done, err := s.twitch.LastCheck(); done && err != nil {
+			code, text := errs.Describe(err)
+			s.state.SetConnFail("Twitch", string(code)+" · "+text)
+		} else if done {
+			s.state.SetConnFail("Twitch", "Вход есть, а данных нет. Отключи и подключи заново.")
+		} else {
+			s.state.SetConnIdle("Twitch", "Проверяю связь…")
+		}
 	case !info.HasPoints:
 		// Не ошибка, а свойство канала: чинить нечего, красный цвет тут
 		// сказал бы «приложение сломалось», и человек бросил бы установку.
@@ -310,6 +355,50 @@ func (s *Server) syncTwitchInfo() {
 	default:
 		s.state.SetConnOK("Twitch", user.Login)
 	}
+}
+
+// pushReward доносит название и цену награды до самого канала.
+//
+// Настройка, которая молча ничего не меняет, хуже отсутствующей: человек
+// правит цену, видит «Настройки сохранены» и уходит уверенным, что сделал
+// дело. Поэтому правка едет на Twitch сразу, а о неудаче говорим вслух.
+func (s *Server) pushReward() {
+	if !s.twitch.Connected() {
+		return
+	}
+
+	s.mu.Lock()
+	id := s.rewardID
+	s.mu.Unlock()
+	// Пустой номер означает, что награду ещё не создавали: Twitch мог лежать
+	// при запуске. Молча выходить нельзя — правка цены не значила бы ничего,
+	// и никакой повторной сверки в приложении нет. EnsureReward с пустым
+	// номером просто создаст награду.
+
+	ctx, cancel := context.WithTimeout(s.baseContext(), 20*time.Second)
+	defer cancel()
+
+	reward, err := s.twitch.EnsureReward(ctx, id)
+	if err != nil {
+		s.log.Error("не обновил награду на канале", "ошибка", err)
+		s.state.NotifyError(err)
+		return
+	}
+
+	s.mu.Lock()
+	changed := s.rewardID != reward.ID
+	s.rewardID = reward.ID
+	s.mu.Unlock()
+
+	// Награду могли пересоздать — тогда подписка ждёт события по старому
+	// номеру, и заказы просто не придут.
+	if changed {
+		s.startEventSub(s.baseContext(), reward.ID)
+	}
+
+	s.syncTwitchInfo()
+	s.state.Notify("info", fmt.Sprintf("Награда на канале обновлена: «%s», %d",
+		reward.Title, reward.Cost))
 }
 
 // SyncTwitch обновляет карточку Twitch снаружи (при старте).
@@ -323,4 +412,25 @@ func (s *Server) StartTwitchIfConnected(ctx context.Context) {
 		return
 	}
 	go s.startTwitch(ctx)
+}
+
+// dropFromQueue убирает из очереди заказ по его номеру на Twitch.
+func (s *Server) dropFromQueue(redemptionID string) {
+	items, err := s.queue.List()
+	if err != nil {
+		return
+	}
+	for _, it := range items {
+		if it.RedemptionID != redemptionID {
+			continue
+		}
+		if err := s.queue.Remove(it.ID); err != nil {
+			s.log.Warn("не убрал заказ из очереди", "заказ", it.Title, "ошибка", err)
+			return
+		}
+		s.log.Info("заказ убран из очереди вместе с возвратом баллов",
+			"трек", it.Artist+" — "+it.Title)
+		s.syncPlayback()
+		return
+	}
 }

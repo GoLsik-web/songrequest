@@ -3,6 +3,7 @@ package twitch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -70,6 +71,15 @@ func (e *EventSub) Run(ctx context.Context, rewardID string) {
 			return
 		}
 
+		// Отозванную подписку переподключением не вернуть — нужен новый вход.
+		// Раньше приложение этого не различало и ломилось обратно каждые
+		// восемь секунд весь стрим: панель мигала красным, а каждый круг
+		// дёргал обновление ключа доступа и добивал вход окончательно.
+		if errors.Is(err, errRevoked) {
+			e.client.log.Warn("подписка на заказы отозвана, переподключаться бессмысленно")
+			return
+		}
+
 		attempt++
 		wait := backoff(min(attempt, 5))
 		if err != nil {
@@ -85,38 +95,138 @@ func (e *EventSub) Run(ctx context.Context, rewardID string) {
 
 // session проживает одно соединение от приветствия до разрыва.
 func (e *EventSub) session(ctx context.Context, rewardID string) error {
-	url := e.wsURL
+	conn, _, err := websocket.Dial(ctx, e.wsURL, nil)
+	if err != nil {
+		return fmt.Errorf("не подключился к событиям Twitch: %w", err)
+	}
+	// Сообщения бывают большими: у заказа есть текст зрителя.
+	conn.SetReadLimit(1 << 20)
+
+	subscribe := true
+	keepalive := defaultKeepalive
 
 	// Twitch может попросить переехать на другой адрес прямо посреди работы;
 	// подписки при этом переносятся сами, оформлять их заново не нужно.
 	for {
-		conn, _, err := websocket.Dial(ctx, url, nil)
-		if err != nil {
-			return fmt.Errorf("не подключился к событиям Twitch: %w", err)
-		}
-
-		// Сообщения бывают большими: у заказа есть текст зрителя.
-		conn.SetReadLimit(1 << 20)
-
-		next, err := e.pump(ctx, conn, url == e.wsURL, rewardID)
-		conn.CloseNow()
-
-		if err != nil {
+		next, err := e.pump(ctx, conn, subscribe, rewardID, keepalive)
+		if err != nil || next == "" {
+			conn.CloseNow()
 			return err
 		}
-		if next == "" {
-			return nil
-		}
+
 		e.client.log.Info("Twitch попросил переехать на другой адрес")
-		url = next
+
+		fresh, _, err := websocket.Dial(ctx, next, nil)
+		if err != nil {
+			conn.CloseNow()
+			return fmt.Errorf("не переехал на новый адрес событий Twitch: %w", err)
+		}
+		fresh.SetReadLimit(1 << 20)
+
+		// Порядок здесь прописан у самого Twitch: старое соединение нельзя
+		// закрывать, пока новое не поздоровается, — именно в этот промежуток
+		// оно досылает последние события. Закрывали раньше — и заказ иногда
+		// пропадал совсем: баллы списаны, а в приложении его нет.
+		fresh, keepalive, err = e.welcome(ctx, fresh)
+		if err != nil {
+			conn.CloseNow()
+			return err
+		}
+
+		e.drain(ctx, conn)
+		conn.CloseNow()
+
+		conn = fresh
+		subscribe = false
 	}
 }
 
+// welcome дожидается приветствия на новом соединении и узнаёт из него срок
+// молчания. Возвращает то же соединение — чтобы вызов читался одной строкой.
+func (e *EventSub) welcome(ctx context.Context, conn *websocket.Conn) (*websocket.Conn, time.Duration, error) {
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	for {
+		_, data, err := conn.Read(readCtx)
+		if err != nil {
+			conn.CloseNow()
+			return nil, 0, fmt.Errorf("новый адрес событий Twitch молчит: %w", err)
+		}
+
+		var msg struct {
+			Metadata struct {
+				Type string `json:"message_type"`
+			} `json:"metadata"`
+			Payload struct {
+				Session struct {
+					Timeout int `json:"keepalive_timeout_seconds"`
+				} `json:"session"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
+		}
+		if msg.Metadata.Type != "session_welcome" {
+			continue
+		}
+
+		keepalive := defaultKeepalive
+		if msg.Payload.Session.Timeout > 0 {
+			keepalive = time.Duration(msg.Payload.Session.Timeout) * time.Second
+		}
+		return conn, keepalive, nil
+	}
+}
+
+// drain дочитывает то, что старое соединение успело досказать перед закрытием.
+// Секунды хватает: Twitch к этому моменту уже перевёл поток на новый адрес.
+func (e *EventSub) drain(ctx context.Context, conn *websocket.Conn) {
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+
+	for {
+		_, data, err := conn.Read(readCtx)
+		if err != nil {
+			return
+		}
+
+		var msg struct {
+			Metadata struct {
+				Type             string `json:"message_type"`
+				SubscriptionType string `json:"subscription_type"`
+			} `json:"metadata"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
+		}
+		if msg.Metadata.Type != "notification" {
+			continue
+		}
+
+		e.client.log.Info("забрал событие со старого соединения перед переездом")
+		if msg.Metadata.SubscriptionType == "channel.chat.message" {
+			e.handleChat(msg.Payload)
+			continue
+		}
+		e.handleNotification(msg.Payload)
+	}
+}
+
+// defaultKeepalive — с каким сроком молчания живём, пока Twitch не назвал
+// свой. С запасом: до приветствия настоящий срок неизвестен.
+const defaultKeepalive = 30 * time.Second
+
+// errRevoked — Twitch отозвал подписку. Отдельной ошибкой, потому что это
+// единственный разрыв, после которого переподключаться бессмысленно.
+var errRevoked = errs.New(errs.TwitchEventSub,
+	"Twitch отозвал доступ к заказам. Нажми «Подключить Twitch» заново.")
+
 // pump читает сообщения одного соединения. Возвращает адрес для переезда,
 // если Twitch попросил переподключиться.
-func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe bool, rewardID string) (string, error) {
-	// Пока не пришло приветствие, срок молчания неизвестен — берём с запасом.
-	keepalive := 30 * time.Second
+func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe bool,
+	rewardID string, keepalive time.Duration) (string, error) {
 
 	for {
 		readCtx, cancel := context.WithTimeout(ctx, keepalive+15*time.Second)
@@ -163,8 +273,13 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 					e.subscribeChat(ctx, p.Session.ID)
 				}
 			}
-			e.status(true, "заказы принимаются")
-			e.client.log.Info("подписка на заказы Twitch активна", "молчание_до", keepalive.String())
+			if rewardID == "" {
+				e.status(true, "чат подключён, баллов на канале нет")
+			} else {
+				e.status(true, "заказы принимаются")
+			}
+			e.client.log.Info("подписка на события Twitch активна",
+				"заказы_за_баллы", rewardID != "", "молчание_до", keepalive.String())
 
 		case "session_keepalive":
 			// Тишина в эфире — соединение живо, делать нечего.
@@ -185,8 +300,7 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 			// удалил награду. Переподключение не поможет, нужен вход заново.
 			e.client.log.Warn("Twitch отозвал подписку на заказы", "ответ", string(msg.Payload))
 			e.status(false, string(errs.TwitchEventSub)+" · подписка отозвана, подключись заново")
-			return "", errs.New(errs.TwitchEventSub,
-				"Twitch отозвал доступ к заказам. Нажми «Подключить Twitch» заново.")
+			return "", errRevoked
 
 		case "notification":
 			// Тип события разный, и разбирать их надо по-разному.
@@ -269,11 +383,23 @@ func (e *EventSub) subscribe(ctx context.Context, sessionID, rewardID string) er
 		return errs.New(errs.TwitchAuthExpired, "Сначала подключи Twitch.")
 	}
 
-	condition := map[string]any{"broadcaster_user_id": user.ID}
-	// Фильтр по награде: без него посыплются события от всех наград канала,
-	// включая чужие, за которые мы даже баллы вернуть не можем.
-	if rewardID != "" {
-		condition["reward_id"] = rewardID
+	// Пустой номер награды означает «баллов на канале нет».
+	//
+	// Подписываться на заказы за баллы там бессмысленно — Twitch откажет, а
+	// отказ уронит всё соединение. Но само соединение нужно: только через
+	// него работает чат, то есть команды `!очередь`, `!скип` и любые ответы
+	// зрителям. Раньше на таком канале молчала вся вторая половина
+	// приложения, и выглядело это как «половина мертва».
+	if rewardID == "" {
+		e.client.log.Info("баллов на канале нет — подписываюсь только на чат")
+		return nil
+	}
+
+	condition := map[string]any{
+		"broadcaster_user_id": user.ID,
+		// Фильтр по награде: без него посыплются события от всех наград
+		// канала, включая чужие, за которые мы даже баллы вернуть не можем.
+		"reward_id": rewardID,
 	}
 
 	body := map[string]any{

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"songrequest/internal/app"
+	"songrequest/internal/config"
 	"songrequest/internal/diag"
 	"songrequest/internal/errs"
 	"songrequest/internal/spotify"
@@ -112,6 +113,13 @@ func (s *Server) handleSpotifySnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Кладём и плееру: панель рисует его снимок, а кнопка «Вернуть как было»
+	// работала со своим. Два снимка на одно понятие — гарантированное
+	// расхождение: человек видит одно, кнопка делает другое.
+	if s.player != nil {
+		s.player.SetSnapshot(snap)
+	}
+
 	s.snapMu.Lock()
 	s.snap = snap
 	s.snapMu.Unlock()
@@ -127,6 +135,16 @@ func (s *Server) handleSpotifySnapshot(w http.ResponseWriter, r *http.Request) {
 
 // handleSpotifyRestore возвращает плеер в запомненное состояние.
 func (s *Server) handleSpotifyRestore(w http.ResponseWriter, r *http.Request) {
+	// Возвращаем туда, что показано в панели, — то есть к снимку плеера.
+	// Свой остаётся запасным на случай, если плеера ещё нет.
+	if s.player != nil {
+		if fromPlayer := s.player.Snapshot(); fromPlayer != nil {
+			s.snapMu.Lock()
+			s.snap = fromPlayer
+			s.snapMu.Unlock()
+		}
+	}
+
 	s.snapMu.Lock()
 	snap := s.snap
 	s.snapMu.Unlock()
@@ -155,11 +173,75 @@ func (s *Server) handleSpotifyRestore(w http.ResponseWriter, r *http.Request) {
 
 	if outcome.Restored {
 		s.state.Notify("info", outcome.Message)
+		// Снимок отработал по кнопке — плееру держать его больше незачем.
+		// Иначе после следующей очереди он вернёт музыку туда же второй раз,
+		// хотя стример уже давно слушает совсем другое.
+		if s.player != nil {
+			s.player.SetSnapshot(nil)
+		}
 	} else {
 		s.state.NotifyCode("warn", string(outcome.Code), outcome.Message)
 	}
 	s.afterRestore(ctx, snap, outcome)
 	writeJSON(w, outcome)
+}
+
+// handleProxyDetect ищет прокси на этом компьютере и сразу включает его.
+//
+// Смысл кнопки в том, чтобы стример не искал ничего сам: он запускает свою
+// программу для обхода блокировок и нажимает сюда.
+func (s *Server) handleProxyDetect(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+	defer cancel()
+
+	// Сначала проверяем, нужен ли прокси вообще: если до Spotify доходит и
+	// напрямую, лишний посредник только замедлит.
+	if s.spotify.DirectWorks(ctx) {
+		// Раньше здесь только говорилось «прокси не нужен», а сам прокси
+		// оставался в настройках: панель чистила поле, мигала «сохранено», и
+		// запросы продолжали идти через посредника. Убираем по-настоящему.
+		if s.cfg.Get().SpotifyProxy != "" {
+			if err := s.cfg.Update(func(c *config.Config) { c.SpotifyProxy = "" }); err != nil {
+				s.fail(w, err)
+				return
+			}
+			s.applyProxy()
+		}
+		s.state.Notify("info", "Прокси не нужен — до Spotify доходит напрямую.")
+		writeJSON(w, map[string]string{"address": "", "note": "прямое соединение работает"})
+		return
+	}
+
+	found, err := s.spotify.DetectProxy(ctx)
+	if err != nil {
+		s.state.NotifyError(err)
+		s.fail(w, err)
+		return
+	}
+
+	if err := s.cfg.Update(func(c *config.Config) { c.SpotifyProxy = found.Address }); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.applyProxy()
+	s.state.Notify("info", "Прокси найден и включён: "+found.Address+" ("+found.Who+")")
+	writeJSON(w, map[string]string{"address": found.Address, "who": found.Who})
+}
+
+// applyProxy включает или снимает посредника для Spotify.
+//
+// Вызывается при запуске и после каждого сохранения настроек: прокси должен
+// начинать работать сразу, а не после перезапуска приложения — иначе человек
+// решит, что он не работает вовсе.
+func (s *Server) applyProxy() {
+	shown, err := s.spotify.SetProxy(s.cfg.Get().SpotifyProxy)
+	if err != nil {
+		s.log.Error("прокси для Spotify не настроен", "ошибка", err)
+		s.state.NotifyError(err)
+		return
+	}
+	_ = shown // карточку соберёт syncSpotifyInfo, он и возьмёт метку у клиента
+	s.syncSpotifyInfo()
 }
 
 func (s *Server) syncSpotifyInfo() {
@@ -168,11 +250,14 @@ func (s *Server) syncSpotifyInfo() {
 		Connected:   s.spotify.Connected(),
 		HasClientID: strings.TrimSpace(s.cfg.Get().SpotifyClientID) != "",
 		Plan:        string(spotify.PlanUnknown),
+		Proxy:       s.spotify.ProxyLabel(),
 	}
 
 	if me != nil {
 		info.Account = me.DisplayName
 		info.Email = me.Email
+		info.Country = me.Country
+		info.CountryNote = spotify.MarketProblem(me.Country)
 		info.Plan = string(me.Plan())
 		info.PlanLabel = me.PlanLabel()
 
@@ -185,6 +270,12 @@ func (s *Server) syncSpotifyInfo() {
 	s.snapMu.Lock()
 	snap := s.snap
 	s.snapMu.Unlock()
+	// Снимок плеера главнее: он и есть тот, куда музыка вернётся сама.
+	if s.player != nil {
+		if fromPlayer := s.player.Snapshot(); fromPlayer != nil {
+			snap = fromPlayer
+		}
+	}
 	if snap != nil {
 		at := snap.CapturedAt
 		info.SnapshotText = snap.Describe()
@@ -201,7 +292,17 @@ func (s *Server) syncSpotifyInfo() {
 	case !info.Connected:
 		s.state.SetConnIdle("Spotify", "Не подключён")
 	case me == nil:
-		s.state.SetConnFail("Spotify", "Вход есть, но связи не было")
+		// Красная лампочка без кода — тупик: человек может сказать мне только
+		// «не работает». Поэтому называем настоящую причину, а пока проверка
+		// ещё идёт, вообще не пугаем красным.
+		if done, err := s.spotify.LastCheck(); done && err != nil {
+			code, text := errs.Describe(err)
+			s.state.SetConnFail("Spotify", string(code)+" · "+text)
+		} else if done {
+			s.state.SetConnFail("Spotify", "Вход есть, а данных нет. Нажми «Проверить связь».")
+		} else {
+			s.state.SetConnIdle("Spotify", "Проверяю связь…")
+		}
 	case me.Plan() == spotify.PlanFree:
 		s.state.SetConnFail("Spotify", string(errs.SpotifyNoPremium)+" · нет Premium")
 	case me.Plan() == spotify.PlanUnknown:
@@ -253,7 +354,7 @@ func (s *Server) handleDiagExport(w http.ResponseWriter, r *http.Request) {
 	data, name, err := diag.Build(s.dataDir, s.cfg.Path(), s.log.Redactor, diag.Info{
 		Version:     s.version,
 		Connections: conns,
-	})
+	}, s.diagTables())
 	if err != nil {
 		s.state.NotifyError(err)
 		s.fail(w, err)
@@ -264,20 +365,6 @@ func (s *Server) handleDiagExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
 	w.Write(data)
-}
-
-// handleDebugLog включает подробный лог без перезапуска приложения.
-func (s *Server) handleDebugLog(w http.ResponseWriter, r *http.Request) {
-	on := r.URL.Query().Get("on") == "1"
-	s.log.SetDebug(on)
-	s.state.SetDebugLog(on)
-	if on {
-		s.log.Info("включён подробный лог")
-		s.state.Notify("info", "Подробный лог включён. Повтори то, что не работало, и выгрузи лог.")
-	} else {
-		s.log.Info("подробный лог выключен")
-	}
-	writeJSON(w, map[string]bool{"debug": on})
 }
 
 // fail отвечает панели кодом и понятным текстом.

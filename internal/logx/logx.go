@@ -134,23 +134,24 @@ type Logger struct {
 	Redactor *Redactor
 	Path     string
 
-	file  *os.File
+	file  *logFile
 	level *slog.LevelVar
 }
 
 // LogFileName — имя файла лога внутри папки с данными.
 const LogFileName = "songrequest.log"
 
-// maxLogBytes — при старте лог обрезается, если разросся. Хранить историю за
-// год незачем, а вот переслать разработчику файл на 200 МБ уже не выйдет.
+// maxLogBytes — насколько велик лог, после чего он подрезается. Хранить
+// историю за год незачем, а вот переслать разработчику файл на 200 МБ уже не
+// выйдет. Подрезаем и при старте, и на ходу: подробный лог пишется всегда, а
+// приложение у стримера живёт неделями и до перезапуска может не дожить.
 const maxLogBytes = 8 << 20
 
 // New создаёт логгер, пишущий в консоль и в файл dir/songrequest.log.
 func New(dir string, debug bool) (*Logger, error) {
 	path := filepath.Join(dir, LogFileName)
-	rotate(path)
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	out, err := openLog(path)
 	if err != nil {
 		return nil, err
 	}
@@ -158,18 +159,91 @@ func New(dir string, debug bool) (*Logger, error) {
 	level := new(slog.LevelVar)
 	red := &Redactor{}
 
-	base := slog.NewTextHandler(io.MultiWriter(os.Stderr, f), &slog.HandlerOptions{
+	base := slog.NewTextHandler(io.MultiWriter(os.Stderr, out), &slog.HandlerOptions{
 		Level: level,
 	})
 	l := &Logger{
 		Logger:   slog.New(&handler{inner: base, red: red}),
 		Redactor: red,
 		Path:     path,
-		file:     f,
+		file:     out,
 		level:    level,
 	}
 	l.SetDebug(debug)
 	return l, nil
+}
+
+// logFile — файл лога, который сам себя подрезает.
+//
+// Обычный *os.File здесь не годится: подрезать надо посреди работы, а значит
+// кто-то должен подменить открытый файл под уже раздавшимися ссылками на
+// него. Эта прослойка и есть такая подмена.
+type logFile struct {
+	mu   sync.Mutex
+	f    *os.File
+	path string
+	size int64
+}
+
+func openLog(path string) (*logFile, error) {
+	l := &logFile{path: path}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	l.f = f
+	if info, err := f.Stat(); err == nil {
+		l.size = info.Size()
+	}
+	if l.size >= maxLogBytes {
+		l.roll()
+	}
+	return l, nil
+}
+
+func (l *logFile) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.f == nil {
+		// Файл открыть не вышло — писать в консоль всё равно продолжаем,
+		// а падать из-за лога приложение не должно.
+		return len(p), nil
+	}
+
+	n, err := l.f.Write(p)
+	l.size += int64(n)
+	if l.size >= maxLogBytes {
+		l.roll()
+	}
+	return n, err
+}
+
+// roll переименовывает разросшийся лог в .1 и начинает новый. Вызывается под
+// замком.
+func (l *logFile) roll() {
+	if l.f != nil {
+		l.f.Close()
+		l.f = nil
+	}
+	os.Remove(l.path + ".1")
+	os.Rename(l.path, l.path+".1")
+
+	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	l.f = f
+	l.size = 0
+}
+
+func (l *logFile) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f == nil {
+		return nil
+	}
+	return l.f.Close()
 }
 
 // SetDebug переключает подробность на ходу: стример жмёт галочку в панели, и
@@ -188,13 +262,3 @@ func (l *Logger) DebugEnabled() bool { return l.level.Level() == slog.LevelDebug
 
 // Close закрывает файл лога.
 func (l *Logger) Close() error { return l.file.Close() }
-
-// rotate переименовывает разросшийся лог в .1 и начинает новый.
-func rotate(path string) {
-	info, err := os.Stat(path)
-	if err != nil || info.Size() < maxLogBytes {
-		return
-	}
-	os.Remove(path + ".1")
-	os.Rename(path, path+".1")
-}

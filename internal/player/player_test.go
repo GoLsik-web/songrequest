@@ -24,6 +24,24 @@ type fakeSpotify struct {
 	playing  string
 	snapshot *spotify.Snapshot
 	failPlay error
+	// failRestore и forced нужны проверкам возврата: первая изображает
+	// сорвавшийся возврат, вторая запоминает, с какой оглядкой он звался.
+	failRestore error
+	forced      []bool
+	// duration и progress нужны проверкам ожидания: плеер считает по ним,
+	// сколько осталось до конца трека стримера.
+	duration int
+	progress int
+	paused   bool
+}
+
+// setPlaying изображает, что у стримера что-то играет.
+func (f *fakeSpotify) setPlaying(uri string, durationMs, progressMs int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.playing = uri
+	f.duration = durationMs
+	f.progress = progressMs
 }
 
 func (f *fakeSpotify) Capture(ctx context.Context) (*spotify.Snapshot, error) {
@@ -43,8 +61,22 @@ func (f *fakeSpotify) Restore(ctx context.Context, snap *spotify.Snapshot, playe
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.restored++
+	f.forced = append(f.forced, force)
+	if f.failRestore != nil {
+		return spotify.RestoreOutcome{}, f.failRestore
+	}
 	f.playing = snap.TrackURI
 	return spotify.RestoreOutcome{Restored: true, Message: "вернул"}, nil
+}
+
+// lastForce — с какой оглядкой звался последний возврат.
+func (f *fakeSpotify) lastForce() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.forced) == 0 {
+		return false
+	}
+	return f.forced[len(f.forced)-1]
 }
 
 func (f *fakeSpotify) PlayTrack(ctx context.Context, trackURI, deviceID string) error {
@@ -66,7 +98,7 @@ func (f *fakeSpotify) State(ctx context.Context) (*spotify.PlayerState, bool, er
 	if f.playing == "" {
 		return nil, false, nil
 	}
-	st := &spotify.PlayerState{IsPlaying: true}
+	st := &spotify.PlayerState{IsPlaying: !f.paused}
 	st.Item = &struct {
 		URI        string `json:"uri"`
 		ID         string `json:"id"`
@@ -82,8 +114,27 @@ func (f *fakeSpotify) State(ctx context.Context) (*spotify.PlayerState, bool, er
 				URL string `json:"url"`
 			} `json:"images"`
 		} `json:"album"`
-	}{URI: f.playing, DurationMs: 1000}
+	}{URI: f.playing, Name: f.playing, DurationMs: f.dur()}
+	st.ProgressMs = f.progress
 	return st, true, nil
+}
+
+// pause изображает остановленное воспроизведение.
+func (f *fakeSpotify) pause(uri string, durationMs, progressMs int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.playing = uri
+	f.duration = durationMs
+	f.progress = progressMs
+	f.paused = true
+}
+
+// dur — длительность трека; по умолчанию секунда, как было раньше.
+func (f *fakeSpotify) dur() int {
+	if f.duration > 0 {
+		return f.duration
+	}
+	return 1000
 }
 
 // finish изображает, что трек доиграл.
@@ -119,6 +170,9 @@ func newPlayer(t *testing.T) (*Player, *queue.Queue, *fakeSpotify) {
 	p := New(q, sp, log)
 	// В тестах ждать три секунды перед возвратом незачем.
 	p.ResumeDelay = 20 * time.Millisecond
+	// И шесть секунд до первой проверки Spotify — тоже: проверяем поведение,
+	// а не терпение.
+	p.PollEvery = 100 * time.Millisecond
 	return p, q, sp
 }
 

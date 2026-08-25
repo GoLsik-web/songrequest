@@ -54,6 +54,14 @@ func (c *Client) EnsureReward(ctx context.Context, knownID string) (*Reward, err
 		c.log.Info("прежней награды на канале нет, создаю заново", "прежний_id", knownID)
 	}
 
+	if !cfg.AutoCreateReward {
+		// Галочка снята: награду стример заводит сам, руками на Twitch.
+		// Раньше она не значила ничего — приложение создавало награду всегда.
+		return nil, errs.New(errs.TwitchReward,
+			"На канале нет награды, а её автоматическое создание выключено в настройках. "+
+				"Либо поставь галочку «Создать награду самому», либо заведи награду на Twitch вручную.")
+	}
+
 	body := map[string]any{
 		"title":                                 cfg.RewardTitle,
 		"cost":                                  cfg.RewardCost,

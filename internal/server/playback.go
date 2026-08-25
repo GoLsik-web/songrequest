@@ -21,25 +21,84 @@ func (s *Server) setupPlayer(cfg *config.File) {
 		s.player.ResumeDelay = 3 * time.Second
 	}
 
+	s.player.WaitForCurrent = cfg.Get().WaitForCurrent
+
 	s.player.OnChange = s.syncPlayback
 	s.player.OnError = func(err error) { s.state.NotifyError(err) }
 
+	// Заказ ждёт конца трека стримера. Молчать об этом нельзя: со стороны
+	// панели это выглядит как «заказ принят и завис», и именно так это и
+	// описывали — «еле включается».
+	s.player.OnWaiting = func(item queue.Item, left time.Duration) {
+		s.state.Notify("info", "«"+item.Artist+" — "+item.Title+
+			"» заиграет после текущего трека, примерно через "+humanDuration(left)+".")
+	}
+
+	// Заказ не удалось включить — это не «отыграл». Баллы списаны, зритель
+	// ничего не услышал; отметить такое выполненным значит забрать баллы ни
+	// за что. Раньше при закрытом Spotify так молча прокручивалась вся
+	// очередь разом.
+	s.player.OnDropped = func(item queue.Item, err error) {
+		go func() {
+			_, text := errs.Describe(err)
+			s.history(item, "rejected", text)
+
+			ctx, cancel := context.WithTimeout(s.baseContext(), 20*time.Second)
+			defer cancel()
+			s.refund(ctx, item, "не получилось включить трек: "+text)
+			s.syncPlayback()
+		}()
+	}
+
 	// Трек отыграл — помечаем заказ выполненным на Twitch, чтобы он ушёл из
 	// очереди наград, и складываем его в историю.
-	s.player.OnFinished = func(item queue.Item) {
-		s.history(item, "played", "")
-		if item.RedemptionID != "" {
+	//
+	// В стороне от очереди: Twitch умеет отвечать двадцать секунд, и всё это
+	// время следующий заказ просто не играл. Тишина между треками слышна, а
+	// порядок этих отметок никому не важен.
+	//
+	// Оборванный заказ — не «отыгравший». Раньше скип писал в историю свою
+	// строку, а следом плеер писал вторую, «played»: один трек двумя записями
+	// с разным исходом. Теперь строку в историю пишет только это место, и
+	// пишет ту, которая правда.
+	s.player.OnFinished = func(item queue.Item, natural bool) {
+		go func() {
+			if natural {
+				s.history(item, "played", "")
+			} else {
+				s.history(item, "skipped", s.takeSkipActor())
+			}
+			if item.RedemptionID == "" {
+				return
+			}
+			// Отмечаем выполненным даже скипнутый заказ: иначе он навсегда
+			// останется висеть в очереди наград на Twitch. Вернуть за него
+			// баллы стример может кнопкой в панели.
 			ctx, cancel := context.WithTimeout(s.baseContext(), 20*time.Second)
 			defer cancel()
 			if err := s.twitch.FulfillRedemption(ctx, item.RewardID, item.RedemptionID); err != nil {
 				s.log.Warn("не отметил заказ выполненным", "ошибка", err)
+				return
 			}
-		}
+			// Без этой строки в итогах сессии вечно висело «12 заказов ·
+			// 0 принято»: счётчик двигала только ручная кнопка в панели.
+			s.state.SetRedemptionStatus(item.RedemptionID, app.OrderFulfilled)
+		}()
 	}
 
 	// Очередь опустела и музыка вернулась на место — говорим об этом в панели
 	// и, если источник вернуть не вышло, дозаполняем по выбранному режиму.
 	s.player.OnRestored = func(outcome spotify.RestoreOutcome, snap *spotify.Snapshot) {
+		go s.afterRestoreAsync(outcome, snap)
+	}
+}
+
+// afterRestoreAsync досказывает про возврат и дозаполняет тишину.
+//
+// Тоже в стороне от очереди: внутри новые запросы к Spotify, а очередь в это
+// время должна уметь принять следующий заказ.
+func (s *Server) afterRestoreAsync(outcome spotify.RestoreOutcome, snap *spotify.Snapshot) {
+	{
 		if outcome.Restored {
 			s.state.Notify("info", outcome.Message)
 		} else if outcome.Code != "" {
@@ -51,12 +110,31 @@ func (s *Server) setupPlayer(cfg *config.File) {
 	}
 }
 
+// applyPlayerSettings переносит настройки в работающий плеер.
+//
+// Раньше они копировались один раз при создании сервера, и правка «ждать
+// конца трека» или «задержка возврата» не значила ничего до перезапуска.
+func (s *Server) applyPlayerSettings() {
+	if s.player == nil {
+		return
+	}
+	cfg := s.cfg.Get()
+
+	delay := time.Duration(cfg.ResumeDelaySeconds) * time.Second
+	if delay <= 0 {
+		delay = time.Second
+	}
+	s.player.SetOptions(delay, cfg.WaitForCurrent)
+}
+
 // StartPlayer запускает проигрывание очереди.
 func (s *Server) StartPlayer(ctx context.Context) {
 	if s.player == nil {
 		return
 	}
 	go s.player.Run(ctx)
+	// Между заказами в кадре показываем то, что стример слушает сам.
+	go s.watchOwnPlayback(ctx)
 	s.syncPlayback()
 }
 
@@ -92,9 +170,12 @@ func (s *Server) syncPlayback() {
 
 	now := s.player.Now()
 	if now == nil {
-		s.state.SetNow(nil)
+		// Заказов сейчас нет — показываем то, что стример слушает сам.
+		// Может быть и пусто: тогда в кадре не будет ничего.
+		s.state.SetNow(s.own())
 	} else {
 		s.state.SetNow(&app.NowPlaying{
+			Source:     app.SourceOrder,
 			Provider:   now.Item.Provider,
 			Title:      now.Item.Title,
 			Artist:     now.Item.Artist,
@@ -129,6 +210,11 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 	cfg := s.cfg.Get()
 
 	if reject := s.check(item.Requester, item, cfg); reject != nil {
+		// Свой срок: контекст поиска мог уже истечь, и тогда баллы не
+		// вернулись бы, а зритель не узнал бы причину.
+		ctx, cancel := context.WithTimeout(s.baseContext(), 20*time.Second)
+		defer cancel()
+
 		s.log.Info("заказ отклонён",
 			"зритель", item.Requester, "заказ", item.RawRequest, "причина", reject.Reason)
 		s.history(item, "rejected", reject.Reason)
@@ -149,6 +235,11 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 		"позиция", added.Position, "трек", added.Artist+" — "+added.Title,
 		"заказал", added.Requester)
 
+	if added.Source == queue.SourceDonation {
+		// Заказ за баллы уже посчитан списком наград, а донат — нет.
+		s.state.CountOrder()
+	}
+
 	s.syncPlayback()
 	s.player.Nudge()
 
@@ -157,6 +248,11 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 	wait, _ := s.queue.TotalDuration()
 	if now := s.player.Now(); now != nil {
 		wait += time.Duration(now.Item.DurationMs)*time.Millisecond - now.Elapsed()
+	} else if cfg.WaitForCurrent {
+		// Заказов сейчас нет, но первый ждёт конца трека стримера — и это
+		// главная часть ожидания. Без неё зритель слышит «принято, следующим»
+		// и три минуты тишины.
+		wait += s.ownTrackLeft()
 	}
 	s.announceQueued(ctx, added, added.Position, wait)
 }
@@ -173,6 +269,7 @@ func (s *Server) refund(ctx context.Context, item queue.Item, reason string) {
 		return
 	}
 	s.log.Info("баллы возвращены", "зритель", item.Requester, "причина", reason)
+	s.state.SetRedemptionStatus(item.RedemptionID, app.OrderRefunded)
 }
 
 // skipCurrent обрывает текущий трек.
@@ -181,7 +278,10 @@ func (s *Server) skipCurrent(actor string) {
 	if now == nil {
 		return
 	}
-	s.history(now.Item, "skipped", "скипнул "+actor)
+	// Историю пишет плеер, когда трек действительно закончится: отсюда её
+	// писать нельзя, иначе на один заказ выходит две записи. Оставляем плееру
+	// только имя того, кто нажал.
+	s.setSkipActor("скипнул " + actor)
 	s.modLog(actor, "скипнул", now.Item.Artist+" — "+now.Item.Title)
 	s.state.Notify("info", actor+" скипнул: "+now.Item.Artist+" — "+now.Item.Title)
 	s.player.Skip()
@@ -229,4 +329,29 @@ func (s *Server) clearQueue(ctx context.Context, refund bool, actor string) erro
 
 	s.syncPlayback()
 	return nil
+}
+
+// Кто оборвал заказ.
+//
+// Плеер знает, что заказ оборвали, но не знает кем: скип мог прийти из
+// панели, из чата от модератора или вовсе не прийти — стример переключил
+// музыку руками в самом Spotify. Имя кладём здесь, а забирает его тот, кто
+// пишет историю. Пусто — значит переключили в Spotify.
+func (s *Server) setSkipActor(who string) {
+	s.mu.Lock()
+	s.skipActor = who
+	s.mu.Unlock()
+}
+
+// takeSkipActor забирает имя и тут же его забывает: оно годится ровно на один
+// заказ, а следующий скип может и не случиться.
+func (s *Server) takeSkipActor() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	who := s.skipActor
+	s.skipActor = ""
+	if who == "" {
+		return "музыку переключили в самом Spotify"
+	}
+	return who
 }

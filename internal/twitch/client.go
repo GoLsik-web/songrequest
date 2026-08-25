@@ -49,6 +49,9 @@ type Client struct {
 	tokens  tokens
 	user    *User
 	pending *deviceFlow
+	// checked и checkErr — чем кончилась последняя проверка канала.
+	checked  bool
+	checkErr error
 
 	refreshMu sync.Mutex
 }
@@ -129,21 +132,41 @@ func (c *Client) Account() *User {
 	return c.user
 }
 
+// LastCheck сообщает, чем кончилась последняя проверка канала. См. такую же
+// у Spotify: done=false означает «ещё не доходили», а не «сломалось».
+func (c *Client) LastCheck() (done bool, err error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.checked, c.checkErr
+}
+
+func (c *Client) rememberCheck(err error) {
+	c.mu.Lock()
+	c.checked = true
+	c.checkErr = err
+	c.mu.Unlock()
+}
+
 // CheckAccount узнаёт, кто вошёл и есть ли на канале баллы.
 func (c *Client) CheckAccount(ctx context.Context) (*User, error) {
 	var out struct {
 		Data []User `json:"data"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/users", nil, &out); err != nil {
+		c.rememberCheck(err)
 		return nil, err
 	}
 	if len(out.Data) == 0 {
-		return nil, errs.New(errs.TwitchBadResponse, "Twitch не сказал, кто вошёл.")
+		err := errs.New(errs.TwitchBadResponse, "Twitch не сказал, кто вошёл.")
+		c.rememberCheck(err)
+		return nil, err
 	}
 
 	user := out.Data[0]
 	c.mu.Lock()
 	c.user = &user
+	c.checked = true
+	c.checkErr = nil
 	c.mu.Unlock()
 
 	c.log.Info("Twitch подключён",

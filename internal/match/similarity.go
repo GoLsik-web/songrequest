@@ -80,9 +80,9 @@ func tokenSetRatio(a, b string) float64 {
 			shared++
 			continue
 		}
-		// Слово могло быть написано с опечаткой или в другой форме.
+		// Слово могло быть написано с опечаткой, в другой форме или на слух.
 		for other := range tb {
-			if len(token) > 3 && len(other) > 3 && ratio(token, other) > 0.85 {
+			if len(token) > 3 && len(other) > 3 && looseRatio(token, other) > 0.82 {
 				shared++
 				break
 			}
@@ -110,4 +110,11 @@ func uniqueTokens(s string) map[string]bool {
 		out[t] = true
 	}
 	return out
+}
+
+// LooseSimilar — сходство с поправкой на запись на слух, для тех, кто
+// пользуется подбором снаружи: например, чтобы выбрать артиста из
+// нескольких похожих.
+func LooseSimilar(a, b string) float64 {
+	return looseRatio(Clean(a), Clean(b))
 }

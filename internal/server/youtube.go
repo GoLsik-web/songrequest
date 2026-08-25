@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
@@ -18,8 +19,7 @@ import (
 func (s *Server) setupYouTube(ctx context.Context) {
 	s.ytTools = youtube.NewTools(s.log, s.dataDir)
 	s.youtube = youtube.NewPlayer(s.log, s.ytTools)
-	s.youtube.Device = s.cfg.Get().AudioDevice
-	s.youtube.Preferred = s.cfg.Get().YouTubeBrowser
+	s.applyYouTubeSettings()
 
 	if s.player != nil {
 		s.player.SetYouTube(s.youtube)
@@ -98,18 +98,22 @@ func (s *Server) tryYouTube(ctx context.Context, r twitch.Redemption, query stri
 	})
 
 	s.enqueue(ctx, queue.Item{
-		Source:       queue.SourcePoints,
-		Requester:    r.UserName,
-		RawRequest:   r.UserInput,
-		Provider:     "youtube",
-		TrackID:      track.ID,
-		URI:          track.URL,
-		Title:        track.Title,
-		Artist:       track.Artist,
-		DurationMs:   track.DurationMs,
-		CoverURL:     track.CoverURL,
-		RedemptionID: r.ID,
-		RewardID:     r.RewardID,
+		Source:    queue.SourcePoints,
+		Requester: r.UserName,
+		// Бан-лист работает по логину. Без него забаненный зритель спокойно
+		// заказывал всё, чего нет в Spotify: заказ уходил на YouTube, а
+		// проверка бана откатывалась на отображаемое имя и не срабатывала.
+		RequesterLogin: strings.ToLower(r.UserLogin),
+		RawRequest:     r.UserInput,
+		Provider:       "youtube",
+		TrackID:        track.ID,
+		URI:            track.URL,
+		Title:          track.Title,
+		Artist:         track.Artist,
+		DurationMs:     track.DurationMs,
+		CoverURL:       track.CoverURL,
+		RedemptionID:   r.ID,
+		RewardID:       r.RewardID,
 	})
 	return true
 }
@@ -123,4 +127,16 @@ func (s *Server) StopYouTube() {
 	if s.youtube != nil {
 		s.youtube.Stop()
 	}
+}
+
+// applyYouTubeSettings переносит настройки в проигрыватель YouTube.
+//
+// Раньше они читались один раз при запуске, а панель обещала «применится к
+// следующему заказу». Обещание было ложным: до перезапуска ничего не менялось.
+func (s *Server) applyYouTubeSettings() {
+	if s.youtube == nil {
+		return
+	}
+	cfg := s.cfg.Get()
+	s.youtube.SetOptions(cfg.AudioDevice, cfg.YouTubeBrowser)
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,7 +32,11 @@ type Info struct {
 
 // Build собирает zip в память и возвращает его вместе с именем файла.
 // В память, а не на диск: архив уходит в браузер и нигде не остаётся.
-func Build(dataDir, configPath string, red *logx.Redactor, info Info) ([]byte, string, error) {
+//
+// extra — готовые файлы, которые кладём рядом с логом: история заказов с
+// возвратами баллов и список действий в панели. Их собирает сервер, потому
+// что живут они в базе, а этот пакет про базу ничего не знает.
+func Build(dataDir, configPath string, red *logx.Redactor, info Info, extra map[string][]byte) ([]byte, string, error) {
 	info.OS = runtime.GOOS + " " + runtime.GOARCH
 	info.ExportedAt = time.Now().Format("2006-01-02 15:04:05")
 	info.DataDir = dataDir
@@ -72,6 +77,22 @@ func Build(dataDir, configPath string, red *logx.Redactor, info Info) ([]byte, s
 	if cfgData, err := os.ReadFile(configPath); err == nil {
 		if err := add("config.json", sanitizeConfig(cfgData)); err != nil {
 			return nil, "", errs.Wrap(errs.DiagExport, "Не смог упаковать настройки.", err)
+		}
+	}
+
+	// Порядок обхода карты в Go случайный, а имена файлов в архиве должны
+	// идти одинаково от выгрузки к выгрузке — иначе их неудобно сравнивать.
+	names := make([]string, 0, len(extra))
+	for name := range extra {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if len(extra[name]) == 0 {
+			continue
+		}
+		if err := add(name, []byte(red.Clean(string(extra[name])))); err != nil {
+			return nil, "", errs.Wrap(errs.DiagExport, "Не смог упаковать "+name+".", err)
 		}
 	}
 

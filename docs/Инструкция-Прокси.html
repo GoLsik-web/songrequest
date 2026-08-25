@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Если Spotify не подключается</title>
+<style>
+  :root {
+    --bg: #08090a; --card: #101214; --line: #1c1f22;
+    --text: #f2f4f5; --dim: #858d94; --accent: #c8f751;
+    --bad: #ff4d4d; --ink: #0d1204;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 20px 80px;
+    background: var(--bg); color: var(--text);
+    font: 17px/1.65 "Segoe UI", system-ui, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 21px; margin: 44px 0 12px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .lead { color: var(--dim); margin: 0 0 28px; }
+  p { margin: 0 0 14px; }
+  ol, ul { padding-left: 24px; margin: 0 0 14px; }
+  li { margin-bottom: 8px; }
+  code {
+    background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+    padding: 2px 6px; font-family: Consolas, "Courier New", monospace; font-size: 15px;
+  }
+  .copy {
+    display: block; background: var(--card); border: 1px solid var(--accent);
+    border-radius: 4px; padding: 14px 16px; margin: 14px 0;
+    font-family: Consolas, "Courier New", monospace; font-size: 17px;
+    color: var(--accent); word-break: break-all; user-select: all;
+  }
+  .warn, .note {
+    border-left: 3px solid var(--accent); background: #12160a;
+    padding: 12px 16px; margin: 18px 0;
+  }
+  .note { border-left-color: var(--line); background: var(--card); }
+  .warn strong { color: var(--accent); }
+  .stop { border-left-color: var(--bad); background: #170808; }
+  .stop strong { color: var(--bad); }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 15px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; }
+  td:first-child { white-space: nowrap; font-family: Consolas, monospace; color: var(--accent); }
+  a { color: var(--accent); }
+  .step { color: var(--dim); font-size: 14px; letter-spacing: .8px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Если Spotify не подключается</h1>
+<p class="lead">Читай этот файл, только если приложение пишет, что не может
+достучаться до Spotify. Если всё работает — закрывай, он тебе не нужен.</p>
+
+<h2>Сначала пойми, в чём дело</h2>
+
+<p>Бывает так: <strong>музыка в самом Spotify играет прекрасно, а приложение
+говорит, что связи нет.</strong> Это не поломка. Программа Spotify и это
+приложение ходят по разным адресам, и провайдер может блокировать только
+вторые.</p>
+
+<div class="note">
+Проще говоря: <strong>слушать музыку тебе не мешают, а управлять ею
+из программы — мешают.</strong> Лечится это одной кнопкой, читай дальше.
+</div>
+
+<h2><span class="step">Способ 1</span><br>Psiphon и одна кнопка</h2>
+
+<p>Если у тебя ещё ничего не стоит — бери <strong>Psiphon</strong>. Он
+бесплатный, без регистрации, и — что важно — работает как <em>местный
+посредник</em>, а не как обычный VPN: остальной компьютер продолжает ходить
+напрямую и ничего не теряет в скорости.</p>
+
+<ol>
+<li>Скачай с <a href="https://psiphon.ca/">psiphon.ca</a> версию для Windows.
+    Это один файл <code>psiphon3.exe</code>, устанавливать ничего не нужно.</li>
+<li>Запусти его и дождись надписи <strong>Connected</strong>.</li>
+<li>Открой в нём настройки и найди <strong>Local SOCKS port</strong>.
+    Если там стоит <em>auto</em> — впиши <code>1080</code>. Если стоит число —
+    просто запомни его.</li>
+<li>Теперь в панели приложения: <strong>настройки → «Прокси для Spotify» →
+    «Найти автоматически»</strong>.</li>
+</ol>
+
+<div class="note">
+Psiphon должен быть запущен, пока идёт стрим. Закроешь его — приложение
+снова потеряет Spotify. Проще добавить его в автозапуск.
+</div>
+
+<p><strong>Если Psiphon не заработал</strong> — попробуй
+<a href="https://windscribe.com/">Windscribe</a>: бесплатно даёт 10 ГБ в
+месяц, а нам нужны от силы десятки мегабайт. В нём надо включить
+<strong>Proxy Gateway</strong> — это и есть местный посредник.</p>
+
+<p>Годится и <strong>любая другая программа обхода</strong>, которая уже у
+тебя стоит — v2rayN, Nekoray, Hiddify, Clash, Shadowsocks. Запусти её и жми
+ту же кнопку: приложение само переберёт места, где такие программы обычно
+ждут подключения, и проверит каждое — доходит через него до Spotify или нет.</p>
+
+<p>Дальше одно из двух:</p>
+
+<table>
+<tr><td>Нашлось</td>
+    <td>В панели появится сообщение вроде <em>«Прокси найден и включён:
+    socks5://127.0.0.1:10808 (v2rayN)»</em>. Всё, больше делать нечего.</td></tr>
+<tr><td>Не нашлось</td>
+    <td>Значит твоя программа так не умеет либо была выключена. Смотри
+    способ 2.</td></tr>
+</table>
+
+<div class="warn">
+<strong>Проверь, что скорость не пострадала.</strong> Через этого посредника
+пойдёт <strong>только это приложение</strong>. Игра, голосовой чат, OBS и сама
+трансляция на Twitch останутся на прямом канале — в отличие от обычного VPN,
+который уводит туда же их.
+</div>
+
+<h2><span class="step">Способ 2</span><br>Вписать адрес руками</h2>
+
+<p>Нужен, если кнопка ничего не нашла. Адрес есть в настройках твоей
+программы обхода — она называет его <em>локальный прокси</em>,
+<em>local proxy</em>, <em>SOCKS5</em> или <em>inbound</em>.</p>
+
+<p>Выглядит он всегда одинаково: <strong>адрес и номер через двоеточие</strong>.
+Адрес почти всегда <code>127.0.0.1</code>, отличается только номер.</p>
+
+<div class="copy">socks5://127.0.0.1:10808</div>
+
+<p>Вписывай в поле <strong>«Прокси для Spotify»</strong> и жми
+<strong>Сохранить</strong>, потом <strong>«Проверить связь»</strong>.
+Если программа просит логин и пароль — пиши так:</p>
+
+<div class="copy">socks5://логин:пароль@127.0.0.1:10808</div>
+
+<div class="note">
+Пароль приложение никому не покажет: ни в панели, ни в логе, ни в архиве,
+который ты мне отправишь. Вместо него будет многоточие.
+</div>
+
+<h2><span class="step">Способ 3</span><br>Обычный VPN</h2>
+
+<p>Если ничего не вышло — просто включи VPN, как обычно. Всё будет работать,
+просто через него пойдёт весь компьютер, и в игре может подрасти пинг.</p>
+
+<h2>Вход в Spotify — отдельная история</h2>
+
+<div class="stop">
+<strong>Кнопка «Подключить Spotify» открывает страницу входа в браузере,
+а браузер про этот прокси ничего не знает.</strong> Поэтому один раз, при
+самом первом входе, VPN всё-таки понадобится.
+</div>
+
+<p>Порядок такой:</p>
+
+<ol>
+<li>Включи VPN.</li>
+<li>Нажми <strong>«Подключить Spotify»</strong>, войди, разреши доступ.</li>
+<li>Выключи VPN.</li>
+<li>Нажми <strong>«Проверить связь»</strong> — приложение дальше ходит через
+    прокси само.</li>
+</ol>
+
+<p>Это делается один раз. Потом приложение продлевает доступ само, через тот
+же прокси, и VPN больше не нужен.</p>
+
+<h2>Если что-то не так</h2>
+
+<table>
+<tr><th>Что видно</th><th>Что делать</th></tr>
+<tr>
+  <td>«Не нашёл ничего, через что можно достучаться»</td>
+  <td>Программа обхода не запущена, либо она не поднимает локальный прокси,
+      либо порт у неё нестандартный. Запусти её, проверь порт в её настройках
+      и нажми поиск ещё раз; не помогло — способ 2.</td>
+</tr>
+<tr>
+  <td>Код SP-17</td>
+  <td>Адрес прокси написан не так. В сообщении сказано, чего именно не
+      хватает — чаще всего номера после двоеточия.</td>
+</tr>
+<tr>
+  <td>«Прокси не нужен — доходит напрямую»</td>
+  <td>Хорошая новость: у тебя ничего не блокируется, и посредник только
+      замедлил бы. Приложение ничего не включило.</td>
+</tr>
+<tr>
+  <td>Приложение находит треки, но музыка не играет</td>
+  <td>Это уже не про прокси. Проверь, что программа Spotify открыта и в ней
+      выбран этот компьютер как устройство воспроизведения.</td>
+</tr>
+<tr>
+  <td>Всё стало медленно</td>
+  <td>Убедись, что в программе обхода выключен режим «весь трафик через VPN».
+      Приложению достаточно локального прокси.</td>
+</tr>
+</table>
+
+</main>
+</body>
+</html>

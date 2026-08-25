@@ -84,7 +84,15 @@ func (s *Server) onDonation(d donations.Donation) {
 		return
 	}
 
-	res, err := match.Find(ctx, s.spotify, req, matchOptionsFromConfig(cfg))
+	opts := matchOptionsFromConfig(cfg)
+	// Та же поправка на страну, что и у заказов за баллы: трек, не изданный
+	// в стране аккаунта, всё равно не заиграет — незачем ставить его в
+	// очередь и обещать зрителю то, чего не будет.
+	if me := s.spotify.Account(); me != nil {
+		opts.Market = me.Country
+	}
+
+	res, err := match.Find(ctx, s.spotify, req, opts)
 	if err != nil {
 		s.log.Error("не смог подобрать трек по донату", "ошибка", err)
 		s.state.NotifyError(err)
@@ -182,12 +190,13 @@ func (s *Server) handleDonationsToken(w http.ResponseWriter, r *http.Request) {
 	s.state.Notify("info", "DonationAlerts подключён")
 
 	// Поднимаем подключение прямо сейчас, не дожидаясь перезапуска.
-	go s.donationAlerts.Run(s.baseContext(), s.donations.Handle)
+	s.restartDonationAlerts()
 
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleDonationAlertsLogout(w http.ResponseWriter, r *http.Request) {
+	s.stopDonationAlerts()
 	s.donationAlerts.Logout()
 	s.state.SetConnIdle("DonationAlerts", "Не настроено")
 	s.state.Notify("info", "DonationAlerts отключён")
@@ -196,4 +205,35 @@ func (s *Server) handleDonationAlertsLogout(w http.ResponseWriter, r *http.Reque
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) error {
 	return json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(v)
+}
+
+// Одно подключение к DonationAlerts, а не сколько нажали.
+//
+// Раньше каждый успешный вход запускал ещё одну горутину с вебсокетом, и
+// ничем её было не остановить: вошёл дважды — два подключения до конца
+// работы приложения, а после «Отключить» цикл жил дальше и упорно
+// перекрашивал только что погасшую лампочку обратно в красное.
+
+// restartDonationAlerts поднимает подключение, погасив прежнее.
+func (s *Server) restartDonationAlerts() {
+	s.stopDonationAlerts()
+
+	ctx, cancel := context.WithCancel(s.baseContext())
+	s.mu.Lock()
+	s.daCancel = cancel
+	s.mu.Unlock()
+
+	go s.donationAlerts.Run(ctx, s.donations.Handle)
+}
+
+// stopDonationAlerts гасит подключение, если оно было.
+func (s *Server) stopDonationAlerts() {
+	s.mu.Lock()
+	cancel := s.daCancel
+	s.daCancel = nil
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 }

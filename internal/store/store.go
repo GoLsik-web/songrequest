@@ -96,6 +96,11 @@ var migrations = []string{
 	// надо помнить.
 	`ALTER TABLE match_cache ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;
 	 ALTER TABLE match_cache ADD COLUMN cover_url TEXT NOT NULL DEFAULT '';`,
+
+	// Бан-лист хранит логин, а в заказе лежало только отображаемое имя. У
+	// зрителей с кириллическим ником это разные строки, и бан не срабатывал
+	// вовсе. Теперь логин едет вместе с заказом.
+	`ALTER TABLE queue ADD COLUMN requester_login TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open открывает базу в dir/songrequest.db и доводит схему до последней версии.
