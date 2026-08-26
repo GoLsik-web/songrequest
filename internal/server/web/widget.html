@@ -39,7 +39,11 @@ body { -webkit-font-smoothing: antialiased; }
   const params = new URLSearchParams(location.search);
   const card = $("card");
 
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
+  // Без `??`: OBS возит с собой свой браузер, и в старых сборках это не
+  // «не поддерживается», а ошибка разбора — тогда не выполняется весь
+  // скрипт виджета целиком, и в кадре остаётся пустой прозрачный
+  // прямоугольник. Ни ошибки, ни следа в логе.
+  const esc = (s) => String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 
@@ -202,6 +206,12 @@ body { -webkit-font-smoothing: antialiased; }
       };
       tick();
       progressTimer = setInterval(tick, 1000);
+    } else {
+      // Длительность неизвестна (так бывает у заказов с YouTube). Полосу
+      // надо обнулить, а не оставлять там, где её бросил прошлый трек:
+      // иначе зритель видит «трек почти кончился» в самом его начале.
+      $("bar").style.width = "0%";
+      card.style.setProperty("--progress", "0");
     }
   }
 
@@ -230,8 +240,18 @@ body { -webkit-font-smoothing: antialiased; }
 
   function render(state) {
     dress(state.widget);
-    if (state.now) show(state.now, state.widget ? state.widget.hold_seconds : 0);
-    else hide();
+    if (state.now) {
+      show(state.now, state.widget ? state.widget.hold_seconds : 0);
+      return;
+    }
+    // Музыка кончилась — забываем, что уже показывали.
+    //
+    // Без этого при включённом «убирать через N секунд» повторный заказ
+    // того же трека тем же зрителем не показывался вовсе: ключ совпадал с
+    // heldTrack, и show() выходил на первой же строке. Трек играет, виджет
+    // молчит, и стример этого не замечает — у него в панели всё нормально.
+    heldTrack = null;
+    hide();
   }
 
   // ── демо ───────────────────────────────────────────────────────────

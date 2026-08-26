@@ -85,3 +85,52 @@ func TestIconSpriteHasEveryIconThePanelUses(t *testing.T) {
 		}
 	}
 }
+
+// OBS возит с собой свой браузер, и он старый. Свежая возможность там не
+// «не поддерживается с запасным вариантом», а либо ошибка разбора (тогда
+// виджета в кадре нет вовсе), либо молча исчезнувший блок — и стример этого
+// не поймёт, потому что панель у него в нормальном браузере и всё показывает.
+//
+// Тест держит правило, записанное в ПРОДОЛЖИТЬ.md как главная грабля зоны.
+func TestWidgetAvoidsModernBrowserFeatures(t *testing.T) {
+	// Что нельзя и с какой версии Chrome оно появилось.
+	banned := map[string]string{
+		"color-mix(":  "Chrome 111",
+		":has(":       "Chrome 105",
+		"@container":  "Chrome 105",
+		"@layer":      "Chrome 99",
+		"oklch(":      "Chrome 111",
+		"light-dark(": "Chrome 123",
+		"text-wrap:":  "Chrome 114",
+		"aspect-ratio": "Chrome 88",
+		"inset:":      "Chrome 87",
+		"@property":   "Chrome 85",
+		"??":          "Chrome 80 (ошибка разбора — не выполнится весь скрипт)",
+		"?.":          "Chrome 80 (ошибка разбора — не выполнится весь скрипт)",
+		".replaceAll(": "Chrome 85",
+		".at(":        "Chrome 92",
+	}
+
+	for _, name := range []string{"widget.html", "widget.css", "widget-presets.js"} {
+		data, err := webFS.ReadFile("web/" + name)
+		if err != nil {
+			t.Fatalf("%s не читается: %v", name, err)
+		}
+		// Комментарии выкидываем: в них эти же слова встречаются как раз
+		// в объяснениях, почему так делать нельзя.
+		text := stripComments(string(data))
+		for what, since := range banned {
+			if strings.Contains(text, what) {
+				t.Errorf("%s: %q появилось только в %s — в OBS этого может не быть", name, what, since)
+			}
+		}
+	}
+}
+
+// stripComments убирает /* … */ и // … — только чтобы проверка выше не
+// спотыкалась о собственные объяснения в коде.
+func stripComments(s string) string {
+	s = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(s, " ")
+	s = regexp.MustCompile(`(?m)^\s*//.*$`).ReplaceAllString(s, " ")
+	return s
+}
