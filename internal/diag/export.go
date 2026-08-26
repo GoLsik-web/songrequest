@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -75,7 +76,7 @@ func Build(dataDir, configPath string, red *logx.Redactor, info Info, extra map[
 
 	// Настройки без опознавательных знаков.
 	if cfgData, err := os.ReadFile(configPath); err == nil {
-		if err := add("config.json", sanitizeConfig(cfgData)); err != nil {
+		if err := add("config.json", sanitizeConfig(cfgData, red)); err != nil {
 			return nil, "", errs.Wrap(errs.DiagExport, "Не смог упаковать настройки.", err)
 		}
 	}
@@ -109,30 +110,31 @@ func Build(dataDir, configPath string, red *logx.Redactor, info Info, extra map[
 	return buf.Bytes(), name, nil
 }
 
-// sanitizeConfig прячет идентификаторы приложений. Client ID при PKCE не
-// секрет, но это всё-таки чужой ключ: для разбора проблемы достаточно знать,
-// что он заполнен и какой длины.
-func sanitizeConfig(data []byte) []byte {
+// sanitizeConfig убирает из настроек всё, чего не должно быть в архиве.
+//
+// Client ID при PKCE не секрет, но это всё-таки чужой ключ: достаточно знать,
+// что он заполнен и какой длины. А вот ключи донат-сервисов и пароль от
+// прокси — настоящие секреты, и раньше они уезжали в архив целиком: маска
+// стояла только на «client_id», а всё остальное шло как есть. Друг жмёт
+// «Сохранить лог и историю», архив улетает в Telegram — и там навсегда
+// остаются рабочий ключ DonatePay, ключ DonateX и пароль от платного прокси.
+func sanitizeConfig(data []byte, red *logx.Redactor) []byte {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return []byte("(настройки не разобрались, поэтому в архив не попали)")
 	}
 
 	for key, value := range raw {
-		if !strings.HasSuffix(key, "client_id") {
-			continue
-		}
-		s, _ := value.(string)
-		// Режем по рунам, а не по байтам: если в поле по ошибке окажется
-		// кириллица, обрезка по байтам даст битый текст в архиве.
-		r := []rune(s)
+		str, _ := value.(string)
 		switch {
-		case s == "":
-			raw[key] = "(не заполнен)"
-		case len(r) <= 6:
-			raw[key] = "(заполнен, подозрительно короткий)"
-		default:
-			raw[key] = fmt.Sprintf("%s… (всего символов: %d)", string(r[:6]), len(r))
+		case key == "spotify_proxy":
+			raw[key] = hideProxyPassword(str)
+		case strings.HasSuffix(key, "client_id"):
+			raw[key] = shortened(str)
+		case isSecretKey(key):
+			// Здесь не показываем даже начало: в отличие от client_id это
+			// ключ, которым можно пользоваться.
+			raw[key] = filledOrNot(str)
 		}
 	}
 
@@ -140,5 +142,59 @@ func sanitizeConfig(data []byte) []byte {
 	if err != nil {
 		return []byte("(настройки не разобрались, поэтому в архив не попали)")
 	}
-	return out
+	// Последняя проверка тем же редактором, что чистит лог: вдруг секрет
+	// лежит в поле, о котором здесь ещё не знают.
+	return []byte(red.Clean(string(out)))
+}
+
+// isSecretKey — поля, значение которых нельзя показывать вообще.
+func isSecretKey(key string) bool {
+	return strings.HasSuffix(key, "_key") ||
+		strings.HasSuffix(key, "_token") ||
+		strings.HasSuffix(key, "_secret")
+}
+
+func filledOrNot(s string) string {
+	if s == "" {
+		return "(не заполнен)"
+	}
+	return fmt.Sprintf("(заполнен, символов: %d)", len([]rune(s)))
+}
+
+// shortened показывает начало значения и его длину.
+func shortened(s string) string {
+	// Режем по рунам, а не по байтам: если в поле по ошибке окажется
+	// кириллица, обрезка по байтам даст битый текст в архиве.
+	r := []rune(s)
+	switch {
+	case s == "":
+		return "(не заполнен)"
+	case len(r) <= 6:
+		return "(заполнен, подозрительно короткий)"
+	default:
+		return fmt.Sprintf("%s… (всего символов: %d)", string(r[:6]), len(r))
+	}
+}
+
+// hideProxyPassword оставляет адрес прокси, но убирает из него пароль.
+//
+// Адрес нужен для разбора: по нему видно, куда приложение ходило и почему
+// Spotify не отвечал. Пароль не нужен никому.
+func hideProxyPassword(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "(адрес прокси не разобрался, поэтому скрыт целиком)"
+	}
+	creds := ""
+	if name := u.User.Username(); name != "" {
+		creds = name
+		if _, hasPass := u.User.Password(); hasPass {
+			creds += ":…"
+		}
+		creds += "@"
+	}
+	return u.Scheme + "://" + creds + u.Host
 }

@@ -85,7 +85,7 @@ func TestExportWorksWithoutLogFile(t *testing.T) {
 }
 
 func TestSanitizeConfigMarksEmptyClientID(t *testing.T) {
-	out := sanitizeConfig([]byte(`{"spotify_client_id":""}`))
+	out := sanitizeConfig([]byte(`{"spotify_client_id":""}`), &logx.Redactor{})
 
 	var raw map[string]any
 	if err := json.Unmarshal(out, &raw); err != nil {
@@ -93,6 +93,28 @@ func TestSanitizeConfigMarksEmptyClientID(t *testing.T) {
 	}
 	if raw["spotify_client_id"] != "(не заполнен)" {
 		t.Fatalf("пустой Client ID должен быть виден как незаполненный, а там %v", raw["spotify_client_id"])
+	}
+}
+
+// Архив уходит другу в Telegram и остаётся там навсегда. Ключи донат-сервисов
+// и пароль от прокси в него попадать не должны — раньше попадали.
+func TestSanitizeConfigHidesRealSecrets(t *testing.T) {
+	in := `{
+		"donatepay_key": "секретный-ключ-донатпей",
+		"donatex_key": "секретный-ключ-донатикс",
+		"spotify_proxy": "http://vasya:parol123@127.0.0.1:8080"
+	}`
+	out := string(sanitizeConfig([]byte(in), &logx.Redactor{}))
+
+	for _, secret := range []string{"секретный-ключ-донатпей", "секретный-ключ-донатикс", "parol123"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("секрет %q уехал в архив: %s", secret, out)
+		}
+	}
+	// Сам адрес прокси нужен для разбора: без него непонятно, куда ходило
+	// приложение и почему Spotify молчал.
+	if !strings.Contains(out, "127.0.0.1:8080") {
+		t.Fatalf("адрес прокси должен остаться виден: %s", out)
 	}
 }
 

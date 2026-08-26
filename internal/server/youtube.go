@@ -6,6 +6,7 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
+	"songrequest/internal/links"
 	"songrequest/internal/queue"
 	"songrequest/internal/twitch"
 	"songrequest/internal/youtube"
@@ -64,14 +65,25 @@ func (s *Server) tryYouTube(ctx context.Context, r twitch.Redemption, query stri
 		return false
 	}
 
-	// Ссылку отдаём как есть: искать по ней бессмысленно, зритель уже
-	// сказал, что именно хочет.
+	// По ссылке не ищем: зритель уже сказал, что именно хочет. Но отдавать
+	// yt-dlp то, что зритель написал, нельзя — только собранный нами заново
+	// адрес.
+	//
+	// Раньше здесь стояла проверка «в тексте есть youtube.com/» и текст
+	// уезжал в yt-dlp как есть. Зритель мог написать заказ вида
+	// «--config-location=\чужой-сервер\yt.conf youtube.com/»: это один
+	// элемент командной строки, начинающийся с двух минусов, и yt-dlp
+	// разбирает его как свой ключ, а не как адрес ролика. То есть чужой
+	// человек через заказ за баллы подсовывал стримеру настройки yt-dlp на
+	// его же компьютере — а yt-dlp у нас ещё и ходит в куки браузера.
+	// links.Find достаёт из текста только одиннадцать знаков
+	// идентификатора и собирает адрес сам, так что подставить туда нечего.
 	var (
 		track *youtube.Track
 		err   error
 	)
-	if youtube.IsLink(r.UserInput) {
-		track, err = s.youtube.Lookup(ctx, r.UserInput)
+	if link, ok := links.Find(r.UserInput); ok && link.Kind == links.YouTube {
+		track, err = s.youtube.Lookup(ctx, link.URL)
 	} else {
 		track, err = s.youtube.Search(ctx, query)
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -158,7 +159,9 @@ func (p *Player) runYtdlp(ctx context.Context, ytdlp, browser, target string) (o
 	if browser != "" {
 		args = append(args, "--cookies-from-browser", browser)
 	}
-	args = append(args, target)
+	// «--» отделяет ключи от адреса: что бы ни пришло в target, дальше это
+	// уже не может быть прочитано как ключ yt-dlp.
+	args = append(args, "--", target)
 
 	cmd := exec.CommandContext(ctx, ytdlp, args...)
 	hideWindow(cmd)
@@ -260,12 +263,20 @@ func parseInfo(out []byte) (*Track, error) {
 	return t, nil
 }
 
-// isLink распознаёт ссылку на ролик: по ней искать бессмысленно, зритель
-// уже сказал, что именно хочет.
+// IsLink распознаёт ссылку на ролик: по ней искать бессмысленно, зритель уже
+// сказал, что именно хочет.
+//
+// Проверка строгая — по идентификатору ролика, а не по «в тексте где-то есть
+// youtube.com». Нестрогая пропускала заказ вида «--ключ-yt-dlp youtube.com/»,
+// который уезжал в командную строку целиком. Кто решает по этой проверке, что
+// делать с текстом, обязан ещё и собрать адрес заново: см. links.Find.
 func IsLink(s string) bool {
-	s = strings.ToLower(s)
-	return strings.Contains(s, "youtube.com/") || strings.Contains(s, "youtu.be/")
+	return videoID.MatchString(s)
 }
+
+// videoID — тот же разбор, что и в internal/links: одиннадцать знаков
+// идентификатора и ничего больше.
+var videoID = regexp.MustCompile(`(?i)(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/)|youtu\.be/|music\.youtube\.com/watch\?(?:.*&)?v=)([a-zA-Z0-9_\-]{11})`)
 
 // Play включает звук ролика через mpv.
 //
@@ -295,7 +306,8 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	if b := p.browser(); b != "" {
 		args = append(args, "--ytdl-raw-options=cookies-from-browser="+b)
 	}
-	args = append(args, url)
+	// Тот же разделитель, что и у yt-dlp: адрес не должен превратиться в ключ.
+	args = append(args, "--", url)
 
 	cmd := exec.Command(mpv, args...)
 	hideWindow(cmd)

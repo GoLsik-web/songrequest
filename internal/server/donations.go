@@ -116,7 +116,7 @@ func (s *Server) onDonation(d donations.Donation) {
 		TrackID:    res.Track.ID,
 		URI:        res.Track.URI,
 		Title:      res.Track.Title,
-		Artist:     res.Track.Artists[0],
+		Artist:     firstArtist(res.Track.Artists),
 		DurationMs: res.Track.DurationMs,
 		CoverURL:   res.Track.CoverURL,
 		Uncertain:  res.Uncertain,
