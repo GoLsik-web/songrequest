@@ -14,6 +14,20 @@ import (
 // понимает пакет match: он ничего не знает про Spotify, и это позволяет
 // проверять весь подбор обычными тестами, без сети.
 func (c *Client) SearchTracks(ctx context.Context, query string, limit int) ([]match.Candidate, error) {
+	return c.searchTracks(ctx, query, limit, c.country())
+}
+
+// SearchTracksAnywhere ищет в обход страны аккаунта.
+//
+// Нужен ровно для одного: объяснить отказ. Если обычный поиск не нашёл
+// ничего, а этот находит, значит трек в Spotify есть, но в стране стримера
+// не издан, — и зрителю надо сказать именно это, а не «такого трека нет».
+// Играть найденное здесь нельзя: Spotify откажет при попытке включить.
+func (c *Client) SearchTracksAnywhere(ctx context.Context, query string, limit int) ([]match.Candidate, error) {
+	return c.searchTracks(ctx, query, limit, "")
+}
+
+func (c *Client) searchTracks(ctx context.Context, query string, limit int, market string) ([]match.Candidate, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
@@ -45,7 +59,19 @@ func (c *Client) SearchTracks(ctx context.Context, query string, limit int) ([]m
 		} `json:"tracks"`
 	}
 
+	// Страну задаём в самом запросе — так же, как это делает заказ по ссылке.
+	//
+	// Раньше поиск шёл без market и сам отсеивал кандидатов по списку
+	// available_markets. Из-за этого два пути расходились: по ссылке Spotify
+	// сам подбирал издание, годное для страны аккаунта, и отвечал
+	// «is_playable: true», а поиск видел исходное издание, в списке стран
+	// которого нужной не было, и выбрасывал верный трек. Со стороны это
+	// выглядело как «ссылкой заказать можно, а текстом — нет вообще»: ровно
+	// то, на что жаловался тестер.
 	path := "/search?type=track&limit=" + strconv.Itoa(limit) + "&q=" + url.QueryEscape(query)
+	if market != "" {
+		path += "&market=" + url.QueryEscape(market)
+	}
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}

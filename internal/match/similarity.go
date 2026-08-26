@@ -82,7 +82,10 @@ func tokenSetRatio(a, b string) float64 {
 		}
 		// Слово могло быть написано с опечаткой, в другой форме или на слух.
 		for other := range tb {
-			if len(token) > 3 && len(other) > 3 && looseRatio(token, other) > 0.82 {
+			// Длину меряем в буквах, а не в байтах. С байтами правило
+			// работало наоборот: кириллическое «по» — это 4 байта и оно
+			// проходило, а латинское «sun» — 3 байта и отбрасывалось.
+			if len([]rune(token)) > 3 && len([]rune(other)) > 3 && looseRatio(token, other) > 0.82 {
 				shared++
 				break
 			}

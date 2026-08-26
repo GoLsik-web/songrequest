@@ -13,6 +13,17 @@ type Searcher interface {
 	SearchTracks(ctx context.Context, query string, limit int) ([]Candidate, error)
 }
 
+// AnywhereSearcher умеет искать в обход страны аккаунта.
+//
+// Нужен только чтобы объяснить отказ. Обычный поиск теперь спрашивает Spotify
+// уже с учётом страны, поэтому кандидатов «не из этой страны» в пуле больше
+// не бывает — а сказать зрителю «трек есть, но не в стране стримера» всё
+// равно надо: это единственный отказ, который стример может исправить
+// (сменить аккаунт), и без него он месяц ищет поломку в поиске.
+type AnywhereSearcher interface {
+	SearchTracksAnywhere(ctx context.Context, query string, limit int) ([]Candidate, error)
+}
+
 // Options — пороги и веса.
 type Options struct {
 	// Accept — выше этого берём молча.
@@ -84,7 +95,17 @@ func fits(req Request, c Candidate, opts Options) bool {
 			score = alt
 		}
 	}
-	return score.Total >= opts.Maybe
+	// Планка ниже боевого порога, и это нарочно. Здесь решается не «играть
+	// ли этот трек», а «стоит ли назвать причиной страну». Сравнение с
+	// opts.Maybe глушило самый информативный диагноз: трек и правда есть
+	// только в другой стране, но до порога он чуть-чуть не дотянул — и
+	// зритель получал «такого трека нет», а стример месяц искал поломку в
+	// поиске.
+	bar := opts.Maybe
+	if bar > 0.4 {
+		bar = 0.4
+	}
+	return score.Total >= bar
 }
 
 // Find ищет заказанный трек.
@@ -151,6 +172,10 @@ func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, e
 		if len(pool) == 0 && lastErr != nil {
 			return result, lastErr
 		}
+		// Ничего не нашлось — прежде чем сказать «такого трека нет»,
+		// проверим, не дело ли в стране. Один лишний запрос, и только здесь,
+		// в пути отказа: заказ всё равно уже пропал.
+		result.AbroadOnly += abroadOnly(ctx, s, req, opts)
 		result.Rejected = topRejected(req, pool, opts)
 		return result, nil
 	}
@@ -327,4 +352,43 @@ func topRejected(req Request, pool map[string]Candidate, opts Options) []Rejecte
 		})
 	}
 	return out
+}
+
+// abroadOnly проверяет, не отсеяла ли трек страна аккаунта.
+//
+// Отдельным запросом и только когда поиск уже провалился: Spotify с заданной
+// страной просто не показывает такие треки, и по пустому пулу отличить
+// «трека нет» от «трека нет здесь» невозможно.
+func abroadOnly(ctx context.Context, s Searcher, req Request, opts Options) int {
+	if opts.Market == "" {
+		return 0
+	}
+	anywhere, ok := s.(AnywhereSearcher)
+	if !ok {
+		return 0
+	}
+
+	q := ""
+	for _, candidate := range queries(req) {
+		if candidate != "" {
+			q = candidate
+			break
+		}
+	}
+	if q == "" {
+		return 0
+	}
+
+	found, err := anywhere.SearchTracksAnywhere(ctx, q, 20)
+	if err != nil {
+		return 0
+	}
+
+	n := 0
+	for _, c := range found {
+		if fits(req, c, opts) {
+			n++
+		}
+	}
+	return n
 }
