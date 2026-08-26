@@ -9,6 +9,7 @@ import (
 
 	"songrequest/internal/donations"
 	"songrequest/internal/errs"
+	"songrequest/internal/links"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
 	"songrequest/internal/secrets"
@@ -79,12 +80,41 @@ func (s *Server) onDonation(d donations.Donation) {
 
 	s.state.Notify("info", "Донат "+money+" от "+d.Username+": "+text)
 
-	req := match.Parse(text)
+	// Ссылка важнее текста — ровно так же, как в заказе за баллы.
+	//
+	// Раньше этого здесь не было вовсе: сообщение доната уходило в Spotify
+	// целиком, вместе с адресом. Зритель донатил пятьсот рублей со ссылкой
+	// на трек и получал «такого трека в Spotify не нашлось», а деньги при
+	// этом не возвращаются. Заказ за те же баллы с той же ссылкой работал.
+	link, hasLink := s.fromLink(ctx, text)
+	if hasLink && link.Track != nil {
+		s.enqueueDonation(ctx, d, text, *link.Track, false)
+		return
+	}
+	if hasLink && link.YouTube != nil {
+		item := *link.YouTube
+		item.Source = queue.SourceDonation
+		item.Requester = d.Username
+		item.RawRequest = text
+		s.enqueue(ctx, item)
+		return
+	}
+
+	// Адрес в поисковом запросе бесполезен всегда — и когда мы ссылку
+	// разобрали, и когда она от незнакомого сервиса.
+	search := links.Strip(text)
+	if hasLink && link.Query != "" {
+		search = link.Query
+	}
+
+	req := match.Parse(search)
 	if req.Title == "" {
+		s.say(ctx, "@"+d.Username+", спасибо за донат! Не понял, что заказываешь — напиши стримеру.")
 		return
 	}
 
 	opts := matchOptionsFromConfig(cfg)
+	opts.WantMs = link.WantMs
 	// Та же поправка на страну, что и у заказов за баллы: трек, не изданный
 	// в стране аккаунта, всё равно не заиграет — незачем ставить его в
 	// очередь и обещать зрителю то, чего не будет.
@@ -106,20 +136,27 @@ func (s *Server) onDonation(d donations.Donation) {
 		return
 	}
 
-	// Заказ за донат в очередь ставится без возврата: денег вернуть нельзя,
-	// поэтому и поле редемпшена пустое.
+	s.enqueueDonation(ctx, d, text, res.Track, res.Uncertain)
+}
+
+// enqueueDonation ставит в очередь трек, заказанный донатом.
+//
+// Без возврата: денег вернуть нельзя, поэтому и поле редемпшена пустое.
+func (s *Server) enqueueDonation(ctx context.Context, d donations.Donation,
+	text string, track match.Candidate, uncertain bool) {
+
 	s.enqueue(ctx, queue.Item{
 		Source:     queue.SourceDonation,
 		Requester:  d.Username,
 		RawRequest: text,
 		Provider:   "spotify",
-		TrackID:    res.Track.ID,
-		URI:        res.Track.URI,
-		Title:      res.Track.Title,
-		Artist:     firstArtist(res.Track.Artists),
-		DurationMs: res.Track.DurationMs,
-		CoverURL:   res.Track.CoverURL,
-		Uncertain:  res.Uncertain,
+		TrackID:    track.ID,
+		URI:        track.URI,
+		Title:      track.Title,
+		Artist:     firstArtist(track.Artists),
+		DurationMs: track.DurationMs,
+		CoverURL:   track.CoverURL,
+		Uncertain:  uncertain,
 	})
 }
 

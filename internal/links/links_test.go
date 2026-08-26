@@ -118,3 +118,37 @@ func TestStripRemovesLinks(t *testing.T) {
 		}
 	}
 }
+
+// Зритель за баллы может написать что угодно, и адрес из его заказа
+// приложение открывает само — со своего компьютера и с куками стримера.
+// Раньше домен искался подстрокой в любом месте адреса, включая путь.
+func TestForeignHostIsNotOurs(t *testing.T) {
+	bad := []string{
+		"https://192.168.1.1/music.yandex.ru/track/1",
+		"https://злой.example/vk.com/audio",
+		"http://127.0.0.1:8977/youtube.com/watch?v=dQw4w9WgXcQ",
+		"https://notvk.com/audio1_2",
+		"https://злойyoutube.com/watch?v=dQw4w9WgXcQ",
+	}
+	for _, raw := range bad {
+		if link, ok := Find(raw); ok {
+			t.Errorf("%q принято за свою ссылку: %s %s", raw, link.Kind, link.URL)
+		}
+	}
+}
+
+// А настоящие ссылки, в том числе с поддомена, разбираться обязаны.
+func TestRealHostsStillParse(t *testing.T) {
+	good := map[string]Kind{
+		"https://music.yandex.ru/album/1/track/2":       Yandex,
+		"https://vk.com/audio1_2":                       VK,
+		"https://m.youtube.com/watch?v=dQw4w9WgXcQ":     YouTube,
+		"https://music.youtube.com/watch?v=dQw4w9WgXcQ": YouTube,
+	}
+	for raw, kind := range good {
+		link, ok := Find(raw)
+		if !ok || link.Kind != kind {
+			t.Errorf("%q не разобралось как %s (получили %q, %v)", raw, kind, link.Kind, ok)
+		}
+	}
+}

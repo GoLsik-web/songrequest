@@ -67,21 +67,55 @@ func Find(text string) (Link, bool) {
 	// Зрители часто копируют ссылку вместе с точкой или скобкой в конце.
 	raw = strings.TrimRight(raw, ".,;:!?)]}»\"'")
 
-	switch {
-	case youtubeID.MatchString(raw):
-		id := youtubeID.FindStringSubmatch(raw)[1]
-		return Link{Kind: YouTube, ID: id, URL: "https://www.youtube.com/watch?v=" + id}, true
+	// Дальше решаем по настоящему имени хоста, а не по подстроке в адресе.
+	//
+	// Раньше здесь искалось «music.yandex.» и «vk.com/» где угодно в строке —
+	// в том числе в пути. Зритель за баллы писал заказ вида
+	// «https://192.168.1.1/music.yandex.ru/track/1», приложение объявляло это
+	// Яндекс.Музыкой и уходило читать страницу с адреса, который он выбрал:
+	// с компьютера стримера, из его домашней сети. С «vk.com/» в пути тот же
+	// адрес уезжал в yt-dlp, который ходит с куками из браузера стримера.
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return Link{}, false
+	}
+	host := strings.ToLower(u.Hostname())
 
-	case yandexTrack.MatchString(raw):
+	switch {
+	case hostIn(host, "youtube.com", "youtu.be", "music.youtube.com"):
+		m := youtubeID.FindStringSubmatch(raw)
+		if m == nil {
+			return Link{}, false
+		}
+		return Link{Kind: YouTube, ID: m[1], URL: "https://www.youtube.com/watch?v=" + m[1]}, true
+
+	case host == "music.yandex.ru" || host == "music.yandex.com" ||
+		host == "music.yandex.by" || host == "music.yandex.kz" || host == "music.yandex.uz":
 		m := yandexTrack.FindStringSubmatch(raw)
+		if m == nil {
+			return Link{}, false
+		}
 		id := firstFilled(m[2], m[3])
 		return Link{Kind: Yandex, ID: id, URL: clean(raw)}, true
 
-	case vkAny.MatchString(raw):
+	case hostIn(host, "vk.com", "vk.ru", "vkvideo.ru"):
 		return Link{Kind: VK, URL: clean(raw)}, true
 	}
 
 	return Link{}, false
+}
+
+// hostIn сверяет имя хоста со списком: сам домен или что-то под ним.
+//
+// Суффиксное сравнение обязательно с точкой: без неё «злойyoutube.com» и
+// «notvk.com» прошли бы как свои.
+func hostIn(host string, domains ...string) bool {
+	for _, d := range domains {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 // Strip убирает из текста любые адреса — остаётся то, что зритель написал

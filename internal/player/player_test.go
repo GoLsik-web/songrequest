@@ -17,7 +17,7 @@ import (
 type fakeSpotify struct {
 	mu sync.Mutex
 
-	played   []string
+	played []string
 	// devices — на какое устройство уходил каждый запуск заказа.
 	devices  []string
 	captured int

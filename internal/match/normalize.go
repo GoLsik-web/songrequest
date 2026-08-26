@@ -110,7 +110,7 @@ func collapseSpaces(s string) string { return strings.Join(strings.Fields(s), " 
 var junkPatterns = []*regexp.Regexp{
 	// Скобочные пометки про клип и звук, на двух языках.
 	regexp.MustCompile(`(?i)[\(\[\{]\s*(?:official\s+)?(?:music\s+)?(?:video|audio|visualizer|visualiser|lyrics?|lyric\s+video|mv|clip|version\s+officielle)\s*[\)\]\}]`),
-	regexp.MustCompile(`(?i)[\(\[\{]\s*(?:официальн\p{Cyrillic}*\s+)?(?:клип|видео|аудио|премьера(?:\s+клипа)?|текст(?:\s+песни)?|слова|минус)\s*[\)\]\}]`),
+	regexp.MustCompile(`(?i)[\(\[\{]\s*(?:официальн\p{Cyrillic}*\s+)?(?:клип|видео|аудио|премьера(?:\s+клипа)?|текст(?:\s+песни)?|слова)\s*[\)\]\}]`),
 	// Пометки о качестве и формате.
 	regexp.MustCompile(`(?i)\b(?:full\s*hd|hd|hq|4k|8k|1080p?|720p?|remaster(?:ed)?\s*hd)\b`),
 	// Годы в скобках: (2019), [2019].
