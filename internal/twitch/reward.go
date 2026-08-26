@@ -16,6 +16,11 @@ type Reward struct {
 	Cost      int    `json:"cost"`
 	Prompt    string `json:"prompt"`
 	IsEnabled bool   `json:"is_enabled"`
+	// IsPaused — награду можно приостановить, и тогда зрители её не нажмут.
+	// Приложение так делает по кнопке «Пауза», и раньше это переживало
+	// перезапуск: следующий стрим начинался с серой награды, заказов не
+	// было весь эфир, а панель показывала «Награда готова».
+	IsPaused bool `json:"is_paused"`
 	// InputRequired обязателен: без текста от зрителя заказывать нечего.
 	InputRequired bool `json:"is_user_input_required"`
 }
@@ -130,7 +135,7 @@ func (c *Client) findReward(ctx context.Context, broadcasterID, rewardID string)
 func (c *Client) updateReward(ctx context.Context, broadcasterID string, reward *Reward,
 	title string, cost int) (*Reward, error) {
 
-	if reward.Title == title && reward.Cost == cost && reward.IsEnabled {
+	if reward.Title == title && reward.Cost == cost && reward.IsEnabled && !reward.IsPaused {
 		return reward, nil
 	}
 
@@ -140,6 +145,9 @@ func (c *Client) updateReward(ctx context.Context, broadcasterID string, reward 
 		"title":      title,
 		"cost":       cost,
 		"is_enabled": true,
+		// Паузу снимаем всегда: приложение при запуске считает, что заказы
+		// принимаются, и награда на канале обязана думать так же.
+		"is_paused": false,
 	}
 
 	var out struct {

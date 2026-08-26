@@ -88,9 +88,6 @@ type Server struct {
 	eventsReward string
 	stopEvents   context.CancelFunc
 	ctx          context.Context
-	// daCancel гасит подключение к DonationAlerts. Нужен, чтобы повторный
-	// вход не оставлял позади ещё один живой вебсокет.
-	daCancel context.CancelFunc
 
 	// skipActor — кто оборвал текущий заказ. Живёт до конца этого заказа:
 	// историю пишет плеер, а имя человека знает только панель.
@@ -314,15 +311,28 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
-	var incoming config.Config
+	// Начинаем с текущих настроек, а не с пустой структуры.
+	//
+	// Раньше сюда разбирался нулевой config.Config, и всё, чего не оказалось
+	// в теле запроса, молча становилось нулём и уезжало на диск. Панель
+	// показывает не все поля: пороги подбора и веса оценок она не знает
+	// вовсе. Достаточно было один раз сохранить настройки из старой вкладки
+	// (или из чужого скрипта), и match_accept с match_maybe обнулялись —
+	// после чего текстовый заказ либо не находил ничего никогда, либо
+	// принимал первый попавшийся трек. Починить это из панели было нельзя:
+	// полей в ней нет, а переживало оно перезапуск.
+	current := s.cfg.Get()
+	incoming := current
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&incoming); err != nil {
 		http.Error(w, "не разобрал настройки", http.StatusBadRequest)
 		return
 	}
 
 	// Порт меняется только при перезапуске, поэтому текущий сохраняем как есть.
-	current := s.cfg.Get()
 	incoming.Port = current.Port
+	// А пороги подбора чиним, даже если их прислали испорченными: заказ по
+	// тексту не должен зависеть от того, что кто-то записал в config.json.
+	incoming.NormalizeMatching()
 
 	// Вкладка могла быть открыта до того, как приложение само нашло прокси.
 	// Тогда она пришлёт пустое поле и затрёт находку. Пустое значение здесь
@@ -340,6 +350,10 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	// на канале оставалась старая, и выглядело это как «настройки не работают».
 	rewardChanged := incoming.RewardTitle != current.RewardTitle ||
 		incoming.RewardCost != current.RewardCost
+	// Ключи донат-сервисов: вставил в панели — подключение обязано подняться
+	// сейчас, а не после перезапуска приложения.
+	donatePayChanged := incoming.DonatePayKey != current.DonatePayKey
+	donateXChanged := incoming.DonateXKey != current.DonateXKey
 
 	if err := s.cfg.Update(func(c *config.Config) { *c = incoming }); err != nil {
 		s.log.Error("сохранение настроек", "ошибка", err)
@@ -354,6 +368,12 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if rewardChanged {
 		go s.pushReward()
+	}
+	if donatePayChanged {
+		s.donations.Restart("DonatePay")
+	}
+	if donateXChanged {
+		s.donations.Restart("DonateX")
 	}
 	// Настройки, которые раньше читались только при запуске: задержка
 	// возврата, «дожидаться конца трека», устройство и браузер для YouTube.

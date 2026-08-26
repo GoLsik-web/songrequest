@@ -207,33 +207,17 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) error {
 	return json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(v)
 }
 
-// Одно подключение к DonationAlerts, а не сколько нажали.
+// Подключениями заведует хаб, и только он.
 //
-// Раньше каждый успешный вход запускал ещё одну горутину с вебсокетом, и
-// ничем её было не остановить: вошёл дважды — два подключения до конца
-// работы приложения, а после «Отключить» цикл жил дальше и упорно
-// перекрашивал только что погасшую лампочку обратно в красное.
+// Раньше DonationAlerts поднимался двумя путями сразу: хабом при старте и
+// отдельной горутиной сервера при каждом входе. Отсюда два вебсокета после
+// повторного входа и лампочка, которая после «Отключить» сама загоралась
+// красным — гасили-то один из двух. Теперь и старт, и вход, и выход идут
+// через Restart/Stop хаба, а DonatePay с DonateX получили то же самое: до
+// этого вставленный в настройках ключ не значил ничего до перезапуска.
 
 // restartDonationAlerts поднимает подключение, погасив прежнее.
-func (s *Server) restartDonationAlerts() {
-	s.stopDonationAlerts()
-
-	ctx, cancel := context.WithCancel(s.baseContext())
-	s.mu.Lock()
-	s.daCancel = cancel
-	s.mu.Unlock()
-
-	go s.donationAlerts.Run(ctx, s.donations.Handle)
-}
+func (s *Server) restartDonationAlerts() { s.donations.Restart("DonationAlerts") }
 
 // stopDonationAlerts гасит подключение, если оно было.
-func (s *Server) stopDonationAlerts() {
-	s.mu.Lock()
-	cancel := s.daCancel
-	s.daCancel = nil
-	s.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-}
+func (s *Server) stopDonationAlerts() { s.donations.Stop("DonationAlerts") }

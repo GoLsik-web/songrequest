@@ -307,6 +307,13 @@ func parseDonateX(raw json.RawMessage) (Donation, bool) {
 	if err := json.Unmarshal(raw, &p); err != nil || p.Username == "" {
 		return Donation{}, false
 	}
+	if p.IsTest {
+		// Тестовый донат — это проверка виджетов перед стримом, а не заказ.
+		// Раньше поле разбиралось и не использовалось: стример жал в панели
+		// DonateX «отправить тестовый донат» и получал настоящий трек в
+		// очереди, перебивающий музыку в эфире.
+		return Donation{}, false
+	}
 
 	amount := p.AmountInRub
 	if amount == 0 {
@@ -334,7 +341,7 @@ func parseDonateX(raw json.RawMessage) (Donation, bool) {
 	}
 
 	return Donation{
-		ID:       fmt.Sprint(p.ID),
+		ID:       donationID(p.ID),
 		Source:   "donatex",
 		Username: p.Username,
 		Message:  message,

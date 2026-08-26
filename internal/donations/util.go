@@ -2,6 +2,7 @@ package donations
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -29,4 +30,21 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// donationID превращает идентификатор доната в строку.
+//
+// Отдельная функция, потому что fmt.Sprint по незаполненному полю типа any
+// даёт строку «<nil>» — непустую и на вид нормальную. Такой ключ проходил
+// проверку на повторы, и все следующие донаты этого сервиса целый час
+// молча считались повторами: зелёная лампочка и ни одного заказа.
+func donationID(v any) string {
+	if v == nil {
+		return ""
+	}
+	s := fmt.Sprint(v)
+	if s == "<nil>" {
+		return ""
+	}
+	return s
 }
