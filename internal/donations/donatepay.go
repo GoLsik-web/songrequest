@@ -219,7 +219,7 @@ func parseDonatePay(raw json.RawMessage) (Donation, bool) {
 	}
 
 	return Donation{
-		ID:       fmt.Sprint(p.Notification.ID),
+		ID:       donationID(p.Notification.ID),
 		Source:   "donatepay",
 		Username: p.Notification.Vars.Name,
 		Message:  p.Notification.Vars.Comment,
