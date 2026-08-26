@@ -272,10 +272,21 @@ func (s *Server) refund(ctx context.Context, item queue.Item, reason string) {
 	s.state.SetRedemptionStatus(item.RedemptionID, app.OrderRefunded)
 }
 
-// skipCurrent обрывает текущий трек.
+// skipCurrent обрывает текущий трек — или прекращает ожидание конца трека
+// стримера, если заказ ещё не заиграл.
+//
+// Второе так же важно, как первое: заказ может ждать конца чужого трека
+// минутами, и скип — единственная кнопка, которой это ускоряют. Раньше здесь
+// стояло только `if now == nil { return }`, поэтому во время ожидания и
+// кнопка в панели, и !скип в чате молча ничего не делали.
 func (s *Server) skipCurrent(actor string) {
 	now := s.player.Now()
 	if now == nil {
+		if !s.player.Waiting() {
+			return
+		}
+		s.state.Notify("info", actor+" не стал ждать конца трека — включаю заказ")
+		s.player.Skip()
 		return
 	}
 	// Историю пишет плеер, когда трек действительно закончится: отсюда её

@@ -82,7 +82,7 @@ type Player struct {
 	OnWaiting func(item queue.Item, left time.Duration)
 
 	// Обратные вызовы наружу: пакет не знает ни про панель, ни про Twitch.
-	OnChange   func()
+	OnChange func()
 	// OnFinished — заказ закончился. natural=false означает «оборвали»:
 	// скипнули из панели или переключили музыку прямо в Spotify. Отличать
 	// это обязательно: оборванный заказ — не «отыгравший».
@@ -104,9 +104,11 @@ type Player struct {
 	restoreTries int
 	snap         *spotify.Snapshot
 	paused       bool
-	wake         chan struct{}
-	skip         chan struct{}
-	running      bool
+	// waiting — заказ взят, но ждёт конца трека стримера.
+	waiting bool
+	wake    chan struct{}
+	skip    chan struct{}
+	running bool
 }
 
 // SetYouTube подключает запасной проигрыватель.
@@ -130,10 +132,33 @@ func New(q *queue.Queue, sp Spotify, log *logx.Logger) *Player {
 }
 
 // Now отдаёт текущий заказ.
+//
+// Копией, а не указателем: снаружи Elapsed() читает StartedAt, а перемотка
+// двигает это же поле из горутины очереди. Отдавать живую структуру значит
+// отдавать гонку.
 func (p *Player) Now() *Now {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.now
+	if p.now == nil {
+		return nil
+	}
+	n := *p.now
+	return &n
+}
+
+// Waiting сообщает, что заказ уже взят в работу, но ждёт конца трека
+// стримера. Для панели и для чата это «сейчас играет» в смысле «есть что
+// торопить скипом».
+func (p *Player) Waiting() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.waiting
+}
+
+func (p *Player) setWaiting(v bool) {
+	p.mu.Lock()
+	p.waiting = v
+	p.mu.Unlock()
 }
 
 // Snapshot отдаёт запомненное состояние Spotify.
@@ -251,7 +276,14 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 	// Spotify успевает перевести стрелку на следующий трек плейлиста, и
 	// возврат приведёт туда, где музыка и была бы без заказа.
 	if p.Snapshot() == nil {
+		// Пока идёт ожидание, наружу надо показывать, что заказ уже в работе.
+		// Без этого «Скип» в панели и !скип в чате молчали: оба начинаются с
+		// проверки Now()!=nil, а во время ожидания Now() ещё пуст. Стример
+		// видел «заиграет примерно через три минуты» и не мог это ускорить
+		// ничем — при том что сам скип ожидание прерывать умеет.
+		p.setWaiting(true)
 		p.waitForOwnTrack(ctx, item)
+		p.setWaiting(false)
 		if ctx.Err() != nil {
 			return
 		}
@@ -405,6 +437,9 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 	// paused — сколько в сумме простояли на паузе. Своя мерка, отдельная от
 	// общего срока: пауза не должна его растягивать без предела.
 	var paused time.Duration
+	// wasPaused — на прошлой проверке музыка стояла. Тогда сменившийся трек
+	// означает «переключил человек», а не «доиграл сам».
+	var wasPaused bool
 
 	for ctx.Err() == nil {
 		if time.Now().After(deadline) {
@@ -420,7 +455,7 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 		// после сна, — это уже не наш заказ, а то, чем Spotify продолжил сам.
 		// Отличать это от «стример переключил руками» приходится здесь:
 		// позже, из возврата, чужой трек выглядит одинаково в обоих случаях.
-		toEnd := nap+2*time.Second >= left
+		toEnd := nap+2*time.Second >= left && !wasPaused
 
 		if !p.napOrWake(ctx, nap) {
 			p.log.Info("заказ скипнут", "трек", item.Title)
@@ -468,9 +503,29 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 					"трек", item.Artist+" — "+item.Title)
 				return false
 			}
-			deadline = time.Now().Add(maxPause - paused + time.Minute)
-			left = p.step()
+
+			// Срок только продлеваем, никогда не сокращаем.
+			//
+			// Раньше здесь стояло `deadline = time.Now().Add(...)`, то есть
+			// срок пересчитывался заново и переставал зависеть от остатка
+			// трека. Десятиминутный заказ, поставленный на паузу на десятой
+			// секунде, получал срок «шесть минут от сих» — и ровно на шестой
+			// минуте обрывался посреди песни, а в историю писался как
+			// «отыгравший». Стример при этом ничего не нажимал.
+			if until := time.Now().Add(left + maxPause - paused); until.After(deadline) {
+				deadline = until
+			}
+
+			// И отмечаем, что музыка стоит: если на следующей проверке в
+			// Spotify окажется другой трек, это переключил человек, а не
+			// «заказ доиграл». Раньше здесь ещё и подменялся остаток
+			// (`left = p.step()`), из-за чего toEnd на паузе выходил всегда
+			// истинным, и оборванный заказ выдавался за отыгравший — вместе
+			// с возвратом музыки поверх того, что стример только что выбрал.
+			wasPaused = true
+			continue
 		}
+		wasPaused = false
 	}
 	return false
 }
