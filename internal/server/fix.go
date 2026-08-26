@@ -120,10 +120,7 @@ func (s *Server) handleQueueFix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	artist := ""
-	if len(track.Artists) > 0 {
-		artist = track.Artists[0]
-	}
+	artist := firstArtist(track.Artists)
 
 	fixed, err := s.queue.Replace(id, queue.Item{
 		Provider: "spotify", TrackID: track.ID, URI: track.URI,
@@ -157,10 +154,7 @@ func (s *Server) rememberFix(ctx context.Context, item queue.Item, track match.C
 		return
 	}
 
-	artist := ""
-	if len(track.Artists) > 0 {
-		artist = track.Artists[0]
-	}
+	artist := firstArtist(track.Artists)
 
 	if err := s.matchCache.Put(ctx, key, match.Hit{
 		TrackID: track.ID, Title: track.Title, Artist: artist,

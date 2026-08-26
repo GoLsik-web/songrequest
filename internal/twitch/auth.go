@@ -371,7 +371,7 @@ func (c *Client) postForm(ctx context.Context, path string, form url.Values, out
 
 		c.log.Error("Twitch отказал во входе",
 			"путь", path, "код_http", resp.StatusCode, "ответ", string(data))
-		return authErrorText(raw.Status, code, raw.Message)
+		return authErrorText(resp.StatusCode, raw.Status, code, raw.Message)
 	}
 
 	if err := json.Unmarshal(data, out); err != nil {
@@ -387,12 +387,33 @@ func (c *Client) postForm(ctx context.Context, path string, form url.Values, out
 }
 
 // authErrorText переводит отказ во входе на человеческий язык.
-func authErrorText(status int, code, message string) error {
+//
+// httpStatus — настоящий код ответа, а status — тот, что Twitch иногда кладёт
+// в тело. Различать их важно: token() стирает вход насовсем на всём, кроме
+// «Twitch не отвечает», «просит подождать» и «ответил непонятным образом», —
+// а раньше 500, 502 и 429 от сервера авторизации сюда не попадали и давали
+// TW-03, то есть сброс входа посреди стрима с требованием заново вводить код
+// с телефона. Ровно та беда, от которой защита писалась.
+func authErrorText(httpStatus, status int, code, message string) error {
+	switch {
+	case httpStatus == http.StatusTooManyRequests:
+		return errs.New(errs.TwitchRateLimit,
+			"Twitch просит подождать. Попробуй ещё раз через минуту.")
+	case httpStatus >= 500:
+		return errs.New(errs.TwitchUnreachable,
+			"У Twitch временные неполадки со входом. Попробуй ещё раз.")
+	}
+	return authErrorReason(status, code, message)
+}
+
+// authErrorReason разбирает уже настоящий отказ — тот, после которого вход
+// действительно надо начинать заново.
+func authErrorReason(status int, code, message string) error {
 	switch code {
 	case "authorization_declined", "access_denied":
 		return errs.New(errs.TwitchAuthPending,
 			"Доступ не выдан: на странице Twitch нажали «Отмена». Попробуй ещё раз.")
-	case "expired_token", "device_code_expired":
+	case "expired_token", "device_code_expired", "invalid device code":
 		return errs.New(errs.TwitchAuthPending,
 			"Код истёк. Нажми «Подключить Twitch» и введи новый.")
 	case "invalid_client":

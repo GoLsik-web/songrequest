@@ -19,10 +19,18 @@ import (
 
 // Секреты узнаём двумя способами. Первый — по форме: так ловятся токены,
 // которых мы ещё не видели, например внутри чужого JSON-ответа.
+// Про поле "code" отдельно: его здесь нет нарочно.
+//
+// Раньше оно стояло в первом шаблоне — и лог терял ровно то, ради чего он
+// пишется. Spotify, Twitch и донат-сервисы кладут в JSON-поле "code" причину
+// отказа: "NO_ACTIVE_DEVICE", "PREMIUM_REQUIRED" и тому подобное. Вместо них
+// в логе оказывалось «СКРЫТО», и разобрать чужую проблему по такому логу
+// было невозможно. Одноразовый код входа живёт секунды и приходит в адресе,
+// а не в JSON, — его ловит третий шаблон.
 var patterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)("(?:access_token|refresh_token|code_verifier|code|id_token|client_secret)"\s*:\s*")([^"]{4,})(")`),
+	regexp.MustCompile(`(?i)("(?:access_token|refresh_token|code_verifier|device_code|id_token|client_secret|token|api_key)"\s*:\s*")([^"]{4,})(")`),
 	regexp.MustCompile(`(?i)(bearer\s+)([A-Za-z0-9._\-]{12,})`),
-	regexp.MustCompile(`(?i)((?:access_token|refresh_token|code_verifier|client_secret)=)([^&\s]{4,})`),
+	regexp.MustCompile(`(?i)((?:access_token|refresh_token|code_verifier|client_secret|device_code|code)=)([^&\s]{4,})`),
 	// Почта стримера — не секрет, но и не то, что стоит пересылать вместе
 	// с логом. В панели она видна, в архиве — нет.
 	regexp.MustCompile(`(?i)("email"\s*:\s*")([^"]{3,})(")`),

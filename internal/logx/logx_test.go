@@ -3,6 +3,7 @@ package logx
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -101,5 +102,23 @@ func TestLogRotatesWhileRunning(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, LogFileName+".1")); err != nil {
 		t.Fatal("предыдущая часть лога должна сохраниться рядом:", err)
+	}
+}
+
+// Код причины отказа — это то, ради чего лог и читают. Раньше шаблон на поле
+// "code" затирал его вместе с настоящими секретами.
+func TestRedactorKeepsErrorCodes(t *testing.T) {
+	in := `{"error":{"status":404,"message":"Player command failed","reason":"NO_ACTIVE_DEVICE","code":"NO_ACTIVE_DEVICE"}}`
+	out := (&Redactor{}).Clean(in)
+	if !strings.Contains(out, "NO_ACTIVE_DEVICE") {
+		t.Fatalf("причина отказа вычищена из лога: %s", out)
+	}
+}
+
+// А одноразовый код входа в адресе прятать по-прежнему надо.
+func TestRedactorHidesAuthCodeInURL(t *testing.T) {
+	out := (&Redactor{}).Clean("GET /callback?code=AQD3xKq7secret&state=abc")
+	if strings.Contains(out, "AQD3xKq7secret") {
+		t.Fatalf("код входа остался в логе: %s", out)
 	}
 }

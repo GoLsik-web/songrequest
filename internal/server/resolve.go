@@ -149,7 +149,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 
 	s.log.Info("трек найден",
 		"заказ", r.UserInput,
-		"трек", res.Track.Artists[0]+" — "+res.Track.Title,
+		"трек", firstArtist(res.Track.Artists)+" — "+res.Track.Title,
 		"оценка", res.Score.Total, "почему", res.Score.Why,
 		"неточно", res.Uncertain, "кандидатов", res.Considered)
 
@@ -217,10 +217,21 @@ func matchOptionsFromConfig(cfg config.Config) match.Options {
 
 // artistOf — первый артист кандидата или пусто.
 func artistOf(c match.Candidate) string {
-	if len(c.Artists) == 0 {
+	return firstArtist(c.Artists)
+}
+
+// firstArtist — первый артист трека или пустая строка.
+//
+// Отдельная функция, потому что мест, где брали Artists[0] голым, набралось
+// три штуки, и каждое из них зритель может дёрнуть сам: Spotify изредка
+// отдаёт трек без артистов (локальный файл, эпизод подкаста, снятый с
+// продажи трек), и приложение падало целиком. Заказ за баллы, роняющий
+// программу посреди стрима, — это слишком дешёвая цена за одну проверку.
+func firstArtist(names []string) string {
+	if len(names) == 0 {
 		return ""
 	}
-	return c.Artists[0]
+	return names[0]
 }
 
 // afterSearch даёт свежий срок на то, что делается после поиска: возврат

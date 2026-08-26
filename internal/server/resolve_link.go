@@ -43,7 +43,7 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 			return linkResult{}, false
 		}
 		s.log.Info("трек взят по ссылке Spotify",
-			"трек", track.Artists[0]+" — "+track.Title)
+			"трек", firstArtist(track.Artists)+" — "+track.Title)
 		return linkResult{Track: &track}, true
 
 	case links.Yandex:
@@ -108,10 +108,7 @@ func (s *Server) acceptTrack(ctx context.Context, r twitch.Redemption,
 		state = app.MatchUncertain
 	}
 
-	artist := ""
-	if len(track.Artists) > 0 {
-		artist = track.Artists[0]
-	}
+	artist := firstArtist(track.Artists)
 
 	s.state.SetOrderMatch(r.ID, app.OrderMatch{
 		State:    state,

@@ -68,11 +68,17 @@ func TestLiveStreamIsMarked(t *testing.T) {
 
 func TestLinkDetection(t *testing.T) {
 	yes := []string{
-		"https://www.youtube.com/watch?v=abc",
-		"https://youtu.be/abc",
-		"смотри https://YouTube.com/watch?v=abc",
+		"https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		"https://youtu.be/dQw4w9WgXcQ",
+		"смотри https://YouTube.com/watch?v=dQw4w9WgXcQ",
 	}
-	no := []string{"Queen - Bohemian Rhapsody", "https://open.spotify.com/track/x", ""}
+	no := []string{
+		"Queen - Bohemian Rhapsody", "https://open.spotify.com/track/x", "",
+		// Так зритель за баллы подсовывал yt-dlp свои ключи: текст содержит
+		// «youtube.com/», но идентификатора ролика в нём нет.
+		`--config-location=\чужой-сервер\yt.conf youtube.com/`,
+		"youtube.com/",
+	}
 
 	for _, s := range yes {
 		if !IsLink(s) {

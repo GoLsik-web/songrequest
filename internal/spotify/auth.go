@@ -241,6 +241,23 @@ func (c *Client) postToken(ctx context.Context, form url.Values) (*tokenResponse
 		// Полный ответ — в лог: без него разбирать чужую проблему невозможно.
 		// Секреты из него вычистит редактор в logx.
 		c.log.Error("Spotify отказал во входе", "код_http", resp.StatusCode, "ответ", string(body))
+
+		// Разбирать статус здесь обязательно, и вот почему. token() стирает
+		// вход насовсем, увидев код SP-03, — а раньше SP-03 возвращался на
+		// любой не-200, включая 429, 500, 502 и 407 от прокси. Ключ доступа
+		// Spotify живёт час, значит обновление всегда приходится на середину
+		// стрима: одна моргнувшая сеть или пятиминутные неполадки у Spotify —
+		// и стример посреди эфира читает «Слетела авторизация», а очередь
+		// встаёт. Выбрасываем вход, только когда Spotify прямо сказал, что
+		// ключ ему больше не нравится. У Twitch это уже сделано так же.
+		switch {
+		case resp.StatusCode == http.StatusTooManyRequests:
+			return nil, errs.New(errs.SpotifyRateLimit,
+				"Spotify просит подождать. Попробуй ещё раз через минуту.")
+		case resp.StatusCode >= 500:
+			return nil, errs.New(errs.SpotifyUnreachable,
+				"У Spotify временные неполадки со входом. Попробуй ещё раз.")
+		}
 		return nil, errs.New(errs.SpotifyAuthToken, tokenErrorText(body))
 	}
 

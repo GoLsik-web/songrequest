@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -237,17 +238,59 @@ func (s *Server) Serve(ctx context.Context) error {
 // страниц панели, из-за которого после обновления показывалась бы старая версия.
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.Host)
-		if err != nil {
-			host = r.Host
-		}
-		if host != "127.0.0.1" && host != "localhost" && host != "[::1]" && host != "::1" {
+		if !localHost(r.Host) {
 			http.Error(w, "запрос не с этого компьютера", http.StatusForbidden)
 			return
 		}
+
+		// Origin у любого запроса, изменяющего состояние, обязан быть нашим.
+		//
+		// Проверки одного Host мало. Панель открыта в обычном браузере
+		// стримера, а браузер честно исполняет запросы, которые ему велела
+		// сделать любая другая вкладка. Сайт, открытый в соседней вкладке,
+		// мог отправить нам форму или fetch — Host в таком запросе всё равно
+		// наш, — и очистить очередь, разлогинить Spotify или, что хуже
+		// всего, записать в настройки свой адрес прокси: после этого все
+		// запросы к Spotify вместе с ключом доступа пошли бы через чужой
+		// сервер.
+		//
+		// Браузеры на межсайтовый POST заголовок Origin шлют всегда, поэтому
+		// проверять его достаточно; а на своих запросах он равен нашему
+		// адресу. Если Origin нет вовсе (старый браузер, curl, наш же код) —
+		// пропускаем: подделать так может только программа на этом же
+		// компьютере, а у неё и без нас есть все права.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if origin := r.Header.Get("Origin"); origin != "" && !localOrigin(origin) {
+				s.log.Warn("запрос с чужого сайта отклонён", "origin", origin, "путь", r.URL.Path)
+				http.Error(w, "запрос с чужого сайта", http.StatusForbidden)
+				return
+			}
+		}
+
 		w.Header().Set("Cache-Control", "no-store")
+		// Чтобы панель нельзя было спрятать в прозрачном кадре на чужом сайте
+		// и подловить нажатие стримера.
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// localHost сообщает, обращаются ли к нам по нашему собственному адресу.
+func localHost(hostPort string) bool {
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host = hostPort
+	}
+	return host == "127.0.0.1" || host == "localhost" || host == "[::1]" || host == "::1"
+}
+
+// localOrigin разбирает заголовок Origin и говорит, наш ли это адрес.
+func localOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return localHost(u.Host)
 }
 
 func (s *Server) page(sub fs.FS, name string) http.HandlerFunc {

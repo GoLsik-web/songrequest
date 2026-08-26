@@ -195,9 +195,12 @@ func plural(n int, one, few, many string) string {
 }
 
 func humanDuration(d time.Duration) string {
+	// Формы идут в порядке «одна, две, пять»: plural так и объявлена.
+	// Раньше сюда передавали «секунды, секунд, секунд» — и зрители в чате
+	// читали «1 секунды» и «примерно через 3 минут».
 	m := int(d.Minutes())
 	if m < 1 {
-		return fmt.Sprintf("%d %s", int(d.Seconds()), plural(int(d.Seconds()), "секунды", "секунд", "секунд"))
+		return fmt.Sprintf("%d %s", int(d.Seconds()), plural(int(d.Seconds()), "секунда", "секунды", "секунд"))
 	}
-	return fmt.Sprintf("%d %s", m, plural(m, "минуты", "минут", "минут"))
+	return fmt.Sprintf("%d %s", m, plural(m, "минута", "минуты", "минут"))
 }
