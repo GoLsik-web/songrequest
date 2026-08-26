@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"songrequest/internal/errs"
 	"songrequest/internal/queue"
 	"songrequest/internal/twitch"
 )
@@ -22,7 +23,14 @@ func (s *Server) say(ctx context.Context, text string) {
 		return
 	}
 	if err := s.twitch.Say(ctx, text); err != nil {
-		s.log.Debug("сообщение в чат не ушло", "текст", text)
+		// С кодом и с самой ошибкой, а не молчаливой строкой в Debug.
+		//
+		// Жалоба «приложение не отвечает зрителям» иначе неразбираема: в
+		// логе строка есть, а причины — нет прав на чат, 401, слоумод,
+		// AutoMod — нет. Весь способ работы держится на разборе по логу.
+		code, _ := errs.Describe(err)
+		s.log.Warn("сообщение в чат не ушло", "текст", text, "код", code, "ошибка", err)
+		s.state.NotifyError(err)
 	}
 }
 

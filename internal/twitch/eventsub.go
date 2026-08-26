@@ -66,9 +66,19 @@ func (e *EventSub) Run(ctx context.Context, rewardID string) {
 	attempt := 0
 
 	for ctx.Err() == nil {
+		startedAt := time.Now()
 		err := e.session(ctx, rewardID)
 		if ctx.Err() != nil {
 			return
+		}
+
+		// Счётчик попыток обнуляем после сессии, которая реально работала.
+		//
+		// Раньше он рос всё время работы приложения: к середине стрима любая
+		// моргнувшая сеть стоила уже максимальной паузы, хотя связь вернулась
+		// через секунду. Заказы, присланные в эту паузу, теряются насовсем.
+		if time.Since(startedAt) > time.Minute {
+			attempt = 0
 		}
 
 		// Отозванную подписку переподключением не вернуть — нужен новый вход.
@@ -358,7 +368,13 @@ func (e *EventSub) handleNotification(payload json.RawMessage) {
 		"зритель", r.UserLogin, "текст", r.UserInput, "id", r.ID)
 
 	if e.OnRedemption != nil {
-		e.OnRedemption(r)
+		// В отдельной горутине: пока обработчик работает, цикл чтения сокета
+		// стоит, а Twitch ждать не будет. Подбор трека — это запросы к
+		// Spotify на секунды, команда «!очистить» при десяти заказах — это
+		// десять обращений к Twitch подряд. Пауза дольше keepalive рвёт
+		// соединение, панель краснеет, а заказы, присланные в эту минуту,
+		// теряются совсем.
+		go e.OnRedemption(r)
 	}
 }
 

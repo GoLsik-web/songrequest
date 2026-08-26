@@ -44,9 +44,36 @@ func (c *Client) Say(ctx context.Context, text string) error {
 		"sender_id":      user.ID,
 		"message":        text,
 	}
-	if err := c.do(ctx, http.MethodPost, "/chat/messages", body, nil); err != nil {
+	// Ответ обязательно разбираем. Twitch отвечает «200 ОК» и на сообщение,
+	// которое он не отправил: задержал AutoMod, включён режим «только для
+	// фолловеров», слоумод, эмоут-онли. Раньше приложение считало такое
+	// успехом — и все ответы зрителям («принято, третьим в очереди», «баллы
+	// вернул», «трека нет») молча пропадали весь стрим, а в панели и в логе
+	// было зелено. Зрители при этом жаловались, что бот молчит и «баллы
+	// съело».
+	var out struct {
+		Data []struct {
+			IsSent     bool `json:"is_sent"`
+			DropReason *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"drop_reason"`
+		} `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/chat/messages", body, &out); err != nil {
 		c.log.Warn("не написал в чат", "текст", text, "ошибка", err)
 		return err
+	}
+	if len(out.Data) > 0 && !out.Data[0].IsSent {
+		why := "Twitch не сказал причину"
+		if r := out.Data[0].DropReason; r != nil {
+			why = r.Code
+			if r.Message != "" {
+				why += " · " + r.Message
+			}
+		}
+		c.log.Warn("Twitch не пропустил сообщение в чат", "текст", text, "причина", why)
+		return errs.New(errs.TwitchChat, "Twitch не пропустил сообщение в чат: "+why)
 	}
 	return nil
 }
@@ -117,6 +144,9 @@ func (e *EventSub) handleChat(payload []byte) {
 	}
 
 	if e.OnChat != nil {
-		e.OnChat(msg)
+		// В отдельной горутине по той же причине, что и заказы: команда из
+		// чата делает сетевые вызовы, а цикл чтения сокета в это время
+		// стоять не должен.
+		go e.OnChat(msg)
 	}
 }

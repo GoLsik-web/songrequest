@@ -308,10 +308,18 @@ func (q *Queue) Reorder(ids []int64) error {
 
 // CountBy считает активные заказы одного зрителя — по этому числу работает
 // ограничение «не больше трёх в очереди».
+// Считаем и по логину, и по отображаемому имени.
+//
+// Логин надёжнее: отображаемое имя зритель меняет в Twitch мгновенно и без
+// ограничений, то есть лимит по нему обходится за десять секунд. Но в старых
+// строках базы логина ещё нет, поэтому старое сравнение оставлено запасным.
 func (q *Queue) CountBy(requester string) (int, error) {
 	var n int
 	err := q.db.QueryRow(
-		`SELECT COUNT(*) FROM queue WHERE requester = ? COLLATE NOCASE`, requester).Scan(&n)
+		`SELECT COUNT(*) FROM queue
+		  WHERE requester_login = ? COLLATE NOCASE
+		     OR (requester_login = '' AND requester = ? COLLATE NOCASE)`,
+		requester, requester).Scan(&n)
 	return n, err
 }
 

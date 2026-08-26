@@ -59,9 +59,17 @@ func (d *DonateX) Run(ctx context.Context, onDonation func(Donation)) {
 	attempt := 0
 
 	for ctx.Err() == nil {
+		startedAt := time.Now()
 		err := d.session(ctx, onDonation)
 		if ctx.Err() != nil {
 			return
+		}
+
+		// Проработавшая сессия обнуляет счётчик: иначе к середине стрима
+		// пауза перед переподключением упирается в потолок, и донаты,
+		// пришедшие в эти полминуты, пропадают.
+		if time.Since(startedAt) > time.Minute {
+			attempt = 0
 		}
 
 		attempt++

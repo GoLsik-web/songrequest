@@ -49,6 +49,7 @@ const (
 	TwitchEventSub     Code = "TW-10" // оборвалась подписка на события
 	TwitchBadResponse  Code = "TW-11" // Twitch ответил не тем, чего мы ждали
 	TwitchForeignAward Code = "TW-12" // награду создали не мы, баллы не вернуть
+	TwitchChat         Code = "TW-13" // Twitch не пропустил сообщение в чат
 
 	// Донаты
 	DonationsNoClientID  Code = "DN-01" // не заполнен client_id сервиса
