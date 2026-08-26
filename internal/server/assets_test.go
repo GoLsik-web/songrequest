@@ -95,20 +95,20 @@ func TestIconSpriteHasEveryIconThePanelUses(t *testing.T) {
 func TestWidgetAvoidsModernBrowserFeatures(t *testing.T) {
 	// Что нельзя и с какой версии Chrome оно появилось.
 	banned := map[string]string{
-		"color-mix(":  "Chrome 111",
-		":has(":       "Chrome 105",
-		"@container":  "Chrome 105",
-		"@layer":      "Chrome 99",
-		"oklch(":      "Chrome 111",
-		"light-dark(": "Chrome 123",
-		"text-wrap:":  "Chrome 114",
+		"color-mix(":   "Chrome 111",
+		":has(":        "Chrome 105",
+		"@container":   "Chrome 105",
+		"@layer":       "Chrome 99",
+		"oklch(":       "Chrome 111",
+		"light-dark(":  "Chrome 123",
+		"text-wrap:":   "Chrome 114",
 		"aspect-ratio": "Chrome 88",
-		"inset:":      "Chrome 87",
-		"@property":   "Chrome 85",
-		"??":          "Chrome 80 (ошибка разбора — не выполнится весь скрипт)",
-		"?.":          "Chrome 80 (ошибка разбора — не выполнится весь скрипт)",
+		"inset:":       "Chrome 87",
+		"@property":    "Chrome 85",
+		"??":           "Chrome 80 (ошибка разбора — не выполнится весь скрипт)",
+		"?.":           "Chrome 80 (ошибка разбора — не выполнится весь скрипт)",
 		".replaceAll(": "Chrome 85",
-		".at(":        "Chrome 92",
+		".at(":         "Chrome 92",
 	}
 
 	for _, name := range []string{"widget.html", "widget.css", "widget-presets.js"} {

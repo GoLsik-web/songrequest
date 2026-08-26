@@ -343,15 +343,25 @@ func (p *Player) Wait(ctx context.Context) bool {
 		return true
 	}
 
+	// Ошибку выхода запоминаем: mpv может упасть через полсекунды после
+	// старта (нет сети, битая ссылка, занято звуковое устройство), и раньше
+	// это засчитывалось как «трек доиграл». Баллы списаны, зритель не
+	// услышал ничего, а по истории всё благополучно.
+	var exitErr error
 	done := make(chan struct{})
 	go func() {
-		cmd.Wait()
+		exitErr = cmd.Wait()
 		close(done)
 	}()
 
 	select {
 	case <-done:
 		p.clearIfMine(mine)
+		if exitErr != nil {
+			p.log.Warn("mpv завершился с ошибкой — считаю, что заказ не сыграл",
+				"ошибка", exitErr)
+			return false
+		}
 		return true
 	case <-ctx.Done():
 		p.Stop()

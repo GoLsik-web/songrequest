@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"songrequest/internal/app"
@@ -258,18 +259,21 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 }
 
 // refund возвращает баллы за заказ и говорит зрителю, почему.
-func (s *Server) refund(ctx context.Context, item queue.Item, reason string) {
+// Возвращает false, если баллы вернуть не вышло. Вызывающий обязан на это
+// смотреть, когда собирается ещё и выкинуть заказ из очереди.
+func (s *Server) refund(ctx context.Context, item queue.Item, reason string) bool {
 	if item.RedemptionID == "" {
-		return // заказ пришёл не за баллы — возвращать нечего
+		return true // заказ пришёл не за баллы — возвращать нечего
 	}
 	if err := s.twitch.RefundRedemption(ctx, item.RewardID, item.RedemptionID); err != nil {
 		s.log.Error("не смог вернуть баллы",
 			"зритель", item.Requester, "причина_отказа", reason, "ошибка", err)
 		s.state.NotifyError(err)
-		return
+		return false
 	}
 	s.log.Info("баллы возвращены", "зритель", item.Requester, "причина", reason)
 	s.state.SetRedemptionStatus(item.RedemptionID, app.OrderRefunded)
+	return true
 }
 
 // skipCurrent обрывает текущий трек — или прекращает ожидание конца трека
@@ -304,14 +308,24 @@ func (s *Server) removeFromQueue(ctx context.Context, id int64, refund bool, act
 	if err != nil {
 		return err
 	}
-	if err := s.queue.Remove(id); err != nil {
-		return err
-	}
 
+	// Порядок важен: сначала баллы, потом удаление.
+	//
+	// Раньше заказ сначала выкидывался из очереди, и если Twitch в этот
+	// момент не отвечал, у зрителя не оставалось ни трека, ни баллов, а
+	// повторить было нечем — заказа уже нет. В карточке заказов этот
+	// порядок давно правильный, здесь остался старый.
 	what := "удалил"
 	if refund {
 		what = "удалил и вернул баллы"
-		s.refund(ctx, item, "заказ удалён из очереди")
+		if !s.refund(ctx, item, "заказ удалён из очереди") {
+			return errs.New(errs.TwitchRefund,
+				"Не смог вернуть баллы, поэтому заказ оставил в очереди. Попробуй ещё раз.")
+		}
+	}
+
+	if err := s.queue.Remove(id); err != nil {
+		return err
 	}
 	s.history(item, "removed", what)
 	s.modLog(actor, what, item.Artist+" — "+item.Title)
@@ -323,15 +337,27 @@ func (s *Server) removeFromQueue(ctx context.Context, id int64, refund bool, act
 
 // clearQueue очищает очередь целиком.
 func (s *Server) clearQueue(ctx context.Context, refund bool, actor string) error {
+	// Очистка идёт одной сделкой нарочно: иначе заказ, выхваченный плеером
+	// ровно в этот миг, заиграет бесплатно. Значит вернуть баллы до удаления
+	// нельзя, и остаётся честно сказать, за кого вернуть не вышло.
 	gone, err := s.queue.Clear()
 	if err != nil {
 		return err
 	}
+	var lost []string
 	for _, item := range gone {
-		if refund {
-			s.refund(ctx, item, "очередь очищена")
+		if refund && !s.refund(ctx, item, "очередь очищена") {
+			lost = append(lost, item.Requester)
 		}
 		s.history(item, "removed", "очередь очищена")
+	}
+	if len(lost) > 0 {
+		// Молчать здесь нельзя: зритель потратил баллы и не получил ни
+		// трека, ни возврата, а узнать об этом стример может только отсюда.
+		s.log.Error("баллы вернулись не всем", "кому_не_вернулись", lost)
+		s.state.NotifyWarn(errs.TwitchRefund,
+			"Баллы вернулись не всем: "+strings.Join(lost, ", ")+
+				". Верни им вручную через награду на Twitch.")
 	}
 
 	s.modLog(actor, "очистил очередь", strconv.Itoa(len(gone))+" заказов")

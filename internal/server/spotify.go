@@ -369,7 +369,15 @@ func (s *Server) handleDiagExport(w http.ResponseWriter, r *http.Request) {
 
 // fail отвечает панели кодом и понятным текстом.
 func (s *Server) fail(w http.ResponseWriter, err error) {
+	// Настоящую ошибку пишем в лог обязательно.
+	//
+	// Раньше сюда приходила ошибка без кода («не получилось очистить
+	// очередь»), и наружу уходил только этот текст: ни кода, чтобы друг
+	// назвал его голосом, ни строки в логе, чтобы разобрать потом. Причина —
+	// заблокированная база, повреждённый файл — исчезала бесследно.
 	code, text := errs.Describe(err)
+	s.log.Error("отказ панели", "код", code, "текст", text, "ошибка", err)
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
 	writeJSON(w, map[string]string{"code": string(code), "error": text})

@@ -394,11 +394,23 @@ func (p *Player) awaitYouTube(ctx context.Context, item queue.Item) bool {
 	// устройство, и следующий заказ окажется без звука.
 	defer yt.Stop()
 
-	done := make(chan struct{})
-	go func() {
-		yt.Wait(ctx)
-		close(done)
-	}()
+	// Ответ Wait важен: mpv может упасть через полсекунды после старта, и
+	// раньше это засчитывалось как «доиграл». Баллы списаны, зритель ничего
+	// не услышал, на Twitch заказ отмечен выполненным.
+	done := make(chan bool, 1)
+	go func() { done <- yt.Wait(ctx) }()
+
+	// Жёсткий срок, как и у заказов Spotify. Без него зависший mpv (не
+	// открылся поток, занято звуковое устройство, yt-dlp внутри ждёт ответа
+	// YouTube) держал очередь навсегда: тишина в эфире, панель показывает
+	// «играет», новые заказы копятся, и выйти из этого можно только скипом,
+	// о котором ещё надо догадаться.
+	length := time.Duration(item.DurationMs) * time.Millisecond
+	if length <= 0 {
+		length = 10 * time.Minute
+	}
+	limit := time.NewTimer(length + 30*time.Second)
+	defer limit.Stop()
 
 	select {
 	case <-ctx.Done():
@@ -406,8 +418,12 @@ func (p *Player) awaitYouTube(ctx context.Context, item queue.Item) bool {
 	case <-p.skip:
 		p.log.Info("заказ с YouTube скипнут", "трек", item.Title)
 		return false
-	case <-done:
-		return true
+	case <-limit.C:
+		p.log.Warn("заказ с YouTube не кончился в срок — снимаю",
+			"трек", item.Title, "длительность_мс", item.DurationMs)
+		return false
+	case ok := <-done:
+		return ok
 	}
 }
 
