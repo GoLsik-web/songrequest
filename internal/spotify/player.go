@@ -364,6 +364,16 @@ func IsStale(snap *Snapshot, currentURI, playedURI string) bool {
 
 // ChooseDevice выбирает, где возобновлять воспроизведение.
 func ChooseDevice(snap *Snapshot, devices []Device) (string, error) {
+	prefer := ""
+	if snap != nil {
+		prefer = snap.DeviceID
+	}
+	return chooseDeviceID(prefer, devices)
+}
+
+// chooseDeviceID — та же выборка, но без снимка: заказу тоже надо где-то
+// играть, а снимка у него может не быть вовсе.
+func chooseDeviceID(prefer string, devices []Device) (string, error) {
 	if len(devices) == 0 {
 		return "", errs.New(errs.SpotifyNoDevice,
 			"Spotify нигде не запущен. Открой приложение Spotify на компьютере и включи любой трек.")
@@ -371,7 +381,7 @@ func ChooseDevice(snap *Snapshot, devices []Device) (string, error) {
 
 	// Идеально — то же устройство, где играли до заказа.
 	for _, d := range devices {
-		if d.ID == snap.DeviceID && !d.IsRestricted {
+		if prefer != "" && d.ID == prefer && !d.IsRestricted {
 			return d.ID, nil
 		}
 	}
@@ -441,9 +451,65 @@ func supportsOffset(contextURI string) bool {
 }
 
 // PlayTrack включает один трек вне всякого контекста — так играются заказы.
+//
+// Уснувшее устройство здесь приходится будить самим, и вот почему. Заказ мы
+// включаем списком из одного трека, без источника. Когда такой трек доигрывает,
+// Spotify не продолжает ничего — воспроизведение просто останавливается, а
+// программа Spotify через несколько секунд перестаёт быть «активным
+// устройством». Для веб-API это значит «играть негде», и следующий заказ
+// получал 404 NO_ACTIVE_DEVICE: с плейлиста на заказ переключалось нормально
+// (там музыка играла, устройство было живым), а с заказа на заказ — уже нет.
+// Со стороны стримера это выглядело как «второй трек просто не включается»,
+// а зрителю ещё и возвращались баллы.
+//
+// Возврат музыки эту же беду разбирал давно (см. Restore), только заказы шли
+// мимо: они звали play без устройства и без второй попытки.
 func (c *Client) PlayTrack(ctx context.Context, trackURI, deviceID string) error {
 	body := &playBody{URIs: []string{trackURI}}
-	return c.do(ctx, http.MethodPut, "/me/player/play"+deviceQuery(deviceID), body, nil)
+	err := c.do(ctx, http.MethodPut, "/me/player/play"+deviceQuery(deviceID), body, nil)
+	if err == nil || errs.CodeOf(err) != errs.SpotifyNoDevice {
+		return err
+	}
+
+	id, wakeErr := c.wakeDevice(ctx, deviceID)
+	if wakeErr != nil {
+		// Разбудить нечего — значит Spotify и правда закрыт. Отдаём первую
+		// ошибку: её текст написан для стримера и объясняет, что делать.
+		c.log.Warn("некого будить перед заказом", "ошибка", wakeErr)
+		return err
+	}
+
+	c.log.Info("устройство уснуло после прошлого заказа, разбудил", "устройство", id)
+	return c.do(ctx, http.MethodPut, "/me/player/play?device_id="+url.QueryEscape(id), body, nil)
+}
+
+// wakeDevice поднимает уснувшее устройство и отдаёт его id.
+//
+// prefer — то, на котором играли раньше: возвращаться на чужую колонку,
+// когда стример слушает на компьютере, нельзя.
+func (c *Client) wakeDevice(ctx context.Context, prefer string) (string, error) {
+	devices, err := c.Devices(ctx)
+	if err != nil {
+		return "", err
+	}
+	id, err := chooseDeviceID(prefer, devices)
+	if err != nil {
+		return "", err
+	}
+	if !needTransfer(devices, id) {
+		// Устройство активно, а play всё равно отказал: будить нечего, пусть
+		// вторая попытка просто уйдёт с явным device_id.
+		return id, nil
+	}
+	if err := c.Transfer(ctx, id, false); err != nil {
+		return "", err
+	}
+	// Устройству нужно мгновение, чтобы объявиться активным. Столько же ждёт
+	// возврат музыки — там это проверено.
+	if !sleepCtx(ctx, 700*time.Millisecond) {
+		return "", ctx.Err()
+	}
+	return id, nil
 }
 
 // Pause ставит паузу.
