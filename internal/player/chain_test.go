@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"songrequest/internal/queue"
 	"songrequest/internal/spotify"
 )
 
@@ -92,5 +93,80 @@ func TestOrderPlaysOnStreamerDevice(t *testing.T) {
 	})
 	if got := sp.lastDevice(); got != "комп-стримера" {
 		t.Fatalf("заказ ушёл на устройство %q, а звук в эфире идёт с «комп-стримера»", got)
+	}
+}
+
+// Пауза стримера не имеет права обрывать длинный заказ.
+//
+// Раньше срок жизни заказа на паузе пересчитывался заново и переставал
+// зависеть от остатка трека: десятиминутный заказ, поставленный на паузу на
+// десятой секунде, обрывался на шестой минуте и записывался «отыгравшим».
+func TestPauseDoesNotCutLongOrder(t *testing.T) {
+	p, q, sp := newPlayer(t)
+	p.PollEvery = 20 * time.Millisecond
+	// Заказ на «десять минут» в масштабе теста.
+	addTrack(t, q, "длинный", 4000)
+
+	var finished []bool
+	p.OnFinished = func(_ queue.Item, natural bool) { finished = append(finished, natural) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx)
+
+	waitFor(t, "заказ пошёл", func() bool {
+		played, _, _ := sp.stats()
+		return len(played) >= 1
+	})
+
+	// Стример поставил паузу почти в самом начале трека.
+	sp.pause("spotify:track:длинный", 4000, 100)
+	time.Sleep(300 * time.Millisecond)
+
+	// Заказ обязан всё ещё считаться играющим: его никто не обрывал.
+	if p.Now() == nil {
+		t.Fatal("заказ сняли с паузы стримера, хотя до конца трека ещё далеко")
+	}
+	if len(finished) > 0 {
+		t.Fatalf("заказ объявлен законченным на паузе: доиграл_сам=%v", finished)
+	}
+}
+
+// А переключение музыки руками во время паузы — это «оборвали», а не
+// «доиграл»: возврату нельзя спорить со стримером.
+func TestSwitchWhilePausedIsNotNaturalEnd(t *testing.T) {
+	p, q, sp := newPlayer(t)
+	p.PollEvery = 20 * time.Millisecond
+	addTrack(t, q, "заказ", 4000)
+
+	done := make(chan bool, 1)
+	p.OnFinished = func(_ queue.Item, natural bool) {
+		select {
+		case done <- natural:
+		default:
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx)
+
+	waitFor(t, "заказ пошёл", func() bool {
+		played, _, _ := sp.stats()
+		return len(played) >= 1
+	})
+
+	sp.pause("spotify:track:заказ", 4000, 100)
+	time.Sleep(100 * time.Millisecond)
+	// Стример сам включил другую музыку.
+	sp.setPlaying("spotify:track:выбор-стримера", 200000, 0)
+
+	select {
+	case natural := <-done:
+		if natural {
+			t.Fatal("музыку переключили руками во время паузы, а заказ засчитан отыгравшим")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("не дождались конца заказа")
 	}
 }

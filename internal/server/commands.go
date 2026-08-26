@@ -63,12 +63,18 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 		s.say(ctx, s.queueLine())
 
 	case "скип", "skip", "s":
-		if now := s.player.Now(); now == nil {
-			s.say(ctx, "@"+actor+", сейчас ничего не играет")
-			return
-		} else {
+		now := s.player.Now()
+		switch {
+		case now != nil:
 			s.skipCurrent(actor)
 			s.say(ctx, "Скипнул: "+now.Item.Artist+" — "+now.Item.Title)
+		case s.player.Waiting():
+			// Заказ уже взят, но ждёт конца трека стримера. Скип здесь
+			// означает «не жди, включай» — и обязан работать.
+			s.skipCurrent(actor)
+			s.say(ctx, "Не жду конца трека, включаю заказ")
+		default:
+			s.say(ctx, "@"+actor+", сейчас ничего не играет")
 		}
 
 	case "удалить", "remove", "rm":

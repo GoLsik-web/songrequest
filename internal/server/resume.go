@@ -83,8 +83,16 @@ func (s *Server) startFresh(ctx context.Context, cfg config.Config,
 	// Плейлист включаем именно плейлистом, а не списком его треков. Разница
 	// видна сразу: у списка в Spotify не написано, откуда играет музыка, и
 	// кончается он ровно на последнем отданном треке.
+	// Устройство берём из снимка: звук в эфир идёт именно оттуда. Пустая
+	// строка означала «где активно сейчас», а после доигравшей очереди
+	// активным не остаётся ничего.
+	device := ""
+	if snap != nil {
+		device = snap.DeviceID
+	}
+
 	if uri, what := s.wholeSource(cfg, mode, snap); uri != "" {
-		if err := s.spotify.PlayContext(ctx, uri, ""); err != nil {
+		if err := s.spotify.PlayContext(ctx, uri, device); err != nil {
 			s.log.Warn("запасной вариант не включился", "источник", uri, "ошибка", err)
 			s.state.NotifyError(err)
 			return
@@ -102,7 +110,7 @@ func (s *Server) startFresh(ctx context.Context, cfg config.Config,
 		return
 	}
 
-	if err := s.spotify.PlayTracks(ctx, uris, ""); err != nil {
+	if err := s.spotify.PlayTracks(ctx, uris, device); err != nil {
 		s.log.Warn("запасной вариант тоже не включился", "ошибка", err)
 		s.state.NotifyError(err)
 		return

@@ -194,8 +194,7 @@ func (c *Client) PlayTracks(ctx context.Context, uris []string, deviceID string)
 	if len(uris) == 0 {
 		return errs.New(errs.SpotifyNothing, "Включать нечего.")
 	}
-	return c.do(ctx, http.MethodPut, "/me/player/play"+deviceQuery(deviceID),
-		&playBody{URIs: uris}, nil)
+	return c.play(ctx, &playBody{URIs: uris}, deviceID)
 }
 
 // fillEmptyCounts дозапрашивает число треков у плейлистов, где список отдал ноль.

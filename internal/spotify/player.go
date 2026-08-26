@@ -281,14 +281,22 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 			"Не получилось вернуть музыку туда, где она была.", err)
 	}
 
+	// Дальше музыка уже играет, и что бы ни случилось ниже, возврат состоялся.
+	//
+	// Раньше здесь на истёкшем сроке возвращалось `RestoreOutcome{}, ctx.Err()`
+	// — то есть удавшийся возврат отдавался провалом. Плеер в ответ держал
+	// снимок и через полминуты возвращал музыку второй раз, поверх того, что
+	// стример к тому времени слушал сам.
+
 	// Стример слушал на паузе — вернём и паузу тоже. Перемотать трек, не
 	// запустив его, Spotify не даёт, поэтому пауза ставится сразу после старта.
 	if !snap.IsPlaying {
-		if !sleepCtx(ctx, 300*time.Millisecond) {
-			return RestoreOutcome{}, ctx.Err()
-		}
-		if err := c.Pause(ctx, deviceID); err != nil {
-			c.log.Warn("не вернул паузу", "ошибка", err)
+		if sleepCtx(ctx, 300*time.Millisecond) {
+			if err := c.Pause(ctx, deviceID); err != nil {
+				c.log.Warn("не вернул паузу", "ошибка", err)
+			}
+		} else {
+			c.log.Warn("не успел вернуть паузу: вышел срок")
 		}
 	}
 
@@ -298,7 +306,13 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 	// Проверяем, что вышло на самом деле. Без этого приложение отчитывается
 	// об успехе по факту отправки запроса, а стример видит другое — и спорить
 	// с ним нечем.
-	c.verifyRestore(ctx, snap)
+	// Проверяем не для лога, а для отчёта: «вернул» без проверки — это отчёт
+	// об отправленном запросе, а не о результате. Раньше несовпадение видел
+	// только лог, а панель в любом случае писала бодрое «Вернул: …», и
+	// дозаполнение тишины не срабатывало.
+	if !c.verifyRestore(ctx, snap) {
+		lostContext = true
+	}
 
 	msg := fmt.Sprintf("Вернул: %s — %s с %s.", snap.ArtistName, snap.TrackName, mmss(snap.PositionMs))
 	if lostContext {
@@ -315,15 +329,18 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 // verifyRestore смотрит, что Spotify реально играет после возврата, и пишет
 // это в лог. Отчёт «вернул» без проверки — это отчёт об отправленном запросе,
 // а не о результате: разбирать по такому логу чужую проблему невозможно.
-func (c *Client) verifyRestore(ctx context.Context, snap *Snapshot) {
+// Возвращает true, если Spotify действительно играет то, что мы просили.
+// Проверить не удалось — считаем, что всё в порядке: спорить с человеком на
+// основании неполученного ответа хуже, чем промолчать.
+func (c *Client) verifyRestore(ctx context.Context, snap *Snapshot) bool {
 	if !sleepCtx(ctx, time.Second) {
-		return
+		return true
 	}
 
 	st, playing, err := c.State(ctx)
 	if err != nil || !playing || st.Item == nil {
 		c.log.Warn("после возврата плеер молчит", "ошибка", err)
-		return
+		return true
 	}
 
 	gotContext := ""
@@ -340,10 +357,13 @@ func (c *Client) verifyRestore(ctx context.Context, snap *Snapshot) {
 	switch {
 	case st.Item.URI != snap.TrackURI:
 		c.log.Warn("после возврата играет не тот трек", fields...)
+		return false
 	case snap.ContextURI != "" && gotContext != snap.ContextURI:
 		c.log.Warn("трек вернулся, а источник нет", fields...)
+		return false
 	default:
 		c.log.Info("возврат подтверждён", fields...)
+		return true
 	}
 }
 
@@ -465,7 +485,17 @@ func supportsOffset(contextURI string) bool {
 // Возврат музыки эту же беду разбирал давно (см. Restore), только заказы шли
 // мимо: они звали play без устройства и без второй попытки.
 func (c *Client) PlayTrack(ctx context.Context, trackURI, deviceID string) error {
-	body := &playBody{URIs: []string{trackURI}}
+	return c.play(ctx, &playBody{URIs: []string{trackURI}}, deviceID)
+}
+
+// play отправляет запрос на запуск и, если играть оказалось негде, будит
+// устройство и повторяет.
+//
+// Общий для всех запусков нарочно: раньше побудка была только у заказов, и
+// та же самая беда вылезала на шаг позже — когда после очереди включался
+// запасной плейлист. Устройство к тому моменту уснуло точно так же, и
+// стример получал «SP-06 · Spotify нигде не открыт» с тишиной в эфире.
+func (c *Client) play(ctx context.Context, body *playBody, deviceID string) error {
 	err := c.do(ctx, http.MethodPut, "/me/player/play"+deviceQuery(deviceID), body, nil)
 	if err == nil || errs.CodeOf(err) != errs.SpotifyNoDevice {
 		return err
@@ -475,11 +505,11 @@ func (c *Client) PlayTrack(ctx context.Context, trackURI, deviceID string) error
 	if wakeErr != nil {
 		// Разбудить нечего — значит Spotify и правда закрыт. Отдаём первую
 		// ошибку: её текст написан для стримера и объясняет, что делать.
-		c.log.Warn("некого будить перед заказом", "ошибка", wakeErr)
+		c.log.Warn("некого будить перед запуском музыки", "ошибка", wakeErr)
 		return err
 	}
 
-	c.log.Info("устройство уснуло после прошлого заказа, разбудил", "устройство", id)
+	c.log.Info("устройство уснуло, разбудил", "устройство", id)
 	return c.do(ctx, http.MethodPut, "/me/player/play?device_id="+url.QueryEscape(id), body, nil)
 }
 
@@ -544,8 +574,7 @@ func (c *Client) SetRepeat(ctx context.Context, mode, deviceID string) error {
 // PlayContext включает плейлист или альбом целиком — это запасной вариант,
 // когда вернуть исходное состояние не удалось.
 func (c *Client) PlayContext(ctx context.Context, contextURI, deviceID string) error {
-	body := &playBody{ContextURI: contextURI}
-	return c.do(ctx, http.MethodPut, "/me/player/play"+deviceQuery(deviceID), body, nil)
+	return c.play(ctx, &playBody{ContextURI: contextURI}, deviceID)
 }
 
 func deviceQuery(deviceID string) string {
