@@ -277,7 +277,7 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 			p.dropped(item, err)
 			return
 		}
-	} else if err := p.spotify.PlayTrack(ctx, item.URI, ""); err != nil {
+	} else if err := p.spotify.PlayTrack(ctx, item.URI, p.playDevice()); err != nil {
 		p.log.Error("не смог включить заказ",
 			"трек", item.Artist+" — "+item.Title, "ошибка", err)
 		p.fail(err)
@@ -311,6 +311,24 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 	p.changed()
 
 	p.finish(item, natural)
+}
+
+// playDevice — где играть заказ.
+//
+// Это то же устройство, на котором играла музыка стримера в момент снимка:
+// именно оттуда идёт звук в эфир. Без явного указания Spotify играет «где
+// активно сейчас», а после доигравшего заказа активным не остаётся ничего —
+// и заказ либо не включался вовсе, либо мог уехать на телефон, который у
+// стримера тоже залогинен.
+//
+// Пустая строка означает «решай сам»: снимка ещё нет, значит и музыки не
+// было, и выбирать не из чего.
+func (p *Player) playDevice() string {
+	snap := p.Snapshot()
+	if snap == nil {
+		return ""
+	}
+	return snap.DeviceID
 }
 
 // playYouTube ставит Spotify на паузу и запускает звук с YouTube.

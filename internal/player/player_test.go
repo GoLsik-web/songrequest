@@ -18,6 +18,8 @@ type fakeSpotify struct {
 	mu sync.Mutex
 
 	played   []string
+	// devices — на какое устройство уходил каждый запуск заказа.
+	devices  []string
 	captured int
 	restored int
 	// playing — что играет сейчас; пустая строка означает тишину.
@@ -86,8 +88,19 @@ func (f *fakeSpotify) PlayTrack(ctx context.Context, trackURI, deviceID string) 
 		return f.failPlay
 	}
 	f.played = append(f.played, trackURI)
+	f.devices = append(f.devices, deviceID)
 	f.playing = trackURI
 	return nil
+}
+
+// lastDevice — куда ушёл последний запуск заказа.
+func (f *fakeSpotify) lastDevice() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.devices) == 0 {
+		return ""
+	}
+	return f.devices[len(f.devices)-1]
 }
 
 func (f *fakeSpotify) Pause(ctx context.Context, deviceID string) error { return nil }
