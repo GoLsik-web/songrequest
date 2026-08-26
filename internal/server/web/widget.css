@@ -84,6 +84,14 @@
 
 .text { display: block; min-width: 0; flex: 1; }
 
+/* Запасной отступ для старых сборок OBS: gap во флексбоксе появился только
+   в Chrome 84, а без него обложка приклеивается к тексту вплотную во всех
+   семействах сразу — выглядит как «вёрстка поехала». */
+@supports not (gap: 1px) {
+  .card > .text { margin-left: calc(var(--w-gap) * var(--scale, 1)); }
+  .card[data-family="ticker"] .text > * + * { margin-left: 12px; }
+}
+
 .title {
   display: block;
   font-family: var(--w-title-font);
@@ -301,7 +309,7 @@
    Прошлая версия крутила его в обратную сторону, но диск и блик стартовали
    в разное время из-за разгона и разъезжались по фазе. */
 .card[data-family="vinyl"] .art::before {
-  content: ""; position: absolute; inset: -1px;
+  content: ""; position: absolute; top: -1px; right: -1px; bottom: -1px; left: -1px;
   border-radius: 50%;
   background: linear-gradient(118deg,
     transparent 30%, var(--w-shine) 44%,
@@ -629,7 +637,11 @@
 }
 /* Обложки квадратные. Ширину задаёт плашка, высоту — пропорция, иначе
    выходил прямоугольник 148×128 и снимок читался как обрезанный. */
-.card[data-family="card"] .art { width: 100%; height: auto; aspect-ratio: 1; }
+/* Квадрат через padding, а не aspect-ratio: последнее появилось только в
+   Chrome 88, а без него height:auto у пустого блока даёт ноль — и обложка,
+   ради которой это семейство и сделано, исчезает из кадра целиком. */
+.card[data-family="card"] .art { width: 100%; height: 0; padding-top: 100%; position: relative; }
+.card[data-family="card"] .art img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 .card[data-family="card"] .text { width: 100%; }
 .card[data-family="card"] .title { white-space: normal; line-height: 1.2; }
 .card[data-family="card"] .artist { font-size: calc(13px * var(--scale, 1)); }
@@ -723,9 +735,7 @@
 /* Хроматическая аберрация. Дышит еле заметно: если её зафиксировать, текст
    читается как криво напечатанный, а не как сигнал с помехой. */
 .card[data-family="cyber"] .title {
-  text-shadow:
-    calc(-1px * var(--ab, 1)) 0 var(--w-ab1),
-    calc(1px * var(--ab, 1)) 0 var(--w-ab2);
+  text-shadow: -1px 0 var(--w-ab1), 1px 0 var(--w-ab2);
   animation: abBreath 3.4s ease-in-out infinite;
 }
 
@@ -745,7 +755,7 @@
 /* Скан-линии поверх всей плашки. Медленно ползут вниз. */
 .card[data-family="cyber"]::before {
   content: "";
-  position: absolute; inset: 0;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   background: repeating-linear-gradient(
     180deg, rgba(0, 0, 0, .22) 0 1px, transparent 1px 3px);
   animation: scanDrift 1.4s linear infinite;
@@ -774,15 +784,17 @@
   box-shadow: 0 0 8px var(--w-frame-glow);
 }
 
-@property --ab {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 1;
-}
-
+/* Анимируем сразу text-shadow, а не своё свойство через @property.
+   @property появилось в Chrome 85, и без него незарегистрированное --ab не
+   интерполируется: вместо еле заметного дыхания получается один рывок на
+   середине цикла — то есть ровно то, чего этот блок пытается избежать. */
 @keyframes abBreath {
-  0%, 100% { --ab: .6; }
-  50%      { --ab: 1.6; }
+  0%, 100% {
+    text-shadow: -.6px 0 var(--w-ab1), .6px 0 var(--w-ab2);
+  }
+  50% {
+    text-shadow: -1.6px 0 var(--w-ab1), 1.6px 0 var(--w-ab2);
+  }
 }
 @keyframes scanDrift { to { background-position: 0 3px; } }
 
@@ -953,7 +965,7 @@
 /* Блик по строке. Через background-position, а не через сдвиг: сдвинутый
    слой уезжал бы за плашку, и полоса света ползла бы по всему кадру. */
 .card[data-family="ticker"]::after {
-  content: ""; position: absolute; inset: 0;
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   background: linear-gradient(100deg,
     transparent 44%, rgba(255, 255, 255, .11) 50%, transparent 56%) no-repeat;
   background-size: 260% 100%;
@@ -1044,7 +1056,7 @@
 /* Развёртка лучевой трубки: медленно проходит сверху вниз и пропадает
    надолго. Через background-position — сдвинутый слой вылезал бы за плашку. */
 .card[data-family="terminal"]::before {
-  content: ""; position: absolute; inset: 0;
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   background: linear-gradient(180deg,
     transparent 0, rgba(255, 255, 255, .07) 6%, transparent 12%) no-repeat;
   background-size: 100% 900%;
@@ -1105,7 +1117,7 @@
 
 /* Отсвет проходит по стеклу редко и медленно. */
 .card[data-family="glass"]::after {
-  content: ""; position: absolute; inset: 0;
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   border-radius: inherit;
   background: linear-gradient(115deg,
     transparent 42%, rgba(255, 255, 255, .15) 50%, transparent 58%) no-repeat;

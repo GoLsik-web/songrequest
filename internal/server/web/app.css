@@ -17,6 +17,12 @@
      это 4.4:1. Всё, что глуше, годится только линиям. */
   --dimmer:  #6f777e;
   --faint:   #3b4147;
+  /* --faint красит линии, засечки и выключенные кнопки. Текстом его набирать
+     нельзя: на нашем фоне это контраст около 1.9:1 при норме 4.5. Раньше им
+     были набраны двенадцать мест подряд, и самые обидные — «Не настроено» в
+     ленте подключений (первое, что человек должен увидеть на первом запуске),
+     исходный текст зрителя рядом с найденным треком и время в хронике. Для
+     тусклого текста есть --dimmer. */
   --lime:    #c8f751;
   --lime-lo: #4e5f22;
   --bad:     #ff4d4d;
@@ -73,7 +79,7 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 
 :focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
 ::selection { background: var(--lime); color: var(--ink); }
-::placeholder { color: var(--faint); }
+::placeholder { color: var(--dimmer); }
 
 /* ── Лента подключений ──────────────────────────────────────────────────
    Пока всё исправно, она должна быть незаметной: никаких горящих точек в
@@ -121,7 +127,7 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 
 /* Ненастроенное сжимаем: две колонки «Не настроено» не должны занимать
    половину ленты. */
-.st.idle { color: var(--faint); min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.st.idle { color: var(--dimmer); min-width: 0; flex: 0 1 auto; overflow: hidden; }
 .st.idle .led { background: transparent; width: 0; }
 
 .st:last-child { border-right: none; }
@@ -199,7 +205,7 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
   margin-bottom: var(--s4);
 }
 .eyebrow .live { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); flex: none; }
-.eyebrow .sep { color: var(--faint); letter-spacing: 0; }
+.eyebrow .sep { color: var(--dimmer); letter-spacing: 0; }
 .eyebrow .where { color: var(--dim); font-weight: 500; letter-spacing: var(--track-chip); }
 .eyebrow.quiet { color: var(--dimmer); }
 .eyebrow.quiet .live { background: var(--faint); }
@@ -334,7 +340,7 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 
 .rows .idx {
   font-family: Unbounded, sans-serif; font-size: var(--t-sm); font-weight: 600;
-  color: var(--faint); font-variant-numeric: tabular-nums;
+  color: var(--dimmer); font-variant-numeric: tabular-nums;
 }
 .rows li:first-child .idx { color: var(--dim); }
 .rows .body { min-width: 0; }
@@ -358,9 +364,18 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
   font-size: 12px; flex: none;
   color: var(--text); font-variant-numeric: tabular-nums;
 }
-.chip::after { content: ""; }
 
-.done { font-size: var(--t-xs); color: var(--dimmer); font-weight: 700; letter-spacing: var(--track-chip); }
+/* Заказ за донат — платный и идёт вперёд бесплатных. Раньше класс money
+   рисовался в разметке, а правил под него не было ни одного: слово «донат»
+   набиралось обычным белым текстом и терялось среди соседних значков. */
+.chip.money {
+  color: var(--lime);
+  border: 1px solid var(--lime-lo);
+  border-radius: 2px;
+  padding: 1px 5px;
+  font-size: var(--t-xs); font-weight: 700;
+  letter-spacing: var(--track-chip); text-transform: uppercase;
+}
 
 .muted { color: var(--dimmer); }
 
@@ -382,7 +397,7 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 }
 .feed li:last-child { border-bottom: none; }
 .feed .when {
-  color: var(--faint); font-size: var(--t-xs); flex: none;
+  color: var(--dimmer); font-size: var(--t-xs); flex: none;
   padding-top: 2px; font-variant-numeric: tabular-nums;
 }
 .feed .what { min-width: 0; overflow-wrap: anywhere; }
@@ -400,7 +415,7 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 /* Повторы схлопнуты в счётчик: пять одинаковых строк подряд — это шум. */
 .feed .times {
   margin-left: var(--s1); font-size: var(--t-xs); font-weight: 700;
-  color: var(--faint); font-variant-numeric: tabular-nums;
+  color: var(--dimmer); font-variant-numeric: tabular-nums;
 }
 
 .more {
@@ -599,7 +614,7 @@ footer.online { color: var(--dimmer); }
 
 .no {
   font-family: Unbounded, sans-serif; font-size: var(--t-xs); font-weight: 600;
-  color: var(--faint); flex: none; padding-top: 2px;
+  color: var(--dimmer); flex: none; padding-top: 2px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -635,7 +650,7 @@ footer.online { color: var(--dimmer); }
 .preview-label {
   font-size: var(--t-xs); font-weight: 700;
   letter-spacing: var(--track-caps); text-transform: uppercase;
-  color: var(--faint); margin-bottom: var(--s3);
+  color: var(--dimmer); margin-bottom: var(--s3);
 }
 .preview-card {
   display: flex; gap: var(--s4); align-items: flex-start;
@@ -683,13 +698,13 @@ footer.online { color: var(--dimmer); }
 /* Исходный текст зрителя рядом с найденным треком: видно, из чего что
    получилось, и сразу заметно, если подобралось не то. */
 .asked {
-  font-size: 12px; color: var(--faint);
+  font-size: 12px; color: var(--dimmer);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%;
 }
 
 /* ── Очередь ────────────────────────────────────────────────────────── */
 
-.kicker .rest { font-weight: 500; letter-spacing: var(--track-chip); color: var(--faint); }
+.kicker .rest { font-weight: 500; letter-spacing: var(--track-chip); color: var(--dimmer); }
 .kicker .queue-tools { margin-left: auto; display: flex; gap: var(--s3); }
 
 .link-btn {
@@ -756,9 +771,13 @@ footer.online { color: var(--dimmer); }
   padding: 8vh var(--s5) var(--s5);
   background: rgba(4, 5, 6, .72);
   backdrop-filter: blur(3px);
-  animation: fade var(--slow) var(--ease);
+  animation: fadeIn var(--slow) var(--ease);
 }
-@keyframes fade { from { opacity: 0 } }
+/* Своё имя, а не второй «fade»: одноимённые @keyframes глобальны, и этот
+   молча отменял сдвиг у .swap — то есть плавная подмена содержимого,
+   ради которой .swap и написан, превращалась в голое затухание, а по
+   коду это было не увидеть: правило на месте и выглядит рабочим. */
+@keyframes fadeIn { from { opacity: 0 } }
 
 .sheet {
   width: min(560px, 100%);
@@ -816,7 +835,7 @@ footer.online { color: var(--dimmer); }
 
 .log-rows { margin-top: var(--s3); max-height: 62vh; overflow-y: auto; }
 .log-rows li { grid-template-columns: minmax(0, 1fr) auto; }
-.log-rows .len { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.log-rows .len { font-size: 12px; color: var(--dimmer); font-variant-numeric: tabular-nums; }
 .log-rows .ttl { font-size: var(--t-sm); }
 .log-rows .asked { max-width: 60%; }
 .log-rows li.none {
@@ -1068,7 +1087,7 @@ input[type="range"]:disabled::-moz-range-thumb { background: var(--dimmer); }
    рабочим, хотя не нажимается. */
 .field select:disabled,
 .field input:disabled {
-  color: var(--faint);
+  color: var(--dimmer);
   border-color: var(--line);
   cursor: not-allowed;
 }

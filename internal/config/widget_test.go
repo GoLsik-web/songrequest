@@ -72,3 +72,29 @@ func TestWidgetNormalizeClearsEmptyTweaks(t *testing.T) {
 		t.Fatalf("после отбраковки всех ключей карта должна исчезать, осталась %v", w.Tweaks)
 	}
 }
+
+// Значение оформления уходит прямо в style виджета, который живёт в OBS.
+func TestWidgetTweaksRejectDangerousValues(t *testing.T) {
+	bad := map[string]string{
+		"--w-bg":     "url(http://чужой-сервер/x.png)",
+		"--w-radius": `red" onload="alert(1)`,
+		"--w-gap":    "10px; background: red",
+		"--w-ink":    "<script>",
+	}
+	for key, value := range bad {
+		w := Widget{Tweaks: map[string]string{key: value}}
+		w.Normalize()
+		if _, still := w.Tweaks[key]; still {
+			t.Errorf("значение %q под ключом %s осталось в настройках", value, key)
+		}
+	}
+}
+
+// А обычный цвет и обычный размер обязаны проходить.
+func TestWidgetTweaksKeepPlainValues(t *testing.T) {
+	w := Widget{Tweaks: map[string]string{"--w-radius": "12px", "--w-ink": "#c8f751"}}
+	w.Normalize()
+	if len(w.Tweaks) != 2 {
+		t.Fatalf("обычные значения выброшены: %v", w.Tweaks)
+	}
+}

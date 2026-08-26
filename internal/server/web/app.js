@@ -11,6 +11,12 @@
 
   const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 
+  // safeURL пропускает только http и https. Адрес приходит из ответа
+  // Twitch, а клик по нему делает сам стример — в панели, где лежат все
+  // его ключи и все кнопки управления. Экранирование закрывает выход из
+  // атрибута, но не запрещает схему javascript:.
+  const safeURL = (u) => (/^https?:\/\//i.test(String(u || "")) ? String(u) : "#");
+
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
@@ -478,16 +484,23 @@
 
   // Подтверждение прямо на кнопке: диалог браузера выглядит чужеродно и
   // выбивает из панели, а отменить очистку очереди уже нельзя.
+  // Второе нажатие подтверждает ровно тот вопрос, который на кнопке
+  // написан. Раньше сверялся только факт «кнопка взведена»: стример
+  // набирал ник, взводил кнопку, передумывал, стирал, набирал другой ник —
+  // и второе нажатие мгновенно банило уже второго, без подтверждения,
+  // хотя человек был уверен, что подтверждает первого.
   function confirmThen(btn, question, run) {
-    if (btn.dataset.armed === "1") {
+    if (btn.dataset.armed === "1" && btn.dataset.armedFor === question) {
       btn.dataset.armed = "0";
+      btn.dataset.armedFor = "";
       btn.textContent = btn.dataset.label;
       btn.classList.remove("armed");
       run();
       return;
     }
-    btn.dataset.label = btn.textContent;
+    if (btn.dataset.armed !== "1") btn.dataset.label = btn.textContent;
     btn.dataset.armed = "1";
+    btn.dataset.armedFor = question;
     btn.textContent = question;
     btn.classList.add("armed");
     setTimeout(() => {
@@ -614,7 +627,7 @@
 
     banner.hidden = false;
     banner.innerHTML = `
-      <div class="what">Открой <a href="${esc(tw.pending_url)}" target="_blank"
+      <div class="what">Открой <a href="${esc(safeURL(tw.pending_url))}" target="_blank"
         rel="noopener">${esc(tw.pending_url)}</a> на любом устройстве и введи код:</div>
       <div class="code">${esc(tw.pending_code)}</div>
       <div class="left" id="code-left"></div>`;
@@ -785,6 +798,7 @@
       $("max-minutes").value = Math.round((config.max_track_seconds || 0) / 60) || "";
       $("max-per-user").value = config.max_per_user ?? "";
       $("donation-priority").checked = !!config.donation_priority;
+      $("wait-current").checked = !!config.wait_for_current;
       $("reject-words").value = (config.reject_keywords || []).join(NL);
 
       applyMode(config.resume_fail_mode);
@@ -1310,6 +1324,11 @@
     saveConfig({ auto_create_reward: e.target.checked }).then(() => markSaved(e.target));
   $("donation-priority").onchange = (e) =>
     saveConfig({ donation_priority: e.target.checked }).then(() => markSaved(e.target));
+  // Настройка была в конфиге с самого начала, но в панели её не было вовсе —
+  // а именно она вызывает главную жалобу «заказ еле включается». Стример
+  // должен уметь её выключить, не открывая config.json.
+  $("wait-current").onchange = (e) =>
+    saveConfig({ wait_for_current: e.target.checked }).then(() => markSaved(e.target));
 
   $("reject-words").onchange = async (e) => {
     const words = e.target.value.split(NL).map((w) => w.trim()).filter(Boolean);
@@ -1392,9 +1411,15 @@
     // тонарма у винила.
     card.style.setProperty("--progress", ".46");
 
+    // Тот же белый список, что и в самом виджете: предпросмотр не должен
+    // показывать то, чего в OBS не будет. Раньше панель применяла всё, что
+    // лежит в настройках, и ключи, которых виджет не знает, рисовались
+    // только здесь — то есть панель обещала оформление, которого на стриме
+    // не появится.
+    const allowed = new Set(WIDGET_TWEAKS.map((t) => t.key));
     for (const t of WIDGET_TWEAKS) card.style.removeProperty(t.key);
     for (const [key, value] of Object.entries(w.tweaks || {})) {
-      card.style.setProperty(key, value);
+      if (allowed.has(key)) card.style.setProperty(key, value);
     }
     $("wx-bar").style.width = "46%";
 
