@@ -65,6 +65,30 @@ type NowPlaying struct {
 	Uncertain  bool   `json:"uncertain"`
 }
 
+// LastPlayed — трек, который только что ушёл из эфира.
+//
+// Зачем отдельный тип, а не тот же NowPlaying: у ушедшего трека нет
+// положения (он кончился), зато есть время и есть адрес в Spotify — по нему
+// его можно завести заново.
+type LastPlayed struct {
+	Provider string `json:"provider"` // spotify | youtube
+	// Source — откуда взялся трек: "order" — заказ зрителя, "own" —
+	// стример слушал сам.
+	Source     string    `json:"source"`
+	Title      string    `json:"title"`
+	Artist     string    `json:"artist"`
+	CoverURL   string    `json:"cover_url"`
+	Requester  string    `json:"requester"`
+	DurationMs int       `json:"duration_ms"`
+	At         time.Time `json:"at"`
+
+	// URI и RawRequest нужны, чтобы трек можно было поставить ещё раз: первый
+	// — для Spotify, второй — для всего остального (ссылка на ролик, текст
+	// заказа). Панель их не показывает.
+	URI        string `json:"uri"`
+	RawRequest string `json:"raw_request"`
+}
+
 // QueueItem — заказ в очереди.
 type QueueItem struct {
 	ID        int64  `json:"id"`
@@ -244,6 +268,9 @@ type Snapshot struct {
 	App         string           `json:"app"`
 	Connections []ConnState      `json:"connections"`
 	Now         *NowPlaying      `json:"now"`
+	// LastPlayed — что играло перед этим. Показывается в тишине, когда
+	// показывать больше нечего, и переживает перезапуск приложения.
+	LastPlayed *LastPlayed `json:"last_played"`
 	Queue       []QueueItem      `json:"queue"`
 	Notices     []Notice         `json:"notices"`
 	Paused      bool             `json:"paused"` // приём заказов остановлен
@@ -294,6 +321,7 @@ type State struct {
 	conns       map[string]ConnState
 	order       []string // порядок лампочек в панели, фиксированный
 	now         *NowPlaying
+	lastPlayed  *LastPlayed
 	queue       []QueueItem
 	notices     []Notice
 	paused      bool
@@ -399,6 +427,14 @@ func (s *State) SetNow(n *NowPlaying) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.now = n
+	s.notify()
+}
+
+// SetLastPlayed запоминает трек, который только что доиграл.
+func (s *State) SetLastPlayed(l *LastPlayed) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastPlayed = l
 	s.notify()
 }
 
@@ -600,6 +636,10 @@ func (s *State) Snapshot() Snapshot {
 	if s.now != nil {
 		now := *s.now
 		snap.Now = &now
+	}
+	if s.lastPlayed != nil {
+		last := *s.lastPlayed
+		snap.LastPlayed = &last
 	}
 	return snap
 }

@@ -249,6 +249,35 @@
             now.provider, now.duration_ms, now.uncertain];
   }
 
+  // Последний игравший трек.
+  //
+  // Показывается только в тишине: пока что-то играет, на экране есть вещь
+  // поважнее, а два трека рядом — это вопрос «так который из них играет».
+  // В тишине же это единственный ответ на «что это только что было»:
+  // раньше за ним приходилось лезть в хронику, где он строчкой без обложки
+  // и вперемешку с отказами.
+  function lastPlayed(s) {
+    const l = s.last_played;
+    if (!l || !l.title) return "";
+
+    const marks = [];
+    if (l.requester) marks.push("заказал " + l.requester);
+    else if (l.source === "own") marks.push("твоя музыка");
+    if (l.provider === "youtube") marks.push("YouTube");
+    if (l.at) marks.push(when(l.at));
+
+    return `
+      <div class="last">
+        <div class="last-art">${l.cover_url ? `<img src="${esc(l.cover_url)}" alt="">` : icon("music")}</div>
+        <div class="last-text">
+          <div class="last-kicker">Последним играло</div>
+          <div class="last-title">${esc(l.title)}</div>
+          <div class="last-sub">${esc(l.artist)}</div>
+        </div>
+        ${marks.length ? `<div class="last-marks">${marks.map(esc).join(" · ")}</div>` : ""}
+      </div>`;
+  }
+
   function renderStage(s) {
     const list = steps(s);
     const now = s.now;
@@ -343,6 +372,7 @@
         <h1 class="big">${mark}</h1>
         <p class="lead">${sub}</p>
       </div>
+      ${lastPlayed(s)}
       ${ready || broken ? "" : `<div class="step-acts" style="margin:0 0 20px">
         <button class="act small key" id="stage-setup">Провести по шагам</button>
       </div>`}
@@ -2064,7 +2094,8 @@
     // Позиция трека намеренно выброшена из подписи: она меняется каждые
     // несколько секунд, а перерисовывать из-за неё всю карточку — значит
     // мигать ею и сбивать собственный отсчёт полосы.
-    draw("stage", sig([nowKey(s.now), s.spotify, s.twitch, s.connections]), () => renderStage(s));
+    draw("stage", sig([nowKey(s.now), s.spotify, s.twitch, s.connections,
+                       s.last_played && s.last_played.at]), () => renderStage(s));
     // Перемотка в Spotify не меняет ни трек, ни подпись — значит карточку не
     // перерисуют. Но время после неё другое, и полосу надо переставить.
     syncMeter(s.now);
