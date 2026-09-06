@@ -31,7 +31,11 @@ type Item struct {
 	// RawRequest — что написал зритель. Показываем рядом с найденным треком.
 	RawRequest string `json:"raw_request"`
 
-	Provider   string `json:"provider"` // spotify | youtube
+	Provider string `json:"provider"` // spotify | youtube
+	// Via — почему заказ играет через это звено, словами для человека:
+	// «в Spotify такого нет», «Spotify не ответил», «по ссылке зрителя».
+	// Пусто у обычного заказа из Spotify: там объяснять нечего.
+	Via        string `json:"via"`
 	TrackID    string `json:"track_id"`
 	URI        string `json:"uri"`
 	Title      string `json:"title"`
@@ -77,11 +81,11 @@ func (q *Queue) Add(item Item, donationsFirst bool) (Item, error) {
 
 	res, err := tx.Exec(`
 		INSERT INTO queue(position, source, requester, requester_login, raw_request,
-		                  provider, track_id, uri, title, artist, duration_ms, cover_url,
+		                  provider, via, track_id, uri, title, artist, duration_ms, cover_url,
 		                  uncertain, redemption_id, reward_id, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.Position, item.Source, item.Requester, item.RequesterLogin, item.RawRequest,
-		item.Provider, item.TrackID, item.URI, item.Title, item.Artist, item.DurationMs,
+		item.Provider, item.Via, item.TrackID, item.URI, item.Title, item.Artist, item.DurationMs,
 		item.CoverURL, boolToInt(item.Uncertain), item.RedemptionID, item.RewardID,
 		item.CreatedAt.Unix())
 	if err != nil {
@@ -144,7 +148,7 @@ type rowsSource interface {
 func readQueue(src rowsSource) ([]Item, error) {
 	rows, err := src.Query(`
 		SELECT id, position, source, requester, requester_login, raw_request, provider,
-		       track_id, uri, title, artist, duration_ms, cover_url, uncertain,
+		       via, track_id, uri, title, artist, duration_ms, cover_url, uncertain,
 		       redemption_id, reward_id, created_at
 		  FROM queue ORDER BY position`)
 	if err != nil {
@@ -158,7 +162,7 @@ func readQueue(src rowsSource) ([]Item, error) {
 		var uncertain int
 		var created int64
 		if err := rows.Scan(&it.ID, &it.Position, &it.Source, &it.Requester,
-			&it.RequesterLogin, &it.RawRequest, &it.Provider, &it.TrackID, &it.URI,
+			&it.RequesterLogin, &it.RawRequest, &it.Provider, &it.Via, &it.TrackID, &it.URI,
 			&it.Title, &it.Artist, &it.DurationMs, &it.CoverURL, &uncertain,
 			&it.RedemptionID, &it.RewardID, &created); err != nil {
 			return nil, err
@@ -189,11 +193,11 @@ func (q *Queue) Next() (Item, error) {
 	)
 	err = tx.QueryRow(`
 		SELECT id, position, source, requester, requester_login, raw_request, provider,
-		       track_id, uri, title, artist, duration_ms, cover_url, uncertain,
+		       via, track_id, uri, title, artist, duration_ms, cover_url, uncertain,
 		       redemption_id, reward_id, created_at
 		  FROM queue ORDER BY position LIMIT 1`).
 		Scan(&it.ID, &it.Position, &it.Source, &it.Requester, &it.RequesterLogin,
-			&it.RawRequest, &it.Provider, &it.TrackID, &it.URI, &it.Title, &it.Artist,
+			&it.RawRequest, &it.Provider, &it.Via, &it.TrackID, &it.URI, &it.Title, &it.Artist,
 			&it.DurationMs, &it.CoverURL, &uncertain, &it.RedemptionID, &it.RewardID, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Item{}, ErrEmpty
@@ -354,10 +358,10 @@ func boolToInt(b bool) int {
 // «неточное совпадение» снимается: выбор сделан человеком.
 func (q *Queue) Replace(id int64, track Item) (Item, error) {
 	res, err := q.db.Exec(
-		`UPDATE queue SET provider = ?, track_id = ?, uri = ?, title = ?, artist = ?,
+		`UPDATE queue SET provider = ?, via = ?, track_id = ?, uri = ?, title = ?, artist = ?,
 		                  duration_ms = ?, cover_url = ?, uncertain = 0
 		 WHERE id = ?`,
-		track.Provider, track.TrackID, track.URI, track.Title, track.Artist,
+		track.Provider, track.Via, track.TrackID, track.URI, track.Title, track.Artist,
 		track.DurationMs, track.CoverURL, id)
 	if err != nil {
 		return Item{}, err

@@ -306,7 +306,7 @@
     const marks = [];
     if (l.requester) marks.push("заказал " + l.requester);
     else if (l.source === "own") marks.push("твоя музыка");
-    if (l.provider === "youtube") marks.push("YouTube");
+    if (l.provider === "youtube") marks.push(l.via ? "YouTube · " + l.via : "YouTube");
     if (l.at) marks.push(when(l.at));
 
     return `
@@ -343,6 +343,7 @@
           <i class="live"></i> В эфире
           <span class="sep">/</span>
           <span class="where">${now.provider === "youtube" ? "YouTube" : "Spotify"}${
+            now.via ? " · " + esc(now.via) : ""}${
             own ? " · твоя музыка" : ""}${
             now.uncertain ? " · неточное совпадение" : ""}</span>
         </div>

@@ -97,6 +97,9 @@ type Player struct {
 	OnRestored func(outcome spotify.RestoreOutcome, snap *spotify.Snapshot)
 	OnError    func(err error)
 
+	// rescue — что играть, если заказ не заиграл. См. SetRescue.
+	rescue Rescue
+
 	mu  sync.Mutex
 	now *Now
 	// lastPlayed — URI последнего отыгравшего заказа. Нужен возврату,
@@ -125,6 +128,21 @@ type Player struct {
 func (p *Player) SetYouTube(y YouTube) {
 	p.mu.Lock()
 	p.youtube = y
+	p.mu.Unlock()
+}
+
+// Rescue — где взять запасной способ сыграть заказ, который не заиграл.
+//
+// Отдаёт тот же заказ с другим источником или false, если играть больше нечем.
+// Сам плеер про источники ничего не знает и знать не должен: искать треки —
+// дело сервера, здесь только «включи и дождись».
+type Rescue func(ctx context.Context, item queue.Item) (queue.Item, bool)
+
+// SetRescue подключает запасной путь. Без него заказ, который не заиграл,
+// просто пропадает с возвратом баллов — как было раньше.
+func (p *Player) SetRescue(f Rescue) {
+	p.mu.Lock()
+	p.rescue = f
 	p.mu.Unlock()
 }
 
@@ -337,48 +355,103 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 		}
 	}
 
+	// Дальше — запуск и ожидание, с одной попыткой спастись.
+	//
+	// Раньше это были две прямые ветки: не включилось — заказ пропал, упал mpv
+	// через полсекунды — заказ считался оборванным. И в том, и в другом случае
+	// баллы списаны, зритель ничего не услышал, а тот же трек прекрасно нашёлся
+	// бы другим источником. Теперь неудача — повод спросить сервер, чем ещё это
+	// можно сыграть (см. Server.rescue), и попробовать ещё раз.
+	for attempt := 0; ; attempt++ {
+		if err := p.launch(ctx, item); err != nil {
+			p.log.Error("не смог включить заказ",
+				"трек", item.Artist+" — "+item.Title, "откуда", item.Provider, "ошибка", err)
+			next, ok := p.callRescue(ctx, item, attempt)
+			if !ok {
+				p.fail(err)
+				p.dropped(item, err)
+				return
+			}
+			item = next
+			continue
+		}
+
+		p.mu.Lock()
+		p.now = &Now{Item: item, StartedAt: time.Now()}
+		p.mu.Unlock()
+		p.changed()
+
+		p.log.Info("играет заказ",
+			"трек", item.Artist+" — "+item.Title, "заказал", item.Requester,
+			"откуда", item.Provider, "длительность_мс", item.DurationMs)
+
+		natural, fell := p.hold(ctx, item)
+
+		p.mu.Lock()
+		p.now = nil
+		p.mu.Unlock()
+
+		// Проигрыватель умер посреди трека. Это не «доиграл» и не «скипнули»:
+		// зритель ничего не услышал, а баллы уже списаны.
+		if fell {
+			if next, ok := p.callRescue(ctx, item, attempt); ok {
+				p.changed()
+				item = next
+				continue
+			}
+		}
+
+		p.mu.Lock()
+		// Нужен возврату: он должен отличать «в Spotify наш отыгравший заказ»
+		// от «стример переключил музыку сам».
+		p.lastPlayed = item.URI
+		p.endedNaturally = natural
+		p.mu.Unlock()
+		p.changed()
+
+		p.finish(item, natural)
+		return
+	}
+}
+
+// launch включает заказ там, откуда он взят.
+func (p *Player) launch(ctx context.Context, item queue.Item) error {
 	// Заказ с YouTube играется иначе: Spotify ставится на паузу, звук идёт
 	// отдельной программой на отдельное устройство.
 	if item.Provider == "youtube" {
-		if err := p.playYouTube(ctx, item); err != nil {
-			p.fail(err)
-			p.dropped(item, err)
-			return
-		}
-	} else if err := p.spotify.PlayTrack(ctx, item.URI, p.playDevice()); err != nil {
-		p.log.Error("не смог включить заказ",
-			"трек", item.Artist+" — "+item.Title, "ошибка", err)
-		p.fail(err)
-		p.dropped(item, err)
-		return
+		return p.playYouTube(ctx, item)
 	}
+	return p.spotify.PlayTrack(ctx, item.URI, p.playDevice())
+}
 
-	p.mu.Lock()
-	p.now = &Now{Item: item, StartedAt: time.Now()}
-	p.mu.Unlock()
-	p.changed()
-
-	p.log.Info("играет заказ",
-		"трек", item.Artist+" — "+item.Title, "заказал", item.Requester,
-		"откуда", item.Provider, "длительность_мс", item.DurationMs)
-
-	natural := false
+// hold ждёт конца заказа. natural — доиграл сам; fell — проигрыватель умер, не
+// доиграв, и заказ стоит попробовать сыграть иначе.
+func (p *Player) hold(ctx context.Context, item queue.Item) (natural, fell bool) {
 	if item.Provider == "youtube" {
-		natural = p.awaitYouTube(ctx, item)
-	} else {
-		natural = p.await(ctx, item)
+		return p.awaitYouTube(ctx, item)
 	}
+	// У Spotify «упал посреди трека» отдельно не ловится: обрыв там выглядит
+	// так же, как «стример переключил музыку сам», а обрывать за стримером его
+	// же выбор запасным источником — худшее, что можно сделать.
+	return p.await(ctx, item), false
+}
 
+// callRescue спрашивает сервер, чем ещё можно сыграть этот заказ.
+//
+// Одна попытка на заказ. Если и запасной источник молчит, дело не в источнике,
+// а очередь обязана двигаться дальше — иначе один неудачный заказ встанет
+// поперёк всего вечера.
+func (p *Player) callRescue(ctx context.Context, item queue.Item, attempt int) (queue.Item, bool) {
+	if attempt > 0 || ctx.Err() != nil {
+		return queue.Item{}, false
+	}
 	p.mu.Lock()
-	p.now = nil
-	// Нужен возврату: он должен отличать «в Spotify наш отыгравший заказ» от
-	// «стример переключил музыку сам».
-	p.lastPlayed = item.URI
-	p.endedNaturally = natural
+	f := p.rescue
 	p.mu.Unlock()
-	p.changed()
-
-	p.finish(item, natural)
+	if f == nil {
+		return queue.Item{}, false
+	}
+	return f(ctx, item)
 }
 
 // playDevice — где играть заказ.
@@ -427,14 +500,17 @@ func (p *Player) playYouTube(ctx context.Context, item queue.Item) error {
 }
 
 // awaitYouTube ждёт, пока mpv доиграет, и убивает его после.
-// true означает «доиграл сам», а не «оборвали».
-func (p *Player) awaitYouTube(ctx context.Context, item queue.Item) bool {
+//
+// natural — доиграл сам, а не «оборвали». fell — умер, не доиграв: это не то
+// же самое, что скип, и заказ стоит попробовать сыграть другим источником.
+func (p *Player) awaitYouTube(ctx context.Context, item queue.Item) (natural, fell bool) {
 	p.mu.Lock()
 	yt := p.youtube
 	p.mu.Unlock()
 	if yt == nil {
-		return false
+		return false, false
 	}
+	started := time.Now()
 
 	// mpv не должен пережить трек: висящий процесс занимает звуковое
 	// устройство, и следующий заказ окажется без звука.
@@ -460,16 +536,29 @@ func (p *Player) awaitYouTube(ctx context.Context, item queue.Item) bool {
 
 	select {
 	case <-ctx.Done():
-		return false
+		return false, false
 	case <-p.skip:
 		p.log.Info("заказ с YouTube скипнут", "трек", item.Title)
-		return false
+		return false, false
 	case <-limit.C:
 		p.log.Warn("заказ с YouTube не кончился в срок — снимаю",
 			"трек", item.Title, "длительность_мс", item.DurationMs)
-		return false
+		return false, false
 	case ok := <-done:
-		return ok
+		if ok {
+			return true, false
+		}
+		// Не доиграл. Считаем падением только то, что случилось заметно раньше
+		// конца: mpv, оборвавшийся на последних секундах, зритель уже
+		// послушал, и переигрывать ему трек с начала — хуже, чем промолчать.
+		played := time.Since(started)
+		fell = played < length*4/5
+		if fell {
+			p.log.Warn("проигрыватель умер посреди заказа",
+				"трек", item.Title, "сыграно_мс", played.Milliseconds(),
+				"длительность_мс", item.DurationMs)
+		}
+		return false, fell
 	}
 }
 

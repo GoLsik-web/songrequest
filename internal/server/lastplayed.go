@@ -28,6 +28,7 @@ const kvLastPlayed = "last_played"
 func fromOrder(it queue.Item) *app.LastPlayed {
 	return &app.LastPlayed{
 		Provider:   it.Provider,
+		Via:        it.Via,
 		Source:     app.SourceOrder,
 		Title:      it.Title,
 		Artist:     it.Artist,

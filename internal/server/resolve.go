@@ -49,9 +49,8 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	key := match.Key(req)
 
 	if req.Title == "" {
-		// Текста нет, но есть ссылка, которую умеет сыграть YouTube.
-		if hasLink && link.YouTube != nil {
-			s.acceptYouTube(ctx, r, *link.YouTube, noteYouTubeMissing)
+		// Текста нет, но есть ссылка — по цепочке она сыграется.
+		if hasLink && s.playElsewhere(ctx, r, req, link, viaLink) {
 			return
 		}
 		// Ссылка есть, а играть её нечем: запасной проигрыватель ещё не
@@ -140,14 +139,8 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		// поиск трека, и вместе с текстовыми заказами перестали работать
 		// ссылки на YouTube и Яндекс.Музыку — хотя играть их Spotify не
 		// требуется вовсе.
-		if hasLink && link.YouTube != nil {
-			s.log.Info("Spotify не ответил — играю прямо по ссылке",
-				"заказ", r.UserInput, "код", code)
-			s.acceptYouTube(ctx, r, *link.YouTube, noteYouTubeNoAnswer)
-			return
-		}
-		if s.tryYouTube(ctx, r, req.Clean, noteYouTubeNoAnswer) {
-			s.log.Info("Spotify не ответил — нашёл на YouTube",
+		if s.playElsewhere(ctx, r, req, link, viaNoAnswer) {
+			s.log.Info("Spotify не ответил — заказ сыграет мимо него",
 				"заказ", r.UserInput, "код", code)
 			return
 		}
@@ -188,14 +181,9 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 			Note:  note,
 		})
 
-		// Ссылка на ролик уже разобрана — играем прямо её, искать нечего.
-		if hasLink && link.YouTube != nil {
-			s.acceptYouTube(ctx, r, *link.YouTube, noteYouTubeMissing)
-			return
-		}
 		// Spotify не всесилен: в нём нет половины русского андеграунда и
-		// почти ничего из мемов. Такой заказ ищем на YouTube.
-		if s.tryYouTube(ctx, r, req.Clean, noteYouTubeMissing) {
+		// почти ничего из мемов. Дальше — по цепочке запасных источников.
+		if s.playElsewhere(ctx, r, req, link, viaMissing) {
 			return
 		}
 		if res.AbroadOnly > 0 {

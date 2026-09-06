@@ -55,7 +55,10 @@ type NowPlaying struct {
 	// Source — откуда взялся трек: "order" — заказ зрителя, "own" — стример
 	// поставил сам. Зритель должен видеть разницу: иначе он решит, что
 	// заказы кто-то занял на полчаса вперёд.
-	Source     string `json:"source"`
+	Source string `json:"source"`
+	// Via — почему трек играет через этот источник, словами для человека.
+	// Пусто у обычного заказа из Spotify: объяснять нечего.
+	Via        string `json:"via"`
 	Title      string `json:"title"`
 	Artist     string `json:"artist"`
 	CoverURL   string `json:"cover_url"`
@@ -74,7 +77,9 @@ type LastPlayed struct {
 	Provider string `json:"provider"` // spotify | youtube
 	// Source — откуда взялся трек: "order" — заказ зрителя, "own" —
 	// стример слушал сам.
-	Source     string    `json:"source"`
+	Source string `json:"source"`
+	// Via — почему трек играл мимо Spotify. Пусто у обычного заказа.
+	Via        string    `json:"via"`
 	Title      string    `json:"title"`
 	Artist     string    `json:"artist"`
 	CoverURL   string    `json:"cover_url"`
@@ -97,6 +102,7 @@ type QueueItem struct {
 	Title     string `json:"title"`
 	Artist    string `json:"artist"`
 	Provider  string `json:"provider"`
+	Via       string `json:"via"`
 	// RawRequest — что написал зритель. Показываем рядом с найденным треком:
 	// сразу видно, если подобралось не то.
 	RawRequest string `json:"raw_request"`
