@@ -50,6 +50,10 @@
   --track-chip: .06em;
 
   --ease: cubic-bezier(.2, .7, .3, 1);
+  /* Кривая для появления окон: быстрый старт и долгое мягкое торможение —
+     движение читается как вещь, которая подъехала и встала на место, а не как
+     переключённый свет. */
+  --ease-soft: cubic-bezier(.32, .72, 0, 1);
   --fast: .14s;
   --slow: .28s;
 }
@@ -1148,10 +1152,11 @@ body.stale #fix { opacity: .35; pointer-events: none; }
   position: fixed;
   inset: 0;
   z-index: 30;
-  opacity: 0;
-  transition: opacity var(--slow) var(--ease);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s6);
 }
-.menu.on { opacity: 1; }
 .menu[hidden] { display: none; }
 
 /* Полосу заголовка меню не закрывает: свернуть и закрыть окно человек должен
@@ -1162,22 +1167,38 @@ body.has-titlebar .menu { top: 38px; }
 .menu-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(4, 5, 6, .66);
+  background: rgba(4, 5, 6, .62);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--slow) var(--ease-soft);
 }
+.menu.on .menu-scrim { opacity: 1; }
 
+/* Меню — окно в центре, а не полотно во всю ширину.
+   По краям нарочно остаётся виден задний экран: так сразу понятно, что
+   очередь и эфир никуда не делись и до них один клик. Появление — лёгкий
+   масштаб вместе с проявлением, без рывка. */
 .menu-sheet {
-  position: absolute;
-  top: 0; right: 0; bottom: 0;
-  width: min(1240px, 100%);
+  position: relative;
+  width: min(1200px, 100%);
+  height: min(880px, 100%);
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
   background: var(--bg);
-  border-left: 1px solid var(--line);
-  transform: translateX(18px);
-  transition: transform var(--slow) var(--ease);
+  border: 1px solid var(--line-2);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .55), 0 2px 10px rgba(0, 0, 0, .45);
+  opacity: 0;
+  transform: scale(.965);
+  transition: opacity .26s var(--ease-soft), transform .34s var(--ease-soft);
 }
-.menu.on .menu-sheet { transform: none; }
+.menu.on .menu-sheet { opacity: 1; transform: scale(1); }
+
+/* Пока меню открыто, страница позади не прокручивается. Иначе на экране
+   две полосы прокрутки рядом — своя у меню и чужая у страницы, и колесом
+   мыши над краем ездит то, что под меню. */
+body.menu-open { overflow: hidden; }
 
 /* Дорожка разделов */
 .menu-rail {
@@ -1238,6 +1259,27 @@ body.has-titlebar .menu { top: 38px; }
 
 .menu-body { overflow-y: auto; }
 
+/* Полоса прокрутки.
+
+   Серая полоса справа — единственное место в панели, которое рисовала
+   сама Windows, и выглядела она чужой. Теперь полоса прозрачная, а ползунок
+   проявляется только на время прокрутки (класс scrolling вешает app.js) и сам
+   уходит. Место под неё занято всегда (scrollbar-gutter): иначе текст бы вздрагивал
+   каждый раз, когда ползунок появляется. */
+.thin-scroll { scrollbar-gutter: stable; }
+.thin-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+.thin-scroll::-webkit-scrollbar-corner { background: transparent; }
+.thin-scroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  transition: background-color .35s var(--ease);
+}
+.thin-scroll.scrolling::-webkit-scrollbar-thumb { background-color: rgba(242, 244, 245, .30); }
+.thin-scroll::-webkit-scrollbar-thumb:hover { background-color: rgba(242, 244, 245, .34); }
+
 /* ── Вкладки внутри раздела ────────────────────────────────────────────
    Второй уровень для настроек: девять блоков подряд не читаются никак, а
    человек обычно приходит за одним из них. Липкая полоса — чтобы при
@@ -1280,7 +1322,8 @@ body.has-titlebar .menu { top: 38px; }
 /* Окно бывает и узким: тогда рельс уезжает наверх строкой, а не съедает
    половину ширины под три пункта. */
 @media (max-width: 860px) {
-  .menu-sheet { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .menu { padding: var(--s2); }
+  .menu-sheet { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); border-radius: 12px; }
   .menu-rail { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); }
   .menu-back { margin: 0; }
   .menu-nav { flex-direction: row; }
@@ -1290,6 +1333,7 @@ body.has-titlebar .menu { top: 38px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .menu, .menu-sheet { transition: none; }
+  .menu-scrim, .menu-sheet { transition: none; }
+  .menu-sheet { transform: none; }
   .tab-pane, .panel { animation: none; }
 }

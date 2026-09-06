@@ -998,6 +998,10 @@
     const menu = $("menu");
     if (menu.hidden) {
       menu.hidden = false;
+      // Страница позади перестаёт прокручиваться: две полосы прокрутки
+      // рядом — своя у меню и чужая у страницы — сбивают с толку, а колесом
+      // мыши над краем уезжало то, что под меню.
+      document.body.classList.add("menu-open");
       // Класс вешаем следующим кадром: смену прямо в момент появления
       // элемента браузер переходом не считает, и меню выскочило бы рывком.
       requestAnimationFrame(() => menu.classList.add("on"));
@@ -1015,9 +1019,10 @@
     // нём осталась бы пустая рамка.
     menuHideTimer = setTimeout(() => {
       menu.hidden = true;
+      document.body.classList.remove("menu-open");
       markSection(null);
       menuHideTimer = null;
-    }, 300);
+    }, 340);
   }
 
   // ── Вкладки внутри настроек ─────────────────────────────────
@@ -1559,6 +1564,21 @@
   };
 
   $("settings-toggle").onclick = () => toggleSettings();
+
+  // Ползунок прокрутки виден только тогда, когда прокручивают. Сама полоса
+  // прозрачная всегда (см. .thin-scroll в app.css); здесь только признак «сейчас
+  // едет», который сам гаснет через секунду после последнего движения.
+  function fadingScrollbar(watch, mark) {
+    let off = null;
+    watch.addEventListener("scroll", () => {
+      mark.classList.add("scrolling");
+      clearTimeout(off);
+      off = setTimeout(() => mark.classList.remove("scrolling"), 900);
+    }, { passive: true });
+  }
+  // У самой страницы событие приходит окну, а полоса принадлежит <html>.
+  fadingScrollbar(window, document.documentElement);
+  fadingScrollbar($("menu-body"), $("menu-body"));
 
   $("menu-back").onclick = closeMenu;
   // Клик по затемнению — тот же «назад». Затемнение для того и нужно: видно,

@@ -218,24 +218,6 @@ body.has-titlebar .status-bar { top: 38px; }
   to { width: 220px; }
 }
 
-.intro .skip {
-  position: absolute;
-  top: var(--s6);
-  right: var(--s6);
-  border: 1px solid var(--line-2);
-  background: transparent;
-  color: var(--dim);
-  border-radius: 999px;
-  padding: 8px 16px;
-  font-size: var(--t-sm);
-  cursor: pointer;
-  opacity: 0;
-  animation: rise .5s var(--ease) .5s forwards;
-  transition: border-color var(--fast) var(--ease), color var(--fast) var(--ease);
-}
-
-.intro .skip:hover { border-color: var(--lime); color: var(--lime); }
-
 /* Кто просил не мельтешить — тому не мельтешим. */
 @media (prefers-reduced-motion: reduce) {
   .intro *, .intro::before { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
