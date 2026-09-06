@@ -66,6 +66,13 @@ type NowPlaying struct {
 	PositionMs int    `json:"position_ms"`
 	DurationMs int    `json:"duration_ms"`
 	Uncertain  bool   `json:"uncertain"`
+	// Paused — заказ стоит на паузе. Панель по нему останавливает полосу:
+	// считает она сама, у себя, и без этого признака ехала бы на паузе.
+	Paused bool `json:"paused"`
+	// Volume — на чём стоит ползунок громкости, в процентах. Панель берёт его
+	// отсюда, а не спрашивает Spotify: спрашивать пришлось бы на каждую
+	// перерисовку.
+	Volume int `json:"volume"`
 }
 
 // LastPlayed — трек, который только что ушёл из эфира.

@@ -274,8 +274,10 @@
   // него: полоса идёт сама и в перерисовке не нуждается.
   function nowKey(now) {
     if (!now) return null;
+    // Громкости здесь нарочно нет: ползунок ведёт себя сам, а перерисовка
+    // карточки на каждое его движение отбирала бы его прямо из-под руки.
     return [now.title, now.artist, now.requester, now.source,
-            now.provider, now.duration_ms, now.uncertain];
+            now.provider, now.via, now.duration_ms, now.uncertain, now.paused];
   }
 
   // Последний игравший трек.
@@ -318,6 +320,10 @@
           <div class="last-sub">${esc(l.artist)}</div>
         </div>
         ${marks.length ? `<div class="last-marks">${marks.map(esc).join(" · ")}</div>` : ""}
+        ${l.source === "order" && l.uri ? `
+        <button class="act small" data-play="repeat" title="Поставить этот трек ещё раз">
+          ${icon("repeat")}Повторить
+        </button>` : ""}
       </div>`;
   }
 
@@ -354,27 +360,31 @@
             <div class="subhead">${esc(now.artist)}</div>
             ${now.requester ? `<div class="credit">${icon("user")}заказал <b>${esc(now.requester)}</b></div>` : ""}
             ${now.duration_ms > 0 ? `
-            <div class="meter">
+            <div class="meter${own ? "" : " seekable"}">
               <span class="t" id="at">${mmss(now.position_ms)}</span>
-              <span class="bar"><i id="at-bar"></i></span>
+              <span class="bar" id="at-seek"><i id="at-bar"></i></span>
               <span class="t">${mmss(now.duration_ms)}</span>
             </div>` : ""}
           </div>
         </div>
+        ${own ? "" : `
+        <div class="player">
+          <button class="pbtn" data-play="prev" title="В начало трека">${icon("skip-back")}</button>
+          <button class="pbtn key" data-play="${now.paused ? "play" : "pause"}"
+                  title="${now.paused ? "Продолжить" : "Пауза"}">${icon(now.paused ? "play" : "pause")}</button>
+          <button class="pbtn" data-play="next" title="Следующий заказ">${icon("skip-forward")}</button>
+          <span class="pvol">
+            <button class="pbtn" data-play="mute" title="Заглушить">${icon("volume-2")}</button>
+            <input type="range" id="vol" min="0" max="100" step="1" value="${now.volume ?? 100}">
+            <b id="vol-val">${now.volume ?? 100}%</b>
+          </span>
+        </div>`}
         <div class="acts">${own ? `
           <span class="hint" style="margin:0">Это твоя музыка, не заказ — скипать
             приложению тут нечего.</span>` : `
           <button class="act key" data-do="skip">${icon("skip-forward")}Скипнуть</button>
           <button class="act" data-do="restore">${icon("rotate-cw")}Вернуть Spotify</button>`}
         </div>
-        ${yt ? `
-        <label class="stage-vol">
-          ${icon("volume-2")}
-          <span class="t">Громкость <b id="vol-val">${config.youtube_volume ?? 100}%</b></span>
-          <input type="range" id="vol" min="1" max="100" step="1"
-                 value="${config.youtube_volume ?? 100}">
-          <span class="hint">От громкости Spotify. Действует сразу, на этот же трек.</span>
-        </label>` : ""}
         ${broken.length ? `
         <div class="stage-alarm">
           ${icon("triangle-alert")}
@@ -384,7 +394,10 @@
           </div>
           ${broken[0].button || ""}
         </div>` : ""}`);
-      if (yt) bindVolume();
+      if (!own) {
+        bindVolume();
+        bindSeek(now);
+      }
       runMeter(now);
       return;
     }
@@ -446,17 +459,74 @@
   // Пишем в те же настройки, что и ползунок в разделе «Если трека нет в
   // Spotify»: одно значение, два места, где до него можно дотянуться. Правка
   // уезжает в уже играющий mpv, а не только к следующему заказу.
+  // Перемотка.
+  //
+  // Один запрос на одно движение руки — на отпускание, а не на каждый пиксель.
+  // Для Spotify это принципиально: перемотка там стоит запроса, а норма
+  // запросов — узкое место всего приложения. Для заказов с YouTube канал
+  // местный и бесплатный, но правило одно на всех: незачем два поведения.
+  let seeking = false;
+
+  function bindSeek(now) {
+    const bar = $("at-seek");
+    if (!bar || !now.duration_ms) return;
+
+    const at = (e) => {
+      const box = bar.getBoundingClientRect();
+      const part = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+      return Math.round(part * now.duration_ms);
+    };
+    const paint = (ms) => {
+      const fill = $("at-bar");
+      if (fill) fill.style.width = (ms / now.duration_ms) * 100 + "%";
+      $("at").textContent = mmss(ms);
+    };
+
+    bar.onpointerdown = (e) => {
+      seeking = true;
+      bar.setPointerCapture(e.pointerId);
+      paint(at(e));
+    };
+    bar.onpointermove = (e) => { if (seeking) paint(at(e)); };
+    bar.onpointerup = async (e) => {
+      if (!seeking) return;
+      seeking = false;
+      const ms = at(e);
+      paint(ms);
+      // Свои часы переставляем сразу, не дожидаясь ответа: приложение сделает
+      // то же самое у себя, а полоса не должна дёргаться в ожидании сети.
+      meterFrom = Date.now() - ms;
+      await send("/api/player/seek", { position_ms: ms });
+    };
+    bar.onpointercancel = () => { seeking = false; };
+  }
+
+  // Громкость. Ползунок ведём у себя, а посылаем один раз — на отпускание.
+  let volumeWas = 0;
+
   function bindVolume() {
     const el = $("vol");
     if (!el) return;
     el.oninput = () => { $("vol-val").textContent = el.value + "%"; };
-    el.onchange = async () => {
-      const v = parseInt(el.value, 10);
-      if (await saveConfig({ youtube_volume: v })) {
-        const slider = $("yt-volume");
-        if (slider) { slider.value = v; $("yt-volume-val").textContent = v + "%"; }
-      }
-    };
+    el.onchange = () => send("/api/player/volume", { percent: parseInt(el.value, 10) });
+  }
+
+  // send — одна команда плеера. Отказ показываем строкой внизу: кнопки плеера
+  // нажимают, не глядя на экран, и молчащая кнопка читается как поломка.
+  async function send(url, body) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      if (r.ok) return true;
+      const data = await r.json().catch(() => ({}));
+      say(data.error || "Не получилось", true);
+    } catch {
+      say("Приложение не ответило", true);
+    }
+    return false;
   }
 
   // Плавная подмена содержимого: без неё блок мигает новым текстом рывком.
@@ -585,11 +655,19 @@
         clearInterval(meterTimer);
         return;
       }
+      // Пока тянут ползунок, полоса слушается руки, а не часов: иначе она
+      // прыгала бы обратно каждую секунду прямо под пальцем.
+      if (seeking) return;
       const at = Math.min(meterLength, Math.max(0, Date.now() - meterFrom));
       bar.style.width = (at / meterLength) * 100 + "%";
       $("at").textContent = mmss(at);
     };
     meterTick();
+
+    // На паузе часы не идут. Полоса считается у нас, а не спрашивается у
+    // Spotify, — значит и останавливать её надо самим, иначе трек «доиграет»
+    // на экране, пока в колонках тишина.
+    if (now.paused) return;
     meterTimer = setInterval(meterTick, 1000);
   }
 
@@ -1404,6 +1482,29 @@
   // перерисовываются, и навешивать им обработчики заново каждый раз — верный
   // способ однажды об этом забыть.
   document.addEventListener("click", (e) => {
+    // Кнопки плеера. Каждая — одно действие человека и один запрос: см.
+    // internal/server/playercontrol.go, там же про норму запросов Spotify.
+    const play = e.target.closest("[data-play]");
+    if (play) {
+      const what = play.dataset.play;
+      if (what === "mute") {
+        const el = $("vol");
+        if (!el) return;
+        const now = parseInt(el.value, 10);
+        // Второе нажатие возвращает туда, где было. Помним у себя: спрашивать
+        // Spotify «а сколько было» — лишний запрос ради того, что мы и так
+        // только что видели.
+        const want = now > 0 ? 0 : (volumeWas || 100);
+        if (now > 0) volumeWas = now;
+        el.value = want;
+        $("vol-val").textContent = want + "%";
+        send("/api/player/volume", { percent: want });
+        return;
+      }
+      send("/api/player/" + what);
+      return;
+    }
+
     if (e.target.closest("[data-open-settings]")) {
       toggleSettings(true, "conn");
       $("client-id").focus();

@@ -317,6 +317,81 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 .meter .bar i { position: absolute; inset: 0 auto 0 0; background: var(--lime); transition: width .9s linear; }
 .meter .t { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
 
+/* Полоса, за которую можно взяться.
+
+   Сама полоса в две точки высотой — по ней не попасть мышью, поэтому область
+   нажатия делается прозрачной подкладкой сверху и снизу, а видимая толщина
+   остаётся прежней. Под рукой полоса становится заметнее: без этого непонятно,
+   схватилась она или нет. */
+.meter.seekable .bar {
+  cursor: pointer;
+  padding: 9px 0;
+  height: auto;
+  background: none;
+  touch-action: none;
+}
+.meter.seekable .bar::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 50%;
+  height: 2px; margin-top: -1px;
+  background: var(--line-2);
+}
+.meter.seekable .bar i {
+  top: 50%; bottom: auto; height: 2px; margin-top: -1px;
+}
+.meter.seekable .bar:hover i,
+.meter.seekable .bar:active i { height: 4px; margin-top: -2px; }
+/* Пока тянут — плавность мешает: полоса обязана быть там, где палец. */
+.meter.seekable .bar:active i { transition: none; }
+
+/* ── Плеер ─────────────────────────────────────────────────────────────
+
+   Управление тем, что играет прямо сейчас: в начало, пауза, дальше и
+   громкость. Только заказами: своей музыкой стримера приложение не
+   распоряжается, и кнопок для неё здесь нет.
+
+   Ряд намеренно скромный. Главное на этом экране — что играет и кто заказал;
+   кнопки нужны в тот момент, когда что-то пошло не так, и притягивать взгляд
+   всё остальное время им незачем. */
+.player {
+  display: flex; align-items: center; gap: var(--s2);
+  margin-top: var(--s5);
+  flex-wrap: wrap;
+}
+
+.pbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  background: none;
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  color: var(--dim);
+  cursor: pointer;
+  transition: color var(--fast) var(--ease), border-color var(--fast) var(--ease),
+              background var(--fast) var(--ease);
+}
+.pbtn:hover { color: var(--text); border-color: var(--dimmer); background: var(--hover); }
+.pbtn:active { transform: translateY(1px); }
+.pbtn svg { width: 15px; height: 15px; }
+
+/* Пуск и пауза — главная кнопка ряда, поэтому она одна крашеная. */
+.pbtn.key {
+  width: 40px; height: 40px;
+  background: var(--lime); border-color: var(--lime); color: var(--ink);
+}
+.pbtn.key:hover { background: #d6ff6b; border-color: #d6ff6b; color: var(--ink); }
+.pbtn.key svg { width: 17px; height: 17px; }
+
+.pvol {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  margin-left: var(--s3);
+}
+.pvol input[type="range"] { width: 120px; accent-color: var(--lime); cursor: pointer; }
+.pvol b {
+  font-size: 12px; color: var(--dim); font-weight: 500;
+  font-variant-numeric: tabular-nums; min-width: 34px;
+}
+
 /* Куда вернётся музыка — это стример читает перед тем, как пустить заказы. */
 .recall {
   margin-top: var(--s5);
@@ -372,6 +447,7 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .last-marks { margin-left: auto; font-size: 12px; color: var(--dimmer); }
+.last .act { flex: none; }
 
 /* Ещё ничего не играло. Карточка та же, только приглушённая: место занято
    честно, а не выдуманным треком. */
@@ -382,20 +458,6 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 /* ── Кнопки ─────────────────────────────────────────────────────────── */
 
 .acts { display: flex; gap: var(--s2); margin-top: var(--s6); flex-wrap: wrap; align-items: center; }
-
-/* Громкость заказа с YouTube прямо на карточке: убавлять просят тот трек,
-   который оглушает сейчас, а не следующий. */
-.stage-vol {
-  display: grid; grid-template-columns: 16px auto 1fr; align-items: center;
-  gap: var(--s2) var(--s3);
-  margin-top: var(--s4); padding: var(--s3) var(--s4);
-  border: 1px solid var(--line); border-radius: 2px;
-}
-.stage-vol svg { width: 16px; height: 16px; color: var(--dim); }
-.stage-vol .t { font-size: var(--t-sm); color: var(--dim); white-space: nowrap; }
-.stage-vol .t b { color: var(--text); font-variant-numeric: tabular-nums; }
-.stage-vol input[type="range"] { width: 100%; min-width: 120px; accent-color: var(--lime); }
-.stage-vol .hint { grid-column: 2 / -1; margin: 0; }
 
 /* Поломка не прячет карточку играющего трека, а живёт полосой под ней —
    вместе со своей кнопкой починки. */

@@ -268,6 +268,17 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /api/redemptions/{id}", s.handleRedemptionAction)
 
 	mux.HandleFunc("POST /api/queue/skip", s.handleSkip)
+
+	// Управление играющим заказом. Всё это команды, по одному запросу на
+	// нажатие: см. internal/server/playercontrol.go.
+	mux.HandleFunc("POST /api/player/play", s.handlePlayerPlay)
+	mux.HandleFunc("POST /api/player/pause", s.handlePlayerPause)
+	mux.HandleFunc("POST /api/player/seek", s.handlePlayerSeek)
+	mux.HandleFunc("POST /api/player/volume", s.handlePlayerVolume)
+	mux.HandleFunc("POST /api/player/prev", s.handlePlayerPrev)
+	// «Дальше» — тот же скип: заказ уходит с эфира, играет следующий.
+	mux.HandleFunc("POST /api/player/next", s.handleSkip)
+	mux.HandleFunc("POST /api/player/repeat", s.handlePlayerRepeat)
 	mux.HandleFunc("POST /api/queue/{id}/remove", s.handleQueueRemove)
 	mux.HandleFunc("POST /api/queue/{id}/top", s.handleQueueTop)
 	mux.HandleFunc("POST /api/queue/{id}/fix", s.handleQueueFix)

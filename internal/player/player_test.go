@@ -35,6 +35,11 @@ type fakeSpotify struct {
 	duration int
 	progress int
 	paused   bool
+	// held, sought и volumes нужны проверкам управления заказом: пауза,
+	// перемотка и громкость.
+	held    bool
+	sought  []int
+	volumes []int
 }
 
 // setPlaying изображает, что у стримера что-то играет.
@@ -103,7 +108,34 @@ func (f *fakeSpotify) lastDevice() string {
 	return f.devices[len(f.devices)-1]
 }
 
-func (f *fakeSpotify) Pause(ctx context.Context, deviceID string) error { return nil }
+func (f *fakeSpotify) Pause(ctx context.Context, deviceID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.held = true
+	return nil
+}
+
+func (f *fakeSpotify) Resume(ctx context.Context, deviceID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.held = false
+	return nil
+}
+
+func (f *fakeSpotify) Seek(ctx context.Context, positionMs int, deviceID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sought = append(f.sought, positionMs)
+	f.progress = positionMs
+	return nil
+}
+
+func (f *fakeSpotify) SetVolume(ctx context.Context, percent int, deviceID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.volumes = append(f.volumes, percent)
+	return nil
+}
 
 func (f *fakeSpotify) State(ctx context.Context) (*spotify.PlayerState, bool, error) {
 	f.mu.Lock()
