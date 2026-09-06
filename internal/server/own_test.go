@@ -12,6 +12,7 @@ import (
 	"songrequest/internal/config"
 	"songrequest/internal/player"
 	"songrequest/internal/queue"
+	"songrequest/internal/spotifyapp"
 )
 
 // Между заказами в кадре должно быть то, что стример слушает сам, — иначе
@@ -34,7 +35,11 @@ func TestOwnMusicShowsWhenQueueIsEmpty(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	srv.pollOwn(context.Background())
+	// Программы Spotify на этом компьютере как будто нет: проверяем путь
+	// «спросить по сети». На машине разработчика Spotify запущен, и без этой
+	// подмены тест ловил бы настоящий трек вместо выдуманного.
+	srv.localTrack = noLocalSpotify
+	srv.pollOwn(context.Background(), &ownWatch{})
 
 	now := srv.state.Snapshot().Now
 	if now == nil {
@@ -92,7 +97,8 @@ func TestOrderBeatsOwnMusic(t *testing.T) {
 	waitFor(t, "заказ так и не заиграл", func() bool { return srv.player.Now() != nil })
 
 	before := countAsks()
-	srv.pollOwn(ctx)
+	srv.localTrack = noLocalSpotify
+	srv.pollOwn(ctx, &ownWatch{})
 
 	if countAsks() != before {
 		t.Error("пока играет заказ, спрашивать Spotify не о чем")
@@ -117,7 +123,8 @@ func TestOwnMusicHiddenWhenTurnedOff(t *testing.T) {
 	})
 
 	srv.cfg.Update(func(c *config.Config) { c.Widget.ShowOwn = false })
-	srv.pollOwn(context.Background())
+	srv.localTrack = noLocalSpotify
+	srv.pollOwn(context.Background(), &ownWatch{})
 
 	if asked {
 		t.Error("с выключенным показом своей музыки Spotify дёргать незачем")
@@ -139,4 +146,131 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal(what)
+}
+
+// noLocalSpotify изображает компьютер, на котором программа Spotify не
+// запущена: тогда остаётся спрашивать по сети.
+func noLocalSpotify() (spotifyapp.Track, spotifyapp.Status) {
+	return spotifyapp.Track{}, spotifyapp.Unknown
+}
+
+// Главное ради чего всё затевалось: пока Spotify не пускает приложение к
+// плееру, играющий трек всё равно виден.
+//
+// Живьём 30.08: Spotify закрыл доступ к плееру на четыре часа, и панель
+// показывала пустоту — при том, что программа Spotify рядом играла музыку и
+// писала имя трека в заголовок своего окна.
+func TestOwnMusicSurvivesSpotifyRefusal(t *testing.T) {
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		// Spotify отказывает всему, что касается плеера.
+		w.Header().Set("Retry-After", "16000")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	srv.localTrack = func() (spotifyapp.Track, spotifyapp.Status) {
+		return spotifyapp.Track{Artist: "Hayd", Title: "Closure"}, spotifyapp.Playing
+	}
+
+	srv.pollOwn(context.Background(), &ownWatch{})
+
+	now := srv.state.Snapshot().Now
+	if now == nil {
+		t.Fatal("трек не показан, хотя программа Spotify его играет")
+	}
+	if now.Artist != "Hayd" || now.Title != "Closure" {
+		t.Fatalf("показано не то: %s — %s", now.Artist, now.Title)
+	}
+	if now.Source != app.SourceOwn {
+		t.Fatalf("трек должен быть помечен как своя музыка, помечен %q", now.Source)
+	}
+}
+
+// Пока играет один и тот же трек, по сети ходить незачем: имя трека приходит
+// из заголовка окна бесплатно. Именно частота этих запросов и довела до
+// четырёхчасовой паузы.
+func TestSameTrackDoesNotAskSpotifyAgain(t *testing.T) {
+	var mu sync.Mutex
+	asks := 0
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/me/player") {
+			mu.Lock()
+			asks++
+			mu.Unlock()
+			writeTestJSON(w, map[string]any{
+				"is_playing": true, "progress_ms": 10000,
+				"item": map[string]any{
+					"id": "own1", "uri": "spotify:track:own1", "name": "Closure",
+					"duration_ms": 200000,
+					"artists":     []any{map[string]any{"name": "Hayd"}},
+					"album":       map[string]any{"name": "Closure"},
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv.localTrack = func() (spotifyapp.Track, spotifyapp.Status) {
+		return spotifyapp.Track{Artist: "Hayd", Title: "Closure"}, spotifyapp.Playing
+	}
+
+	var w ownWatch
+	srv.pollOwn(context.Background(), &w)
+	srv.pollOwn(context.Background(), &w)
+	srv.pollOwn(context.Background(), &w)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("сходили к Spotify %d раза, а хватало одного", asks)
+	}
+}
+
+// Положение внутри трека приложение считает само: между запросами музыка едет
+// ровно так же, как едет время.
+func TestPositionMovesWithoutAsking(t *testing.T) {
+	w := ownWatch{
+		now: &app.NowPlaying{Title: "Closure", Artist: "Hayd", DurationMs: 200000},
+		pos: 10000,
+		at:  time.Now().Add(-3 * time.Second),
+	}
+
+	got := w.playing(spotifyapp.Track{Artist: "Hayd", Title: "Closure"})
+	if got.PositionMs < 12500 || got.PositionMs > 13500 {
+		t.Fatalf("положение %d мс, а ждали около 13000", got.PositionMs)
+	}
+
+	// За конец трека уезжать нельзя: полоса в кадре уползла бы за край.
+	w.at = time.Now().Add(-10 * time.Minute)
+	if got := w.playing(spotifyapp.Track{}); got.PositionMs != 200000 {
+		t.Fatalf("положение %d мс, а трек длится 200000", got.PositionMs)
+	}
+}
+
+// Программа Spotify рядом и молчит — значит музыка стоит, и дёргать Spotify
+// по сети каждую секунду незачем. Раз в минуту — на случай, если стример
+// слушает с телефона.
+func TestIdleSpotifyIsNotAskedOften(t *testing.T) {
+	var mu sync.Mutex
+	asks := 0
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/me/player") {
+			mu.Lock()
+			asks++
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv.localTrack = func() (spotifyapp.Track, spotifyapp.Status) {
+		return spotifyapp.Track{}, spotifyapp.Idle
+	}
+
+	var w ownWatch
+	for i := 0; i < 5; i++ {
+		srv.pollOwn(context.Background(), &w)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if asks != 1 {
+		t.Fatalf("сходили к Spotify %d раз, а хватало одного", asks)
+	}
 }

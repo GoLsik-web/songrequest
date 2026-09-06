@@ -151,7 +151,25 @@ func (s *Server) syncPlayback() {
 		return
 	}
 
-	view := make([]app.QueueItem, 0, len(items))
+	view := make([]app.QueueItem, 0, len(items)+1)
+	// Заказ, который ждёт конца трека стримера, идёт первым: он и заиграет
+	// первым. Из самой очереди он уже вынут, поэтому в список его добавляем
+	// отдельно.
+	if w := s.player.WaitingItem(); w != nil {
+		view = append(view, app.QueueItem{
+			ID:         w.ID,
+			Source:     w.Source,
+			Requester:  w.Requester,
+			Title:      w.Title,
+			Artist:     w.Artist,
+			Provider:   w.Provider,
+			DurationMs: w.DurationMs,
+			Uncertain:  w.Uncertain,
+			RawRequest: w.RawRequest,
+			CoverURL:   w.CoverURL,
+			Waiting:    true,
+		})
+	}
 	for _, it := range items {
 		view = append(view, app.QueueItem{
 			ID:         it.ID,

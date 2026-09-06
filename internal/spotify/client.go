@@ -49,12 +49,32 @@ type Client struct {
 	pending     *pending
 	redirectURI string
 	me          *Me
+	// searchLimitCap — сколько треков этот Spotify согласен отдать за раз.
+	// Ноль означает «ещё не упирались». См. safeSearchLimit в search.go.
+	searchLimitCap int
 	// checked и checkErr — чем кончилась последняя проверка аккаунта.
 	// Нужны панели: без них красная лампочка не может назвать код.
 	checked  bool
 	checkErr error
 	// proxyLabel — через кого ходим к Spotify, без пароля.
 	proxyLabel string
+	// lastRate — когда Spotify последний раз просил сбавить темп (любой 429).
+	// По нему опрос переходит на щадящий шаг: см. RecentlyLimited.
+	lastRate time.Time
+	// rateUntil — до какого времени Spotify просил не приходить, по частям API.
+	//
+	// Найдено живьём: Spotify ограничил приложение и попросил паузу в четыре с
+	// половиной часа. Приложение честно отказывалось её отсиживать — и тут же
+	// спрашивало снова, раз в секунду, потому что открытая панель опрашивает
+	// плеер каждую секунду. В лог за час набегало три тысячи одинаковых
+	// ошибок, а ограничение от такого стука только продлевается.
+	//
+	// По частям, а не одной датой на всё приложение, потому что Spotify
+	// считает их по отдельности: в тот же вечер он не пускал к плееру
+	// (/me/player), но прекрасно отвечал на поиск и на данные аккаунта. Одна
+	// общая дата гасила и то, что работало: панель показывала «ничего не
+	// работает» там, где не работала одна часть.
+	rateUntil map[string]time.Time
 
 	refreshMu sync.Mutex
 }
@@ -213,7 +233,7 @@ func (c *Client) PlanProblem(me *Me) *errs.Error {
 		// одной кнопкой) и Spotify промолчал (лечится ожиданием).
 		if !c.hasScope("user-read-private") {
 			return errs.New(errs.SpotifyPlanUnknown,
-				"Не могу проверить подписку: при входе не выдано право читать данные аккаунта. Нажми «Подключить заново» — приложение попросит его и всё определится.")
+				"Не могу проверить подписку: при входе не выдано право читать данные аккаунта. Нажми «Подключить Spotify» ещё раз — приложение попросит его и всё определится.")
 		}
 		return errs.New(errs.SpotifyPlanUnknown,
 			"Spotify не сообщил тип подписки. Работать можно: если Premium есть, всё заработает, а если нет — Spotify откажет при первом заказе, и я об этом скажу.")
@@ -292,6 +312,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		}
 	}
 
+	// Пока идёт объявленная Spotify пауза, в сеть не ходим вовсе: он всё равно
+	// ответит отказом, а лишний стук ограничение продлевает.
+	if left := c.rateLeft(rateGroup(path)); left > 0 {
+		return pauseError(left)
+	}
+
 	const maxAttempts = 4
 	var lastErr error
 
@@ -330,6 +356,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 				return lastErr
 			}
 			continue
+		}
+
+		// Ответ дошёл — значит короткая пауза, если она была, уже кончилась:
+		// держать из-за неё остальные запросы больше незачем.
+		if resp.StatusCode < 300 {
+			c.clearShortPause(rateGroup(path))
 		}
 
 		switch {
@@ -371,13 +403,24 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			// Раньше это отсыпалось как есть, четыре раза подряд, и очередь на
 			// стриме просто вставала на часы без единого слова в панели.
 			wait := retryAfter(resp, attempt)
+			c.noteRateHit()
 			if wait > maxRateWait {
-				c.log.Error("Spotify просит слишком долгую паузу, ждать не будем",
-					"путь", path, "пауза", wait.String())
+				// Запоминаем срок и до него молчим: иначе следующий же опрос
+				// плеера (через секунду) постучится снова.
+				if c.setRateUntil(rateGroup(path), time.Now().Add(wait)) {
+					c.log.Error("Spotify просит слишком долгую паузу, ждать не будем",
+						"путь", path, "пауза", wait.String())
+				}
 				return errs.New(errs.SpotifyRateLimit,
 					"Spotify временно ограничил приложение и просит долгую паузу ("+
 						wait.Round(time.Second).String()+"). Музыка вернётся сама, когда он её снимет.")
 			}
+			// Короткую паузу отсиживаем сами, но и остальным запросам ходить
+			// в это время незачем: у приложения три источника запросов
+			// (опрос своей музыки, проверка играющего заказа, подбор трека),
+			// и стучаться втроём в закрытую дверь — верный способ получить
+			// вместо двадцати секунд четыре часа.
+			c.setRateUntil(rateGroup(path), time.Now().Add(wait))
 			c.log.Warn("Spotify просит подождать", "путь", path, "пауза", wait.String())
 			lastErr = errs.New(errs.SpotifyRateLimit,
 				"Spotify попросил сделать паузу. Приложение подождёт и попробует снова.")
@@ -428,15 +471,50 @@ func apiError(statusCode int, path string, data []byte) error {
 		return errs.New(errs.SpotifyCountry,
 			"Spotify не работает из этой страны. Если пользуешься VPN — включи его и нажми «Проверить связь».")
 
+	// «Invalid limit» на поиск.
+	//
+	// Пробы 27.08 показали, чем это на самом деле было: у аккаунта тестера
+	// Spotify отдаёт не больше десяти треков за запрос, а приложение просило
+	// двадцать и пятьдесят. Отсюда «поиск не работает вообще» пять дней
+	// подряд. Разбирается это в searchTracks: потолок занижается и запрос
+	// повторяется сам.
+	//
+	// Сюда доходит только то, что не спаслось и на десяти. Текст оставляем
+	// человеческий: «Spotify отказал (400). Подробности в логе» — худшее,
+	// что можно сказать стримеру посреди эфира.
+	case statusCode == http.StatusBadRequest && strings.HasPrefix(path, "/search") &&
+		contains(e.Error.Message, "Invalid limit"):
+		return errs.New(errs.SpotifySearchLimit,
+			"Spotify отдаёт слишком мало результатов поиска и отказывает даже на малых запросах. Нажми «Сохранить лог и историю» и пришли архив.")
+
 	case e.Error.Reason == "NO_ACTIVE_DEVICE":
 		return errs.New(errs.SpotifyNoDevice,
 			"Spotify нигде не открыт. Запусти приложение Spotify и включи любой трек, чтобы устройство стало активным.")
 	case e.Error.Reason == "PREMIUM_REQUIRED" || contains(e.Error.Message, "Premium"):
 		return errs.New(errs.SpotifyNoPremium,
 			"Для управления музыкой нужен Spotify Premium.")
-	case statusCode == http.StatusForbidden:
+	// 403 на содержимое плейлиста.
+	//
+	// Пробы 27.08: этому Client ID Spotify не отдаёт треки ни одного
+	// плейлиста — ни чужого, ни своего, ни даже учебного с
+	// developer.spotify.com, при том что сам плейлист (без `/tracks`)
+	// читается с кодом 200. Значит дело не в правах стримера и не в
+	// конкретном плейлисте, и советовать «перевойди» — гонять человека зря.
+	//
+	// Играть запасной плейлист это не мешает: он включается целиком, по
+	// адресу, а не списком треков. Ломается только дозаполнение тишины
+	// после очереди.
+	case statusCode == http.StatusForbidden && strings.Contains(path, "/tracks"):
 		return errs.New(errs.SpotifyNoPremium,
-			"Spotify запретил это действие. Чаще всего дело в отсутствии Premium или в том, что приложению не выдали нужные права при входе.")
+			"Spotify не отдаёт этому приложению содержимое плейлистов — ни одного, включая свои. Права стримера тут ни при чём, перевходить не нужно. Запасной плейлист всё равно включится целиком; не сработает только дозаполнение тишины после очереди.")
+
+	case statusCode == http.StatusForbidden:
+		// Про Premium здесь раньше говорилось первым делом — и уводило в
+		// сторону: у тестера Premium есть, а 403 приходил на содержимое
+		// каждого плейлиста. Настоящие причины другие, и Spotify их не
+		// называет, поэтому перечисляем как есть.
+		return errs.New(errs.SpotifyNoPremium,
+			"Spotify запретил это действие. Причина не в приложении: чаще всего это не выданные при входе права или ограничения самого аккаунта. Если Premium есть — нажми «Сохранить лог и историю» и пришли архив.")
 	case statusCode == http.StatusNotFound && strings.HasPrefix(path, "/me/player"):
 		return errs.New(errs.SpotifyNoDevice,
 			"Spotify не нашёл устройство. Открой Spotify и включи любую песню, потом попробуй снова.")
@@ -448,6 +526,148 @@ func apiError(statusCode int, path string, data []byte) error {
 	}
 	return errs.New(errs.SpotifyBadResponse,
 		fmt.Sprintf("Spotify отказал (%d). Подробности в логе.", statusCode))
+}
+
+// isInvalidLimit узнаёт отказ «Invalid limit» среди прочих отказов Spotify.
+//
+// По коду, а не по тексту: текст пишется для человека и меняется, а поведение
+// приложения от формулировки зависеть не должно.
+func isInvalidLimit(err error) bool {
+	code, _ := errs.Describe(err)
+	return code == errs.SpotifySearchLimit
+}
+
+// pauseError объясняет отказ во время паузы. Текст зависит от того, сколько
+// ждать: двадцать секунд — «приложение подождёт», четыре часа — «музыка
+// вернётся сама», и это две очень разные новости для человека.
+func pauseError(left time.Duration) error {
+	if left <= maxRateWait {
+		return errs.New(errs.SpotifyRateLimit,
+			"Spotify попросил короткую паузу (осталось "+
+				left.Round(time.Second).String()+"). Приложение подождёт само.")
+	}
+	return errs.New(errs.SpotifyRateLimit,
+		"Spotify временно ограничил приложение и просит долгую паузу (осталось "+
+			left.Round(time.Second).String()+"). Музыка вернётся сама, когда он её снимет.")
+}
+
+// rateGroup — к какой части Spotify относится путь.
+//
+// Части он ограничивает по отдельности, и мешать их нельзя: 30.08 плеер был
+// закрыт на четыре часа, а поиск в это же время работал.
+func rateGroup(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/me/player"):
+		return "плеер"
+	case strings.HasPrefix(path, "/search"):
+		return "поиск"
+	case strings.HasPrefix(path, "/me"):
+		return "аккаунт"
+	case strings.HasPrefix(path, "/playlists"), strings.HasPrefix(path, "/users"):
+		return "плейлисты"
+	default:
+		return "прочее"
+	}
+}
+
+// PauseLeft — самая долгая из объявленных Spotify пауз, для панели. Ноль —
+// значит ни одна часть не закрыта.
+func (c *Client) PauseLeft() time.Duration {
+	left, _ := c.PauseInfo()
+	return left
+}
+
+// PauseInfo — сколько ждать и какую часть Spotify закрыл.
+//
+// Часть нужна панели, чтобы не пугать зря: закрытый плеер означает «заказы не
+// сыграют», а закрытый поиск — «новые заказы не найдутся». Это разные новости,
+// и в тот же вечер бывает закрыта только одна из них.
+func (c *Client) PauseInfo() (time.Duration, string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var most time.Duration
+	part := ""
+	for group, until := range c.rateUntil {
+		if left := time.Until(until); left > most {
+			most, part = left, group
+		}
+	}
+	if most <= 0 {
+		return 0, ""
+	}
+	return most, part
+}
+
+// ClearPause забывает объявленную паузу.
+//
+// Зовётся, когда человек сам нажал «Проверить связь»: он видел объяснение,
+// решил попробовать ещё раз, и запрещать ему это — значит запереть его на
+// четыре часа без единой кнопки. Один запрос по нажатию ограничение не
+// продлевает; продлевает поток запросов, а его как раз и держит пауза.
+func (c *Client) ClearPause() { c.clearPause() }
+
+// RecentlyLimited — Spotify недавно просил сбавить темп.
+//
+// Найдено живьём: у приложения в режиме разработки тесная норма запросов, и
+// секундный опрос плеера за вечер довёл до паузы в четыре с половиной часа.
+// Пока жалоба свежая, опрос обязан идти реже — см. pollStep в панели.
+func (c *Client) RecentlyLimited() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return !c.lastRate.IsZero() && time.Since(c.lastRate) < calmFor
+}
+
+// calmFor — сколько держим щадящий шаг опроса после жалобы Spotify.
+const calmFor = 10 * time.Minute
+
+// noteRateHit запоминает жалобу Spotify на частоту.
+func (c *Client) noteRateHit() {
+	c.mu.Lock()
+	c.lastRate = time.Now()
+	c.mu.Unlock()
+}
+
+// clearShortPause снимает короткую паузу после удачного ответа. Долгую не
+// трогает: её объявил сам Spotify, и один пролезший запрос её не отменяет.
+func (c *Client) clearShortPause(group string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if left := time.Until(c.rateUntil[group]); left > 0 && left <= maxRateWait {
+		delete(c.rateUntil, group)
+	}
+}
+
+// clearPause снимает все объявленные паузы.
+func (c *Client) clearPause() {
+	c.mu.Lock()
+	c.rateUntil = nil
+	c.mu.Unlock()
+}
+
+// rateLeft — сколько осталось от паузы для этой части Spotify. Ноль — можно
+// ходить.
+func (c *Client) rateLeft(group string) time.Duration {
+	c.mu.RLock()
+	until, ok := c.rateUntil[group]
+	c.mu.RUnlock()
+	if !ok {
+		return 0
+	}
+	return time.Until(until)
+}
+
+// setRateUntil запоминает конец паузы и отвечает, надо ли писать про это в
+// лог: строчка нужна одна на паузу, а не одна на каждый запрос.
+func (c *Client) setRateUntil(group string, until time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rateUntil == nil {
+		c.rateUntil = map[string]time.Time{}
+	}
+	first := time.Until(c.rateUntil[group]) <= 0
+	c.rateUntil[group] = until
+	return first
 }
 
 // maxRateWait — самая долгая пауза, которую готовы отсидеть. Тридцать секунд

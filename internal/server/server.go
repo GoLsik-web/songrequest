@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"songrequest/internal/app"
@@ -27,7 +28,9 @@ import (
 	"songrequest/internal/player"
 	"songrequest/internal/queue"
 	"songrequest/internal/spotify"
+	"songrequest/internal/spotifyapp"
 	"songrequest/internal/store"
+	"songrequest/internal/tunnel"
 	"songrequest/internal/twitch"
 	"songrequest/internal/youtube"
 )
@@ -44,8 +47,18 @@ type Deps struct {
 	Spotify *spotify.Client
 	Twitch  *twitch.Client
 	DB      *store.DB
+	Tunnel  *tunnel.Tunnel
+	Secrets Secrets
 	DataDir string
 	Version string
+}
+
+// Secrets — хранилище паролей Windows. Интерфейс, а не *secrets.Store, чтобы
+// тесты не лезли в «Диспетчер учётных данных» настоящей машины.
+type Secrets interface {
+	PutJSON(name string, v any) error
+	GetJSON(name string, v any) error
+	Delete(name string) error
 }
 
 // Server — HTTP-сервер панели.
@@ -56,6 +69,10 @@ type Server struct {
 	spotify *spotify.Client
 	twitch  *twitch.Client
 	db      *store.DB
+	// tunnel — обход блокировок внутри приложения. Пусто в сборках, где его
+	// нет: тогда остаётся ручное поле «Прокси для Spotify».
+	tunnel  *tunnel.Tunnel
+	secrets Secrets
 	// matchCache помнит, чем закончился поиск по такому же запросу.
 	matchCache *match.Cache
 	queue      *queue.Queue
@@ -73,6 +90,66 @@ type Server struct {
 	http *http.Server
 	ln   net.Listener
 	addr string
+
+	// probeOnce держит автоматическую проверку поиска: один раз за запуск.
+	probeOnce sync.Once
+
+	// covers — обложки, скачанные для виджета. См. cover.go.
+	covers covers
+
+	// introShown — показывали ли уже заставку в этом запуске. См. handleSetup:
+	// заставка полагается на запуск приложения, а не на загрузку страницы.
+	introShown atomic.Bool
+
+	// reselecting — идёт ли прямо сейчас переход на другой сервер обхода.
+	// См. noteSpotifyError: отказы Spotify приходят пачками, а перебирать
+	// серверы надо один раз.
+	reselecting atomic.Bool
+
+	// reselects — сколько раз за запуск уже меняли сервер обхода из-за
+	// отказов Spotify. См. maxReselects.
+	reselects atomic.Int64
+
+	// silence* — сколько раз подряд Spotify промолчал и когда это началось,
+	// плюс когда мы в последний раз меняли дорогу до него. См.
+	// noteSpotifySilence: по одному отказу дорогу не меняют, и менять её чаще
+	// раза в несколько минут тоже нельзя.
+	silenceMu    sync.Mutex
+	silenceFirst time.Time
+	silenceCount int
+	routeChanged time.Time
+
+	// reviving — идёт ли прямо сейчас подъём упавшего обхода. См. reviveTunnel:
+	// упасть он может и от смерти программы обхода, и от сторожа, который
+	// проверяет посредника, — а поднимать надо один раз.
+	reviving atomic.Bool
+
+	// localTrack подменяет чтение играющего трека у программы Spotify.
+	// Пусто — читаем по-настоящему. Заполняется только в проверках.
+	localTrack func() (spotifyapp.Track, spotifyapp.Status)
+
+	// paused — показана ли сейчас в панели объявленная Spotify пауза.
+	// См. notePause: карточку надо пересобрать и когда пауза началась, и
+	// когда кончилась, а происходит это само, без единого нажатия.
+	paused atomic.Bool
+
+	// panels — сколько панелей открыто прямо сейчас. Пока хоть одна открыта,
+	// Spotify спрашивается раз в секунду: стример может перемотать трек в
+	// самом Spotify, и полоса в панели обязана поехать следом сразу.
+	// Виджет в OBS сюда не считается — он висит весь стрим, и держать из-за
+	// него секундный опрос значит платить запросами за картинку, которая
+	// меняется раз в три минуты.
+	panels atomic.Int64
+
+	// showWindow — как показать окно программы. Кладёт сюда main, когда окно
+	// создано. В режиме «панель в браузере» остаётся пустым: показывать
+	// нечего, и запрос честно отвечает отказом.
+	showWindow atomic.Pointer[func()]
+
+	// openAuth — как открыть страницу входа в Spotify внутри приложения,
+	// через поднятый обход. Кладёт сюда main, когда окно есть. Пусто — вход
+	// открывается в браузере, как раньше.
+	openAuth atomic.Pointer[func(url string) error]
 
 	// snapMu защищает снимок состояния Spotify. На этом этапе его снимают
 	// кнопкой из панели; дальше это будет делать очередь заказов.
@@ -120,6 +197,8 @@ func New(d Deps) (*Server, error) {
 		spotify: d.Spotify,
 		twitch:  d.Twitch,
 		db:      d.DB,
+		tunnel:  d.Tunnel,
+		secrets: d.Secrets,
 		dataDir: d.DataDir,
 		version: d.Version,
 		ln:      ln,
@@ -143,8 +222,12 @@ func New(d Deps) (*Server, error) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(sub)))
 	mux.HandleFunc("GET /{$}", s.page(sub, "index.html"))
 	mux.HandleFunc("GET /widget", s.page(sub, "widget.html"))
+	mux.HandleFunc("GET /cover", s.handleCover)
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("GET /api/setup", s.handleSetup)
+	mux.HandleFunc("POST /api/setup/done", s.handleSetupDone)
+	mux.HandleFunc("POST /api/window/show", s.handleShowWindow)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config", s.handleSetConfig)
 	mux.HandleFunc("GET /api/diag/export", s.handleDiagExport)
@@ -152,7 +235,11 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /api/spotify/login", s.handleSpotifyLogin)
 	mux.HandleFunc("POST /api/spotify/logout", s.handleSpotifyLogout)
 	mux.HandleFunc("POST /api/spotify/check", s.handleSpotifyCheck)
+	mux.HandleFunc("POST /api/spotify/probe", s.handleSpotifyProbe)
 	mux.HandleFunc("POST /api/spotify/proxy/detect", s.handleProxyDetect)
+	mux.HandleFunc("POST /api/tunnel/on", s.handleTunnelOn)
+	mux.HandleFunc("POST /api/tunnel/off", s.handleTunnelOff)
+	mux.HandleFunc("POST /api/tunnel/forget", s.handleTunnelForget)
 	mux.HandleFunc("GET /api/spotify/playlists", s.handleSpotifyPlaylists)
 	mux.HandleFunc("POST /api/spotify/snapshot", s.handleSpotifySnapshot)
 	mux.HandleFunc("POST /api/spotify/restore", s.handleSpotifyRestore)
@@ -304,6 +391,28 @@ func (s *Server) page(sub fs.FS, name string) http.HandlerFunc {
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.state.Snapshot())
+}
+
+// OnShowWindow говорит панели, как показать окно программы.
+func (s *Server) OnShowWindow(f func()) { s.showWindow.Store(&f) }
+
+// OnOpenAuth говорит панели, как открыть вход в Spotify в своём окне.
+func (s *Server) OnOpenAuth(f func(url string) error) { s.openAuth.Store(&f) }
+
+// handleShowWindow достаёт окно из трея.
+//
+// Зовёт его не панель, а вторая копия приложения: человек, не найдя окна на
+// экране, запускает .exe ещё раз. Вместо второй программы на ту же базу
+// поднимаем окно у первой — так это и выглядит для человека: «запустил, и оно
+// открылось».
+func (s *Server) handleShowWindow(w http.ResponseWriter, r *http.Request) {
+	show := s.showWindow.Load()
+	if show == nil {
+		http.Error(w, "окна нет, панель открыта в браузере", http.StatusServiceUnavailable)
+		return
+	}
+	(*show)()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {

@@ -87,9 +87,11 @@ func TestMissingProductDoesNotClaimNoPremium(t *testing.T) {
 	if problem.Code == errs.SpotifyNoPremium {
 		t.Fatal("нельзя утверждать, что подписки нет, когда мы этого не знаем")
 	}
-	// Причина лечится одной кнопкой, поэтому текст обязан её называть.
-	if !strings.Contains(problem.Message, "заново") {
-		t.Fatalf("текст должен подсказать переподключение: %q", problem.Message)
+	// Причина лечится одной кнопкой, поэтому текст обязан её называть — и
+	// именно так, как она подписана в панели. Раньше здесь предлагалось нажать
+	// «Подключить заново»: такой кнопки в панели нет и не было.
+	if !strings.Contains(problem.Message, "«Подключить Spotify»") {
+		t.Fatalf("текст должен назвать кнопку панели: %q", problem.Message)
 	}
 }
 

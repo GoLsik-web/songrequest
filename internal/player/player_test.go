@@ -185,7 +185,7 @@ func newPlayer(t *testing.T) (*Player, *queue.Queue, *fakeSpotify) {
 	p.ResumeDelay = 20 * time.Millisecond
 	// И шесть секунд до первой проверки Spotify — тоже: проверяем поведение,
 	// а не терпение.
-	p.PollEvery = 100 * time.Millisecond
+	p.SetPollEvery(100 * time.Millisecond)
 	return p, q, sp
 }
 

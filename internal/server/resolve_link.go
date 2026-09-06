@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"songrequest/internal/app"
+	"songrequest/internal/errs"
 	"songrequest/internal/links"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
@@ -22,6 +23,11 @@ type linkResult struct {
 	WantMs int
 	// YouTube — играть напрямую с YouTube, минуя Spotify.
 	YouTube *queue.Item
+	// Note — почему ссылку прочитать не вышло. Заполняется как раз тогда,
+	// когда fromLink отвечает «не получилось»: без этого зритель со ссылкой
+	// и зритель с пустым сообщением получали от приложения один и тот же
+	// ответ — «ты не написал, что заказываешь».
+	Note string
 }
 
 // fromLink разбирает ссылку в заказе.
@@ -40,7 +46,7 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 		track, err := s.spotify.Track(ctx, link.ID)
 		if err != nil {
 			s.log.Warn("не смог взять трек по ссылке Spotify", "ссылка", link.URL, "ошибка", err)
-			return linkResult{}, false
+			return linkResult{Note: "Spotify не отдал трек по этой ссылке"}, false
 		}
 		s.log.Info("трек взят по ссылке Spotify",
 			"трек", firstArtist(track.Artists)+" — "+track.Title)
@@ -52,7 +58,7 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 		meta, err := s.yandex.Read(ctx, link.URL)
 		if err != nil {
 			s.log.Info("не прочитал страницу Яндекс.Музыки", "ссылка", link.URL, "ошибка", err)
-			return linkResult{}, false
+			return linkResult{Note: "страница Яндекс.Музыки не открылась"}, false
 		}
 		s.log.Info("трек со страницы Яндекс.Музыки",
 			"артист", meta.Artist, "название", meta.Title)
@@ -60,16 +66,17 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 
 	case links.YouTube, links.VK:
 		if s.youtube == nil || !s.ytTools.Ready() {
-			return linkResult{}, false
+			return linkResult{Note: "запасной проигрыватель ещё не готов"}, false
 		}
 		track, err := s.youtube.Lookup(ctx, link.URL)
 		if err != nil {
 			s.log.Info("не разобрал ссылку", "ссылка", link.URL, "ошибка", err)
-			return linkResult{}, false
+			_, note := errs.Describe(err)
+			return linkResult{Note: note}, false
 		}
 		if track.IsLive {
 			s.log.Info("по ссылке стрим, а не трек", "ссылка", link.URL)
-			return linkResult{}, false
+			return linkResult{Note: "по ссылке идёт стрим, а не трек — он не кончится"}, false
 		}
 
 		s.log.Info("метаданные по ссылке",
@@ -140,7 +147,7 @@ func (s *Server) acceptTrack(ctx context.Context, r twitch.Redemption,
 }
 
 // acceptYouTube ставит в очередь то, что играется мимо Spotify.
-func (s *Server) acceptYouTube(ctx context.Context, r twitch.Redemption, item queue.Item) {
+func (s *Server) acceptYouTube(ctx context.Context, r twitch.Redemption, item queue.Item, note string) {
 	s.state.SetOrderMatch(r.ID, app.OrderMatch{
 		State:    app.MatchFound,
 		TrackID:  item.TrackID,
@@ -149,7 +156,7 @@ func (s *Server) acceptYouTube(ctx context.Context, r twitch.Redemption, item qu
 		Artist:   item.Artist,
 		CoverURL: item.CoverURL,
 		Duration: item.DurationMs,
-		Note:     "Играем с YouTube — в Spotify такого нет",
+		Note:     note,
 	})
 
 	item.Source = queue.SourcePoints
@@ -159,4 +166,17 @@ func (s *Server) acceptYouTube(ctx context.Context, r twitch.Redemption, item qu
 	item.RedemptionID = r.ID
 	item.RewardID = r.RewardID
 	s.enqueue(ctx, item)
+}
+
+// youtubeLinkNotReady сообщает, что в заказе ссылка на видео, а сыграть её
+// нечем: инструменты ещё качаются или не поставились.
+//
+// Отдельная проверка нужна потому, что fromLink в этом случае отвечает
+// «ссылки нет» — и заказ дальше выглядит как пустой.
+func (s *Server) youtubeLinkNotReady(text string) bool {
+	if s.youtube != nil && s.ytTools != nil && s.ytTools.Ready() {
+		return false
+	}
+	link, ok := links.Find(text)
+	return ok && (link.Kind == links.YouTube || link.Kind == links.VK)
 }

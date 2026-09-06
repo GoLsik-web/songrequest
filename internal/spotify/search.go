@@ -27,10 +27,47 @@ func (c *Client) SearchTracksAnywhere(ctx context.Context, query string, limit i
 	return c.searchTracks(ctx, query, limit, "")
 }
 
-func (c *Client) searchTracks(ctx context.Context, query string, limit int, market string) ([]match.Candidate, error) {
+// safeSearchLimit — сколько треков заведомо согласится отдать любой Spotify.
+//
+// 27.08 нашлась причина, из-за которой у тестера не работал поиск текстом
+// пятый день: его Spotify отвечает `400 Invalid limit` на любой поиск трека
+// с limit больше десяти. Пробы легли ровно так:
+//
+//	limit=1  → 200      limit=20 → 400 Invalid limit
+//	limit=5  → 200      limit=50 → 400 Invalid limit
+//	limit=10 → 200
+//
+// Приложение всюду просило 20 и 50 — значит не находило вообще ничего, ни
+// текстом, ни по ссылке на YouTube (её название тоже уходит в этот поиск).
+// Документация Spotify по-прежнему обещает 50, и на других аккаунтах 50
+// работает, поэтому насмерть занижать всем не будем: см. searchLimitCap.
+const safeSearchLimit = 10
+
+// searchLimit — с каким limit идти в этот раз, с учётом уже выясненного
+// потолка.
+func (c *Client) searchLimit(limit int) int {
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
+	c.mu.RLock()
+	cap := c.searchLimitCap
+	c.mu.RUnlock()
+	if cap > 0 && limit > cap {
+		return cap
+	}
+	return limit
+}
+
+// capSearchLimit запоминает потолок на весь запуск: платить лишним запросом
+// за каждый поиск незачем, отказ один раз объясняет всё.
+func (c *Client) capSearchLimit(limit int) {
+	c.mu.Lock()
+	c.searchLimitCap = limit
+	c.mu.Unlock()
+}
+
+func (c *Client) searchTracks(ctx context.Context, query string, limit int, market string) ([]match.Candidate, error) {
+	limit = c.searchLimit(limit)
 
 	var out struct {
 		Tracks struct {
@@ -73,6 +110,15 @@ func (c *Client) searchTracks(ctx context.Context, query string, limit int, mark
 		path += "&market=" + url.QueryEscape(market)
 	}
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		// «Invalid limit» на верное число означает, что этому аккаунту
+		// Spotify отдаёт меньше. Занижаем потолок и переспрашиваем сразу:
+		// иначе заказ отменится там, где всё нашлось бы с limit=10.
+		if limit > safeSearchLimit && isInvalidLimit(err) {
+			c.capSearchLimit(safeSearchLimit)
+			c.log.Warn("Spotify не принимает такой limit — дальше спрашиваем меньше",
+				"было", limit, "стало", safeSearchLimit)
+			return c.searchTracks(ctx, query, safeSearchLimit, market)
+		}
 		return nil, err
 	}
 

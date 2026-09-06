@@ -24,8 +24,10 @@ import (
 // донаты, выгрузка стрима — идёт напрямую и ничего не теряет.
 //
 // Важно, о чём легко забыть: сама программа Spotify тоже ходит в сеть, и
-// музыку играет она. Один прокси в приложении её не спасёт — тот же адрес
-// нужно вписать и в настройках Spotify: Настройки → Прокси.
+// музыку играет она. Обычно ей ничего не мешает — у неё свои адреса, и они
+// открыты даже там, где закрыт api.spotify.com (так у нашего тестера). Но
+// если музыка не играет и в самой программе Spotify, наш прокси её не
+// спасёт: посредника придётся вписать и в её собственные настройки.
 
 // proxyTimeout больше обычного — через посредника всё медленнее, — но обязан
 // быть заметно меньше срока подбора трека (25 секунд, см. resolveTimeout).
@@ -45,6 +47,8 @@ func (c *Client) SetProxy(raw string) (string, error) {
 		c.setHTTP(&http.Client{Timeout: 15 * time.Second})
 		c.mu.Lock()
 		c.proxyLabel = ""
+		// Маршрут сменился — объявленные Spotify паузы остались на прежнем.
+		c.rateUntil = nil
 		c.mu.Unlock()
 		c.log.Info("Spotify: прямое соединение")
 		return "", nil
@@ -61,6 +65,28 @@ func (c *Client) SetProxy(raw string) (string, error) {
 		c.log.Redactor.Add(pass)
 	}
 
+	c.useProxy(u, Hide(u))
+	return Hide(u), nil
+}
+
+// SetTunnel направляет запросы к Spotify через обход, поднятый самим
+// приложением.
+//
+// От SetProxy отличается только подписью. Показывать в панели
+// «socks5://127.0.0.1:56106» нельзя: номер порта каждый запуск новый, и
+// человек решит, что он что-то настроил не так. Ему важно другое — что
+// Spotify идёт через обход и через какой сервер.
+func (c *Client) SetTunnel(addr, label string) error {
+	u, err := ParseProxy(addr)
+	if err != nil {
+		return err
+	}
+	c.useProxy(u, label)
+	return nil
+}
+
+// useProxy переключает клиента на посредника и запоминает подпись для панели.
+func (c *Client) useProxy(u *url.URL, label string) {
 	c.setHTTP(&http.Client{
 		Timeout: proxyTimeout,
 		Transport: &http.Transport{
@@ -68,13 +94,19 @@ func (c *Client) SetProxy(raw string) (string, error) {
 			TLSHandshakeTimeout: 10 * time.Second,
 		},
 	})
-	label := Hide(u)
 	c.mu.Lock()
 	c.proxyLabel = label
+	// Паузы, объявленные Spotify, остались на прошлом маршруте.
+	//
+	// Найдено живьём: приложение сходило к Spotify напрямую (из России, где
+	// его и так не пускают), получило «подождите четыре часа» и запомнило
+	// это. Через двадцать секунд поднялся обход — то есть другой выход в
+	// интернет, — но пауза продолжала действовать, и Spotify не работал ещё
+	// четыре часа при полностью рабочем обходе.
+	c.rateUntil = nil
 	c.mu.Unlock()
 
-	c.log.Info("Spotify ходит через прокси", "адрес", label)
-	return label, nil
+	c.log.Info("Spotify ходит через посредника", "адрес", label)
 }
 
 // ProxyLabel — через кого сейчас ходим, без пароля. Пусто — напрямую.

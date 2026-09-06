@@ -16,28 +16,48 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/config"
+	"songrequest/internal/desktop"
 	"songrequest/internal/logx"
 	"songrequest/internal/secrets"
 	"songrequest/internal/server"
 	"songrequest/internal/spotify"
 	"songrequest/internal/store"
+	"songrequest/internal/tunnel"
 	"songrequest/internal/twitch"
 )
 
 // version подставляется при сборке релиза через -ldflags.
 var version = "dev"
 
+// windowTitle — заголовок окна и подпись значка возле часов.
+const windowTitle = "Заказ музыки"
+
 func main() {
+	// Окно Windows живёт в том потоке, где создано, и сообщения приходят
+	// только туда. Go без этой строчки свободно переносит главную горутину с
+	// потока на поток — и окно замерло бы, не отвечая на нажатия.
+	runtime.LockOSThread()
+
 	if err := run(); err != nil {
+		// Консоли у приложения больше нет (собирается как обычная программа с
+		// окном), поэтому про поломку рассказываем окном с сообщением. В
+		// консоль тоже пишем — на случай запуска из PowerShell при разборе.
 		fmt.Fprintln(os.Stderr, "Ошибка:", err)
-		fmt.Fprintln(os.Stderr, "\nНажми Enter, чтобы закрыть окно.")
-		fmt.Fscanln(os.Stdin)
+		desktop.ShowError(windowTitle+" — не запустилось", err.Error()+
+			"\n\nПодробности в логе:\n"+logPathHint())
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	noBrowser := flag.Bool("без-браузера", false, "не открывать панель автоматически")
+	// Режимов запуска три. Обычный — своё окно; остальные два нужны при
+	// разборе поломок, когда окно только мешает.
+	inBrowser := flag.Bool("в-браузере", false, "открыть панель в браузере, без окна программы")
+	silent := flag.Bool("без-браузера", false, "не открывать ни окна, ни браузера")
+	// Запасной путь для окна: вернуть системную полосу заголовка. Нужен, если
+	// на чужой Windows со своей полосой что-то не заладится — окно без
+	// заголовка и без возможности его вернуть было бы ловушкой.
+	sysFrame := flag.Bool("рамка-windows", false, "оставить обычную полосу заголовка Windows")
 	flag.Parse()
 
 	dir, err := dataDir()
@@ -65,6 +85,20 @@ func run() error {
 			"испорченный_файл", cfg.Broken)
 	}
 
+	// Вторая копия ничего не запускает, а показывает окно первой.
+	//
+	// Человек, не найдя окна на экране, спокойно щёлкает по .exe ещё раз —
+	// и раньше получал две программы на одну базу: две подписки на заказы и
+	// два mpv на одно звуковое устройство.
+	if running, raised := desktop.RaiseRunning(cfg.Get().Port); running {
+		log.Info("приложение уже запущено, вторая копия не нужна", "окно_показано", raised)
+		if !raised {
+			desktop.ShowInfo(windowTitle+" уже работает",
+				"Программа уже запущена. Её значок — возле часов, справа внизу.")
+		}
+		return nil
+	}
+
 	db, err := store.Open(dir)
 	if err != nil {
 		return err
@@ -76,6 +110,7 @@ func run() error {
 	keys := secrets.New()
 	sp := spotify.New(cfg, log, keys)
 	tw := twitch.New(cfg, log, keys)
+	tun := tunnel.New(log, dir)
 
 	srv, err := server.New(server.Deps{
 		State:   state,
@@ -84,6 +119,8 @@ func run() error {
 		Spotify: sp,
 		Twitch:  tw,
 		DB:      db,
+		Tunnel:  tun,
+		Secrets: keys,
 		DataDir: dir,
 		Version: version,
 	})
@@ -91,20 +128,25 @@ func run() error {
 		return err
 	}
 
-	// Ctrl+C и закрытие окна должны гасить приложение чисто: закрыть базу,
-	// а позже — убить mpv и снять паузу со Spotify.
+	// Ctrl+C, выключение компьютера и выход из трея должны гасить приложение
+	// чисто: закрыть базу и убить mpv. Своя отмена поверх сигналов нужна
+	// потому, что выход теперь бывает и без всякого сигнала — из меню значка.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, shutdown := context.WithCancel(ctx)
+	defer shutdown()
 
 	log.Info("приложение запущено", "версия", version, "данные", dir, "панель", srv.Addr())
-	fmt.Printf("\n  Панель управления: %s\n  Виджет для OBS:    %s/widget\n  Настройки и база:  %s\n\n  Не закрывай это окно, пока идёт стрим.\n\n",
-		srv.Addr(), srv.Addr(), dir)
-
 	state.Notify("info", "Приложение запущено")
 	srv.WarnIfPortChanged()
-	if !*noBrowser {
-		openBrowser(srv.Addr(), log)
-	}
+
+	// Панель уходит в фон: главный поток теперь занят окном программы.
+	go func() {
+		if err := srv.Serve(ctx); err != nil {
+			log.Error("панель управления остановилась", "ошибка", err)
+			state.Notify("error", "Панель управления остановилась: "+err.Error())
+		}
+	}()
 
 	// Если вход был сохранён с прошлого раза, проверяем его сразу: лучше
 	// увидеть «Spotify отвалился» до стрима, а не во время первого заказа.
@@ -128,12 +170,225 @@ func run() error {
 	srv.StartPlayer(ctx)
 	srv.StartDonations(ctx)
 	srv.StartYouTube(ctx)
+	srv.StartTunnel(ctx)
 
 	// mpv не должен пережить приложение: иначе он останется занимать
 	// звуковое устройство, а музыка продолжит играть после закрытия.
 	defer srv.StopYouTube()
 
-	return srv.Serve(ctx)
+	// Программа обхода — такой же чужой процесс, как mpv, и так же не должна
+	// остаться висеть после выхода.
+	defer srv.StopTunnel()
+
+	showPanel, wait := setupUI(uiDeps{
+		log:       log,
+		state:     state,
+		cfg:       cfg,
+		srv:       srv,
+		dir:       dir,
+		ctx:       ctx,
+		shutdown:  shutdown,
+		inBrowser: *inBrowser,
+		silent:    *silent,
+		sysFrame:  *sysFrame,
+	})
+	srv.OnShowWindow(showPanel)
+	srv.OnOpenAuth(authOpener(log, srv, dir))
+
+	wait()
+
+	log.Info("выходим")
+	shutdown()
+	desktop.StopTray()
+	return nil
+}
+
+// authOpener открывает страницу входа в Spotify в отдельном окне приложения,
+// через поднятый обход блокировок.
+//
+// Своё окно нужно ровно из-за обхода: браузер про него не знает, и страница
+// входа Spotify из России в браузере просто не откроется. Пока обхода нет,
+// панель этой дорогой не пользуется — вход как открывался в браузере, так и
+// открывается.
+func authOpener(log *logx.Logger, srv *server.Server, dir string) func(string) error {
+	return func(url string) error {
+		proxy := srv.TunnelAddr()
+		if proxy == "" {
+			return fmt.Errorf("обход не работает")
+		}
+		icon, err := desktop.IconFile(dir)
+		if err != nil {
+			log.Warn("не выложил значок приложения", "ошибка", err)
+		}
+		log.Info("открываю вход в Spotify в своём окне")
+		go func() {
+			err := desktop.OpenAuth(desktop.AuthOptions{
+				URL:      url,
+				Title:    "Вход в Spotify",
+				IconPath: icon,
+				// Отдельная папка обязательна: движок делит один браузер между
+				// окнами с общей папкой, и окно входа получило бы соединение
+				// панели — то есть мимо обхода.
+				DataPath: filepath.Join(dir, "webview-вход"),
+				Proxy:    proxy,
+				DonePath: "/callback",
+			})
+			if err != nil {
+				log.Warn("окно входа закрылось с ошибкой", "ошибка", err)
+			}
+		}()
+		return nil
+	}
+}
+
+// uiDeps — то, что нужно окну, трею и запасному пути через браузер.
+type uiDeps struct {
+	log      *logx.Logger
+	state    *app.State
+	cfg      *config.File
+	srv      *server.Server
+	dir      string
+	ctx      context.Context
+	shutdown context.CancelFunc
+
+	inBrowser bool
+	silent    bool
+	sysFrame  bool
+}
+
+// setupUI поднимает то, что человек видит на экране, и возвращает две вещи:
+// как показать панель по просьбе извне и чем занять главный поток до выхода.
+//
+// Путей три:
+//   - обычный: своё окно с панелью внутри плюс значок возле часов;
+//   - запасной: если в системе нет WebView2 (движка Edge) — панель в браузере,
+//     как было до этого шага. Отказываться работать из-за этого нельзя;
+//   - отладочные флаги: панель в браузере или вообще ничего.
+func setupUI(d uiDeps) (showPanel func(), wait func()) {
+	icon, err := desktop.IconFile(d.dir)
+	if err != nil {
+		d.log.Warn("не выложил значок приложения", "ошибка", err)
+	}
+
+	openPanel := func() { openBrowser(d.srv.Addr(), d.log) }
+
+	// Ждать через контекст — общий для всех путей без окна способ: выход из
+	// трея и Ctrl+C гасят один и тот же контекст.
+	waitCtx := func() { <-d.ctx.Done() }
+
+	if d.silent {
+		d.log.Info("запуск без окна и браузера (флаг -без-браузера)")
+		return func() {}, waitCtx
+	}
+
+	win, err := openWindow(d, icon)
+	if err != nil {
+		if !d.inBrowser {
+			// Не поломка, а редкий случай: WebView2 нет в системе. Говорим
+			// человеку, где панель, и работаем дальше как раньше.
+			d.log.Warn("окно программы не открылось, показываю панель в браузере", "причина", err)
+			d.state.Notify("info", "Окно программы открыть не удалось — панель открыта в браузере. "+
+				"Адрес: "+d.srv.Addr())
+		}
+		openPanel()
+		go desktop.RunTray(trayMenu(d, icon, openPanel, func() { d.shutdown() }))
+		return openPanel, waitCtx
+	}
+
+	go desktop.RunTray(trayMenu(d, icon, win.Show, win.Quit))
+
+	// Ctrl+C и выключение компьютера должны закрывать и окно тоже, иначе
+	// приложение останется висеть картинкой без начинки.
+	go func() {
+		<-d.ctx.Done()
+		win.Quit()
+	}()
+
+	return win.Show, win.Run
+}
+
+// openWindow открывает окно программы. Возвращает ошибку, если открывать его
+// не надо (флаг) или не в чем (нет WebView2).
+func openWindow(d uiDeps, icon string) (*desktop.Window, error) {
+	if d.inBrowser {
+		d.log.Info("запуск с панелью в браузере (флаг -в-браузере)")
+		return nil, fmt.Errorf("окно отключено флагом")
+	}
+	g := d.cfg.Get().Window
+	return desktop.Open(desktop.Options{
+		URL:      d.srv.Addr(),
+		Title:    windowTitle,
+		IconPath: icon,
+		// Свои временные файлы WebView2 кладёт рядом с .exe, если не сказать
+		// иначе. У стримера .exe лежит в «Загрузках», и мусорить там нельзя.
+		DataPath:    filepath.Join(d.dir, "webview"),
+		Geometry:    desktop.Geometry{X: g.X, Y: g.Y, Width: g.Width, Height: g.Height, Maximized: g.Maximized},
+		SystemFrame: d.sysFrame,
+		OnGeometry: func(g desktop.Geometry) {
+			// Пишем на диск в стороне от потока окна: запись файла посреди
+			// перетаскивания окна дёргала бы картинку.
+			go func() {
+				err := d.cfg.Update(func(c *config.Config) {
+					c.Window = config.Window{X: g.X, Y: g.Y, Width: g.Width, Height: g.Height, Maximized: g.Maximized}
+				})
+				if err != nil {
+					d.log.Warn("не запомнил размер окна", "ошибка", err)
+				}
+			}()
+		},
+		OnExternal: func(url string) { openBrowser(url, d.log) },
+		OnHide: func() {
+			d.log.Info("окно свёрнуто в трей, приложение продолжает работать")
+			// Подсказка идёт в стороне от потока окна: окно с сообщением
+			// держит поток до нажатия «ОК», а в этом потоке крутится сама
+			// программа.
+			go trayHint(d)
+		},
+	})
+}
+
+// trayHint один раз объясняет, куда делась программа после крестика.
+//
+// Windows 11 новые значки возле часов прячет под стрелку, и человек, закрыв
+// окно, видит: программа исчезла, значка нет. Первым делом он запустит .exe
+// заново — это сработает (вторая копия покажет окно первой), но пугаться он
+// будет каждый раз. Поэтому один раз показываем окно с объяснением.
+func trayHint(d uiDeps) {
+	if d.cfg.Get().TrayHintShown {
+		return
+	}
+	if err := d.cfg.Update(func(c *config.Config) { c.TrayHintShown = true }); err != nil {
+		d.log.Warn("не запомнил, что подсказка про трей показана", "ошибка", err)
+	}
+	desktop.ShowInfo(windowTitle+" продолжает работать",
+		"Программа свернулась к часам, справа внизу. Заказы, очередь и виджет в OBS работают дальше.\n\n"+
+			"Не видно значка — нажми стрелку рядом с часами: Windows прячет новые значки туда. "+
+			"Значок можно перетащить оттуда к остальным, тогда он будет на виду.\n\n"+
+			"Открыть окно обратно — щелчок по значку. Закрыть программу совсем — правой кнопкой "+
+			"по значку и «Выход».")
+}
+
+// trayMenu собирает меню значка возле часов.
+func trayMenu(d uiDeps, icon string, onOpen, onQuit func()) desktop.TrayOptions {
+	return desktop.TrayOptions{
+		IconPath:  icon,
+		Tooltip:   windowTitle + " — работает",
+		WidgetURL: d.srv.Addr() + "/widget",
+		OnOpen:    onOpen,
+		OnCopy: func(err error) {
+			if err != nil {
+				d.log.Warn("не скопировал адрес виджета", "ошибка", err)
+				d.state.Notify("error", "Не получилось скопировать адрес виджета: "+err.Error())
+				return
+			}
+			d.log.Info("адрес виджета скопирован из трея")
+			d.state.Notify("info", "Адрес виджета скопирован — вставь его в источник «Браузер» в OBS.")
+		},
+		OnQuit: func() {
+			d.log.Info("выход через значок возле часов")
+			onQuit()
+		},
+	}
 }
 
 // dataDir — папка с настройками, базой и логом: %APPDATA%\songrequest на Windows.
@@ -150,7 +405,19 @@ func dataDir() (string, error) {
 	return dir, nil
 }
 
-// openBrowser открывает панель. Не смогли — не беда, адрес напечатан выше.
+// logPathHint — где искать лог, если приложение не поднялось. Считается без
+// логгера: он-то как раз мог и не открыться.
+func logPathHint() string {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "папка songrequest в %APPDATA%"
+	}
+	return filepath.Join(base, "songrequest", logx.LogFileName)
+}
+
+// openBrowser открывает ссылку в обычном браузере. Так открываются вход в
+// Spotify и Twitch: страницы входа тяжёлые, а в окне программы нет ни
+// адресной строки, ни кнопки «назад».
 func openBrowser(url string, log *logx.Logger) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

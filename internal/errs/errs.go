@@ -35,6 +35,7 @@ const (
 	SpotifyCountry      Code = "SP-16" // Spotify недоступен в стране аккаунта
 	SpotifyProxy        Code = "SP-17" // прокси для Spotify настроен неверно
 	SpotifyForeignTrack Code = "SP-18" // трек не издан в стране аккаунта стримера
+	SpotifySearchLimit  Code = "SP-19" // Spotify отдаёт меньше результатов, чем просим
 
 	// Twitch
 	TwitchNoClientID   Code = "TW-01" // не заполнен client_id Twitch
@@ -65,6 +66,14 @@ const (
 	YouTubePlay        Code = "YT-04" // не получилось включить
 	YouTubeBadResponse Code = "YT-05" // yt-dlp ответил не тем
 	YouTubeCookies     Code = "YT-06" // YouTube требует подтвердить, что мы не робот
+
+	// Обход блокировок
+	TunnelNoKey        Code = "OB-01" // ключ не вставлен или в нём ничего нет
+	TunnelBadKey       Code = "OB-02" // ключ записан непонятно
+	TunnelSubscription Code = "OB-03" // не удалось скачать список серверов по ссылке
+	TunnelNoTool       Code = "OB-04" // не удалось получить программу обхода
+	TunnelStart        Code = "OB-05" // обход не запустился
+	TunnelCheck        Code = "OB-06" // через обход Spotify всё равно не отвечает
 
 	// Яндекс.Музыка
 	YandexRead Code = "YM-01" // не удалось прочитать страницу трека
@@ -117,10 +126,36 @@ func CodeOf(err error) Code {
 // Describe разбирает ошибку на код и текст по отдельности. Панель показывает
 // их разными элементами, поэтому склеивать их здесь нельзя — иначе код
 // напечатается дважды.
+//
+// К тексту добавляется настоящая причина, если она у нас же и с кодом. Иначе
+// получается разговор ни о чём: владелец нажал «Запомнить», увидел «SP-09 Не
+// смог запомнить, что играло в Spotify» — и всё. А внутри лежало объяснение,
+// ради которого код и писался: «Spotify временно ограничил приложение и просит
+// долгую паузу (осталось 3ч56м)». Человек в это время думал на свежий обход
+// блокировок и чинил не то.
 func Describe(err error) (Code, string) {
 	var e *Error
-	if As(err, &e) {
-		return e.Code, e.Message
+	if !As(err, &e) {
+		return "", "Непонятная ошибка. Загляни в лог приложения."
 	}
-	return "", "Непонятная ошибка. Загляни в лог приложения."
+	text := e.Message
+	if root := rootMessage(e); root != "" && root != e.Message {
+		text += " " + root
+	}
+	return e.Code, text
+}
+
+// rootMessage достаёт самое внутреннее наше объяснение. Чужие ошибки (обрыв
+// сети, отказ библиотеки) сюда не попадают: они написаны не для людей.
+func rootMessage(e *Error) string {
+	message := ""
+	for cause := e.cause; cause != nil; {
+		var inner *Error
+		if !As(cause, &inner) {
+			break
+		}
+		message = inner.Message
+		cause = inner.cause
+	}
+	return message
 }
