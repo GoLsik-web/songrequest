@@ -468,6 +468,34 @@ func (c *Client) RefreshExpiry() (at time.Time, soon bool) {
 	return at, time.Until(at) < warnBefore
 }
 
+// MissingScopes — права, которых не хватает у нынешнего входа.
+//
+// Зачем. Список нужных прав со временем растёт: «user:read:chat» появилось
+// позже самого приложения. Вход, выданный до этого, продолжает работать —
+// заказы за баллы идут, панель зелёная, — но подписаться на чат им нельзя, и
+// все команды молчат. Снаружи это выглядит как «!скип сломался», хотя ломаться
+// нечему: приложению просто не дали права, о котором никто не спрашивал.
+//
+// Пустой ответ означает «всё на месте». Пустой вход — тоже: спрашивать не о
+// чем, пока человек не подключился.
+func (c *Client) MissingScopes() []string {
+	granted := c.GrantedScopes()
+	if granted == "" {
+		return nil
+	}
+	have := map[string]bool{}
+	for _, s := range strings.Fields(granted) {
+		have[s] = true
+	}
+	var missing []string
+	for _, want := range scopes {
+		if !have[want] {
+			missing = append(missing, want)
+		}
+	}
+	return missing
+}
+
 // GrantedScopes — права, которые стример выдал при входе.
 func (c *Client) GrantedScopes() string {
 	c.mu.RLock()
