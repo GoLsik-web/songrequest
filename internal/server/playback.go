@@ -213,6 +213,8 @@ func (s *Server) syncPlayback() {
 			PositionMs: int(now.Elapsed().Milliseconds()),
 			DurationMs: now.Item.DurationMs,
 			Uncertain:  now.Item.Uncertain,
+			Paused:     now.Paused(),
+			Volume:     s.orderVolume(now.Item.Provider),
 		})
 	}
 

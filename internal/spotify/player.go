@@ -553,6 +553,49 @@ func (c *Client) Pause(ctx context.Context, deviceID string) error {
 	return c.do(ctx, http.MethodPut, "/me/player/pause"+deviceQuery(deviceID), nil, nil)
 }
 
+// Resume снимает с паузы, не трогая, что именно играет.
+//
+// Отличается от PlayTrack пустым телом запроса: с телом Spotify начал бы трек
+// заново, а нам нужно продолжить с того места, где остановились.
+func (c *Client) Resume(ctx context.Context, deviceID string) error {
+	return c.play(ctx, nil, deviceID)
+}
+
+// Seek перематывает играющий трек.
+//
+// Это команда, а не чтение: без запроса к Spotify перемотка невозможна в
+// принципе — сдвинется только картинка в панели, а звук останется на месте.
+// Поэтому один запрос на одно движение человека: панель шлёт его на отпускание
+// ползунка, а не на каждый пиксель перетаскивания.
+func (c *Client) Seek(ctx context.Context, positionMs int, deviceID string) error {
+	if positionMs < 0 {
+		positionMs = 0
+	}
+	path := fmt.Sprintf("/me/player/seek?position_ms=%d", positionMs)
+	if deviceID != "" {
+		path += "&device_id=" + url.QueryEscape(deviceID)
+	}
+	return c.do(ctx, http.MethodPut, path, nil, nil)
+}
+
+// SetVolume выставляет громкость устройства, на котором играет музыка.
+//
+// Spotify принимает только целые проценты от 0 до 100 и отвечает отказом на
+// всё остальное, поэтому обрезаем здесь, а не надеемся на панель.
+func (c *Client) SetVolume(ctx context.Context, percent int, deviceID string) error {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	path := fmt.Sprintf("/me/player/volume?volume_percent=%d", percent)
+	if deviceID != "" {
+		path += "&device_id=" + url.QueryEscape(deviceID)
+	}
+	return c.do(ctx, http.MethodPut, path, nil, nil)
+}
+
 // Transfer переносит воспроизведение на устройство.
 func (c *Client) Transfer(ctx context.Context, deviceID string, play bool) error {
 	body := map[string]any{"device_ids": []string{deviceID}, "play": play}

@@ -27,6 +27,11 @@ type YouTube interface {
 	// SetBase сообщает громкость Spotify, от которой считается громкость
 	// заказа. Без неё mpv играет на полную и оглушает эфир.
 	SetBase(volume int)
+	// Управление на ходу. Всё это бесплатно: канал управления mpv местный,
+	// никакой сети и никаких норм запросов.
+	SetPaused(on bool)
+	Seek(seconds float64)
+	SetVolumePercent(percent int)
 }
 
 // Spotify — то, что умеет играть. Интерфейсом ради тестов.
@@ -36,21 +41,43 @@ type Spotify interface {
 	PlayTrack(ctx context.Context, trackURI, deviceID string) error
 	Pause(ctx context.Context, deviceID string) error
 	State(ctx context.Context) (*spotify.PlayerState, bool, error)
+	// Resume снимает с паузы, не начиная трек заново.
+	Resume(ctx context.Context, deviceID string) error
+	Seek(ctx context.Context, positionMs int, deviceID string) error
+	SetVolume(ctx context.Context, percent int, deviceID string) error
 }
 
 // Now — что играет прямо сейчас.
 type Now struct {
 	Item      queue.Item
 	StartedAt time.Time
+
+	// HeldFrom — с какого момента заказ стоит на паузе. Ноль означает «играет».
+	HeldFrom time.Time
+	// Held — сколько всего простояли на паузе за этот трек. Без этого счёта
+	// полоса в панели продолжала бы ехать на паузе: она считается от момента
+	// запуска, а не спрашивается у Spotify.
+	Held time.Duration
 }
 
-// Elapsed — сколько уже отыграно.
+// Elapsed — сколько уже отыграно, без учёта пауз.
 func (n *Now) Elapsed() time.Duration {
 	if n == nil {
 		return 0
 	}
-	return time.Since(n.StartedAt)
+	end := time.Now()
+	if !n.HeldFrom.IsZero() {
+		end = n.HeldFrom
+	}
+	played := end.Sub(n.StartedAt) - n.Held
+	if played < 0 {
+		return 0
+	}
+	return played
 }
+
+// Paused — стоит ли заказ на паузе прямо сейчас.
+func (n *Now) Paused() bool { return n != nil && !n.HeldFrom.IsZero() }
 
 // Player проигрывает очередь.
 type Player struct {
@@ -99,6 +126,17 @@ type Player struct {
 
 	// rescue — что играть, если заказ не заиграл. См. SetRescue.
 	rescue Rescue
+
+	// volumeTouched — стример двигал громкость Spotify из панели. Тогда после
+	// очереди её надо вернуть на место вместе со всем остальным: иначе заказ
+	// навсегда меняет громкость самому стримеру, а он об этом даже не узнает —
+	// заметит через полчаса, что музыка тише обычного.
+	volumeTouched bool
+
+	// volume — на чём стоит ползунок громкости. Панель показывает его по этому
+	// числу, а не спрашивает Spotify: спрашивать пришлось бы на каждую
+	// перерисовку, а это запрос ни за чем.
+	volume int
 
 	mu  sync.Mutex
 	now *Now
@@ -531,34 +569,43 @@ func (p *Player) awaitYouTube(ctx context.Context, item queue.Item) (natural, fe
 	if length <= 0 {
 		length = 10 * time.Minute
 	}
-	limit := time.NewTimer(length + 30*time.Second)
+	// Срок проверяем тиканьем, а не одним таймером: пауза не должна съедать
+	// его. Поставил стример заказ на паузу на пять минут — и одноразовый
+	// таймер снял бы трек, которого никто не слышал.
+	limit := time.NewTicker(time.Second)
 	defer limit.Stop()
 
-	select {
-	case <-ctx.Done():
-		return false, false
-	case <-p.skip:
-		p.log.Info("заказ с YouTube скипнут", "трек", item.Title)
-		return false, false
-	case <-limit.C:
-		p.log.Warn("заказ с YouTube не кончился в срок — снимаю",
-			"трек", item.Title, "длительность_мс", item.DurationMs)
-		return false, false
-	case ok := <-done:
-		if ok {
-			return true, false
+	for {
+		select {
+		case <-ctx.Done():
+			return false, false
+		case <-p.skip:
+			p.log.Info("заказ с YouTube скипнут", "трек", item.Title)
+			return false, false
+		case <-limit.C:
+			if time.Since(started)-p.held() <= length+30*time.Second {
+				continue
+			}
+			p.log.Warn("заказ с YouTube не кончился в срок — снимаю",
+				"трек", item.Title, "длительность_мс", item.DurationMs)
+			return false, false
+		case ok := <-done:
+			if ok {
+				return true, false
+			}
+			// Не доиграл. Считаем падением только то, что случилось заметно
+			// раньше конца: mpv, оборвавшийся на последних секундах, зритель
+			// уже послушал, и переигрывать ему трек с начала — хуже, чем
+			// промолчать.
+			played := time.Since(started) - p.held()
+			fell = played < length*4/5
+			if fell {
+				p.log.Warn("проигрыватель умер посреди заказа",
+					"трек", item.Title, "сыграно_мс", played.Milliseconds(),
+					"длительность_мс", item.DurationMs)
+			}
+			return false, fell
 		}
-		// Не доиграл. Считаем падением только то, что случилось заметно раньше
-		// конца: mpv, оборвавшийся на последних секундах, зритель уже
-		// послушал, и переигрывать ему трек с начала — хуже, чем промолчать.
-		played := time.Since(started)
-		fell = played < length*4/5
-		if fell {
-			p.log.Warn("проигрыватель умер посреди заказа",
-				"трек", item.Title, "сыграно_мс", played.Milliseconds(),
-				"длительность_мс", item.DurationMs)
-		}
-		return false, fell
 	}
 }
 
@@ -800,6 +847,9 @@ func (p *Player) reposition(progressMs int) {
 		return
 	}
 	want := time.Now().Add(-time.Duration(progressMs) * time.Millisecond)
+	// Точка отсчёта берётся из настоящего положения в треке, значит счёт пауз
+	// в неё уже включён и складывать его второй раз нельзя.
+	p.now.Held = 0
 	drift := want.Sub(p.now.StartedAt)
 	if drift < 0 {
 		drift = -drift
@@ -846,6 +896,20 @@ func (p *Player) restore(ctx context.Context) {
 	// него не было, и на упавшей сети он останавливал всю очередь.
 	ctx, cancel := context.WithTimeout(ctx, restoreTimeout)
 	defer cancel()
+
+	// Громкость возвращаем вместе с музыкой — но только если её двигали из
+	// панели. Иначе заказ навсегда менял бы громкость самому стримеру, а он
+	// узнал бы об этом через полчаса, заметив, что музыка тише обычного.
+	// Лишнего запроса это не стоит: не трогали ползунок — не ходим никуда.
+	p.mu.Lock()
+	touched := p.volumeTouched
+	p.volumeTouched = false
+	p.mu.Unlock()
+	if touched && snap.Volume > 0 {
+		if err := p.spotify.SetVolume(ctx, snap.Volume, snap.DeviceID); err != nil {
+			p.log.Warn("не вернул громкость Spotify", "ошибка", err)
+		}
+	}
 
 	outcome, err := p.spotify.Restore(ctx, snap, played, force)
 	if err != nil {

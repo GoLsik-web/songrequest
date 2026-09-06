@@ -17,6 +17,10 @@ type fakeYouTube struct {
 	stopped int
 	// base — громкость Spotify, которую передал плеер.
 	base int
+	// held, sought и volume нужны проверкам управления заказом.
+	held   bool
+	sought []float64
+	volume int
 	// done — «ролик доиграл сам». Тест шлёт сюда, когда ему нужно.
 	done chan bool
 }
@@ -43,6 +47,24 @@ func (f *fakeYouTube) SetBase(volume int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.base = volume
+}
+
+func (f *fakeYouTube) SetPaused(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.held = on
+}
+
+func (f *fakeYouTube) Seek(seconds float64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sought = append(f.sought, seconds)
+}
+
+func (f *fakeYouTube) SetVolumePercent(percent int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.volume = percent
 }
 
 func (f *fakeYouTube) Stop() {
