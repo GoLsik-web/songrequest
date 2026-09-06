@@ -249,6 +249,9 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config", s.handleSetConfig)
 	mux.HandleFunc("GET /api/diag/export", s.handleDiagExport)
+	// Справочник команд для модераторов. Без ?save=1 — текст для панели,
+	// с ним — файл, который стример пересылает модераторам.
+	mux.HandleFunc("GET /api/mods", s.handleMods)
 
 	mux.HandleFunc("POST /api/spotify/login", s.handleSpotifyLogin)
 	mux.HandleFunc("POST /api/spotify/logout", s.handleSpotifyLogout)

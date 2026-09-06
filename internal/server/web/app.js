@@ -1193,12 +1193,29 @@
   const SETTINGS_TABS = ["conn", "orders", "fallback", "misc"];
   let settingsTab = "conn";
 
+  // Справочник команд собирает приложение — знак команд настраивается, и
+  // готовый текст в панели рано или поздно разошёлся бы с настоящим.
+  // Показываем ровно то, что уйдёт файлом: стример должен видеть, что шлёт.
+  let modsLoaded = false;
+
+  async function loadMods() {
+    if (modsLoaded) return;
+    try {
+      const text = await (await fetch("/api/mods")).text();
+      $("mods-text").textContent = text;
+      modsLoaded = true;
+    } catch {
+      $("mods-text").textContent = "Не смог прочитать справочник";
+    }
+  }
+
   function fillTab(tab) {
     // Единственное здесь, что стоит запроса к Spotify, — список плейлистов.
     // Раньше он запрашивался при любом заходе в настройки, даже если человек
     // пришёл за громкостью YouTube. Норма запросов у Spotify тесная, и такие
     // «на всякий случай» из неё и складываются.
     if (tab === "fallback") loadPlaylists();
+    if (tab === "orders") loadMods();
   }
 
   function openTab(tab) {
