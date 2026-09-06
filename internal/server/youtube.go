@@ -2,13 +2,9 @@ package server
 
 import (
 	"context"
-	"strings"
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
-	"songrequest/internal/links"
-	"songrequest/internal/queue"
-	"songrequest/internal/twitch"
 	"songrequest/internal/youtube"
 )
 
@@ -67,87 +63,6 @@ func (s *Server) setupYouTube(ctx context.Context) {
 			s.state.UpdateYouTube(func(y *app.YouTubeInfo) { y.Devices = devices })
 		}
 	}()
-}
-
-// Подписи под заказом, который играется мимо Spotify. Их две, потому что
-// причины разные, и стример по подписи должен понять, что происходит:
-// «в Spotify такого нет» — обычное дело, «Spotify не ответил» — поломка,
-// про которую он захочет узнать.
-const (
-	noteYouTubeMissing  = "Играем с YouTube — в Spotify такого нет"
-	noteYouTubeNoAnswer = "Играем с YouTube: Spotify не ответил на поиск"
-)
-
-// tryYouTube ищет заказ на YouTube и ставит его в очередь.
-// false означает «не вышло, возвращай баллы».
-func (s *Server) tryYouTube(ctx context.Context, r twitch.Redemption, query, note string) bool {
-	if s.youtube == nil || !s.ytTools.Ready() {
-		return false
-	}
-
-	// По ссылке не ищем: зритель уже сказал, что именно хочет. Но отдавать
-	// yt-dlp то, что зритель написал, нельзя — только собранный нами заново
-	// адрес.
-	//
-	// Раньше здесь стояла проверка «в тексте есть youtube.com/» и текст
-	// уезжал в yt-dlp как есть. Зритель мог написать заказ вида
-	// «--config-location=\чужой-сервер\yt.conf youtube.com/»: это один
-	// элемент командной строки, начинающийся с двух минусов, и yt-dlp
-	// разбирает его как свой ключ, а не как адрес ролика. То есть чужой
-	// человек через заказ за баллы подсовывал стримеру настройки yt-dlp на
-	// его же компьютере — а yt-dlp у нас ещё и ходит в куки браузера.
-	// links.Find достаёт из текста только одиннадцать знаков
-	// идентификатора и собирает адрес сам, так что подставить туда нечего.
-	var (
-		track *youtube.Track
-		err   error
-	)
-	if link, ok := links.Find(r.UserInput); ok && link.Kind == links.YouTube {
-		track, err = s.youtube.Lookup(ctx, link.URL)
-	} else {
-		track, err = s.youtube.Search(ctx, query)
-	}
-	if err != nil {
-		s.log.Info("на YouTube тоже не нашлось", "заказ", r.UserInput, "ошибка", err)
-		return false
-	}
-
-	// Стрим — не музыка, и играть его нельзя: он не кончится.
-	if track.IsLive {
-		s.log.Info("заказ оказался стримом", "заказ", r.UserInput)
-		return false
-	}
-
-	s.state.SetOrderMatch(r.ID, app.OrderMatch{
-		State:    app.MatchFound,
-		TrackID:  track.ID,
-		URI:      track.URL,
-		Title:    track.Title,
-		Artist:   track.Artist,
-		CoverURL: track.CoverURL,
-		Duration: track.DurationMs,
-		Note:     note,
-	})
-
-	s.enqueue(ctx, queue.Item{
-		Source:    queue.SourcePoints,
-		Requester: r.UserName,
-		// Бан-лист работает по логину. Без него забаненный зритель спокойно
-		// заказывал всё, чего нет в Spotify: заказ уходил на YouTube, а
-		// проверка бана откатывалась на отображаемое имя и не срабатывала.
-		RequesterLogin: strings.ToLower(r.UserLogin),
-		RawRequest:     r.UserInput,
-		Provider:       "youtube",
-		TrackID:        track.ID,
-		URI:            track.URL,
-		Title:          track.Title,
-		Artist:         track.Artist,
-		DurationMs:     track.DurationMs,
-		CoverURL:       track.CoverURL,
-		RedemptionID:   r.ID,
-		RewardID:       r.RewardID,
-	})
-	return true
 }
 
 // StartYouTube поднимает запасной проигрыватель.

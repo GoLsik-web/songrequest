@@ -24,6 +24,10 @@ func (s *Server) setupPlayer(cfg *config.File) {
 
 	s.player.WaitForCurrent = cfg.Get().WaitForCurrent
 
+	// Заказ не заиграл — спрашиваем цепочку источников, чем ещё это сыграть.
+	// См. Server.rescue и internal/server/sources.go.
+	s.player.SetRescue(s.rescue)
+
 	s.player.OnChange = s.syncPlayback
 	s.player.OnError = func(err error) { s.state.NotifyError(err) }
 
@@ -163,6 +167,7 @@ func (s *Server) syncPlayback() {
 			Title:      w.Title,
 			Artist:     w.Artist,
 			Provider:   w.Provider,
+			Via:        w.Via,
 			DurationMs: w.DurationMs,
 			Uncertain:  w.Uncertain,
 			RawRequest: w.RawRequest,
@@ -178,6 +183,7 @@ func (s *Server) syncPlayback() {
 			Title:      it.Title,
 			Artist:     it.Artist,
 			Provider:   it.Provider,
+			Via:        it.Via,
 			DurationMs: it.DurationMs,
 			Uncertain:  it.Uncertain,
 			RawRequest: it.RawRequest,
@@ -199,6 +205,7 @@ func (s *Server) syncPlayback() {
 		s.state.SetNow(&app.NowPlaying{
 			Source:     app.SourceOrder,
 			Provider:   now.Item.Provider,
+			Via:        now.Item.Via,
 			Title:      now.Item.Title,
 			Artist:     now.Item.Artist,
 			CoverURL:   now.Item.CoverURL,
