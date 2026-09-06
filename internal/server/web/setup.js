@@ -495,9 +495,9 @@
           <button class="s-btn" data-act="da-login">Подключить DonationAlerts</button>
         </div>
         <div class="check" id="su-check"></div>
-        <p class="why">Где брать ключи, подробно написано в файле
-          «Инструкция-Донаты» рядом с программой. Это единственный шаг, который спокойно
-          делается потом, посреди недели.</p>`,
+        <p class="why">Ключи лежат в личных кабинетах самих сервисов, в разделе
+          для разработчиков. Это единственный шаг, который спокойно делается потом,
+          посреди недели.</p>`,
       fill: (cfg) => {
         $("su-da").value = (cfg && cfg.donationalerts_client_id) || "";
         $("su-dp").value = (cfg && cfg.donatepay_key) || "";

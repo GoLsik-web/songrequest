@@ -180,7 +180,7 @@
     const spotifyStep = () => {
       if (!sp.has_client_id) {
         return { state: "todo", value: "Client ID не вставлен",
-                 hint: "Открой «Инструкция-Spotify» — это делается один раз",
+                 hint: "Нажми «Провести по шагам» — мастер покажет, где его взять",
                  button: `<button class="act key small" data-open-settings>Открыть настройки</button>` };
       }
       if (!sp.connected) {
@@ -215,7 +215,7 @@
     const twitchStep = () => {
       if (!tw.has_client_id) {
         return { state: "todo", value: "Client ID не вставлен",
-                 hint: "Открой «Инструкция-Twitch»",
+                 hint: "Нажми «Провести по шагам» — мастер покажет, где его взять",
                  button: `<button class="act key small" data-open-settings>Открыть настройки</button>` };
       }
       if (!tw.connected) {
