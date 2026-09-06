@@ -170,6 +170,10 @@ type Server struct {
 	// историю пишет плеер, а имя человека знает только панель.
 	skipActor string
 
+	// playing — что сейчас в эфире, в виде «последнего трека». Нужно только
+	// затем, чтобы заметить момент, когда трек ушёл: см. noteLastPlayed.
+	playing *app.LastPlayed
+
 	// ownNow — то, что стример слушает сам между заказами. Показывается в
 	// виджете, когда очередь пуста.
 	ownNow *app.NowPlaying
@@ -209,6 +213,9 @@ func New(d Deps) (*Server, error) {
 		s.matchCache = match.NewCache(d.DB.SQL())
 		s.queue = queue.New(d.DB.SQL())
 		s.setupPlayer(d.Cfg)
+		// Что играло в прошлый раз — читается сразу: панель на пустом месте
+		// должна сказать что-то осмысленное ещё до первого заказа.
+		s.loadLastPlayed()
 	}
 	s.setupDonations()
 	s.yandex = links.NewYandexReader()

@@ -191,8 +191,11 @@ func (s *Server) syncPlayback() {
 	if now == nil {
 		// Заказов сейчас нет — показываем то, что стример слушает сам.
 		// Может быть и пусто: тогда в кадре не будет ничего.
-		s.state.SetNow(s.own())
+		own := s.own()
+		s.noteLastPlayed(fromOwn(own))
+		s.state.SetNow(own)
 	} else {
+		s.noteLastPlayed(fromOrder(now.Item))
 		s.state.SetNow(&app.NowPlaying{
 			Source:     app.SourceOrder,
 			Provider:   now.Item.Provider,
