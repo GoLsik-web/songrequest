@@ -378,6 +378,18 @@
       <div class="hint" style="margin-top:0">Работают у тебя и у модераторов
         канала. Зрителям недоступны: музыку заказывают только за баллы или
         донат. Сохрани файл и перешли его модераторам.</div>
+
+      <label class="field" style="max-width:320px">
+        <span>Знак команд</span>
+        <input type="text" id="command-prefix" spellcheck="false" autocomplete="off"
+               maxlength="4" placeholder="!">
+      </label>
+      <div class="acts">
+        <button class="act small" id="save-prefix">Сохранить</button>
+      </div>
+      <div class="hint">Меняй, только если «!» на канале занял другой бот:
+        тогда ваши команды перебивают друг друга. Справочник ниже подстроится
+        сам.</div>
       <pre class="sheet-text thin-scroll" id="mods-text">…</pre>
       <div class="acts">
         <a class="act small key" href="/api/mods?save=1">

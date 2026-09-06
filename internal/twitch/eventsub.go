@@ -273,6 +273,7 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 				keepalive = time.Duration(p.Session.Timeout) * time.Second
 			}
 
+			chatOK := true
 			if subscribe {
 				// Подписку надо оформить быстро: Twitch рвёт неиспользуемое
 				// соединение через десять секунд после приветствия.
@@ -280,16 +281,28 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 					return "", err
 				}
 				if e.OnChat != nil {
-					e.subscribeChat(ctx, p.Session.ID)
+					chatOK = e.subscribeChat(ctx, p.Session.ID) == nil
 				}
 			}
-			if rewardID == "" {
+
+			// «Команды в чате не работают» — это то, что стример обязан
+			// увидеть в панели, а не вычитать в логе. Самая частая причина —
+			// вход в Twitch выдан до того, как приложение стало просить право
+			// на чтение чата: заказы за баллы при этом идут как ни в чём не
+			// бывало, а !скип молчит.
+			switch {
+			case !chatOK && rewardID == "":
+				e.status(true, "команды в чате не работают — подключи Twitch заново")
+			case !chatOK:
+				e.status(true, "заказы принимаются, но команды в чате не работают")
+			case rewardID == "":
 				e.status(true, "чат подключён, баллов на канале нет")
-			} else {
+			default:
 				e.status(true, "заказы принимаются")
 			}
 			e.client.log.Info("подписка на события Twitch активна",
-				"заказы_за_баллы", rewardID != "", "молчание_до", keepalive.String())
+				"заказы_за_баллы", rewardID != "", "чат", chatOK,
+				"молчание_до", keepalive.String())
 
 		case "session_keepalive":
 			// Тишина в эфире — соединение живо, делать нечего.

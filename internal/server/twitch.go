@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -154,8 +155,39 @@ func (s *Server) startTwitch(ctx context.Context) {
 	s.startEventSub(ctx, reward.ID)
 }
 
+// warnAboutScopes говорит, если вход в Twitch выдан без нужных прав.
+//
+// Список нужных прав со временем рос: право на чтение чата появилось позже
+// самого приложения. Вход, выданный до этого, продолжает работать — заказы за
+// баллы идут, лампочка зелёная, — но подписаться на чат им нельзя, и все
+// команды молчат. Снаружи это выглядит как «!скип сломался», хотя приложению
+// просто не дали права, о котором оно тогда не спрашивало.
+//
+// Лечится одним нажатием «Подключить Twitch»: вход выдаётся заново, уже со
+// всеми правами. Сказать об этом надо в панели, а не в логе.
+func (s *Server) warnAboutScopes() {
+	if s.twitch == nil || !s.twitch.Connected() {
+		return
+	}
+	missing := s.twitch.MissingScopes()
+	if len(missing) == 0 {
+		return
+	}
+	s.log.Warn("вход в Twitch выдан без части прав", "чего_не хватает", missing)
+
+	what := "часть возможностей"
+	if slices.Contains(missing, "user:read:chat") {
+		what = "команды в чате"
+	}
+	s.state.NotifyCode("warn", string(errs.TwitchScopes),
+		"Вход в Twitch выдан без всех прав, поэтому "+what+" работать не будут. "+
+			"Нажми «Подключить Twitch» ещё раз — это займёт минуту.")
+}
+
 // startEventSub поднимает подписку на заказы, если она ещё не поднята.
 func (s *Server) startEventSub(ctx context.Context, rewardID string) {
+	s.warnAboutScopes()
+
 	s.mu.Lock()
 	if s.eventsRunning {
 		if s.eventsReward == rewardID {

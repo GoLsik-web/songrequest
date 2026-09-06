@@ -1262,6 +1262,7 @@
       $("dp-key").value = config.donatepay_key || "";
       $("dx-key").value = config.donatex_key || "";
       $("donation-min").value = config.donation_min ?? "";
+      $("command-prefix").value = config.command_prefix || "!";
       $("yt-browser").value = config.youtube_browser || "";
       $("yt-device").value = config.audio_device || "";
     $("yt-volume").value = config.youtube_volume ?? 100;
@@ -1805,6 +1806,18 @@
   $("settings-tabs").onclick = (e) => {
     const b = e.target.closest(".tab");
     if (b) openTab(b.dataset.tab);
+  };
+
+  $("save-prefix").onclick = async () => {
+    const prefix = $("command-prefix").value.trim() || "!";
+    $("command-prefix").value = prefix;
+    if (await saveConfig({ command_prefix: prefix })) {
+      // Справочник собирает приложение, и знак в нём тоже сменился — читаем
+      // заново, иначе стример отправит модераторам старый.
+      modsLoaded = false;
+      loadMods();
+      say("Знак команд теперь «" + prefix + "»");
+    }
   };
 
   $("save-id").onclick = async () => {

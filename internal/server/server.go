@@ -471,6 +471,11 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Порт меняется только при перезапуске, поэтому текущий сохраняем как есть.
 	incoming.Port = current.Port
+	// Пустой знак команд означал бы, что командой считается любое сообщение в
+	// чате. Пустое поле в панели — это «оставь как было», а не «убери».
+	if incoming.CommandPrefix = strings.TrimSpace(incoming.CommandPrefix); incoming.CommandPrefix == "" {
+		incoming.CommandPrefix = "!"
+	}
 	// А пороги подбора чиним, даже если их прислали испорченными: заказ по
 	// тексту не должен зависеть от того, что кто-то записал в config.json.
 	incoming.NormalizeMatching()
