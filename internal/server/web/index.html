@@ -38,7 +38,24 @@
 </header>
 
 <header class="status-bar">
-  <div class="conns" id="conns"></div>
+  <!-- Подключения. Раньше это была лента из пяти ячеек с «Не настроено» во всю
+       ширину экрана — она кричала о том, что и так известно, каждую секунду
+       эфира. Теперь одна иконка с точкой: точка красная, если что-то
+       отвалилось, серая, если что-то не настроено, лаймовая, когда всё на
+       месте. Подробности — в окошке по клику. -->
+  <div class="conn-slot">
+    <button class="conn-btn" id="conn-toggle" aria-expanded="false" aria-haspopup="dialog">
+      <svg aria-hidden="true"><use href="#i-plug-zap"></use></svg>
+      <i class="conn-dot"></i>
+    </button>
+    <div class="conn-pop" id="conn-pop" role="dialog" aria-label="Подключения" hidden>
+      <div class="conn-pop-head">Подключения</div>
+      <div class="conns" id="conns"></div>
+    </div>
+  </div>
+
+  <div class="bar-gap"></div>
+
   <div class="bar-tail">
     <button class="tail-btn" id="widget-toggle" aria-expanded="false">
       <svg aria-hidden="true"><use href="#i-monitor"></use></svg>

@@ -127,11 +127,40 @@
       // Цвет берём из уровня, а не угадываем по тексту: иначе новая
       // формулировка молча перекрасила бы ячейку.
       const cls = { ok: "on", idle: "idle", fail: "off" }[c.level] || "idle";
-      return `<div class="st ${cls}" title="${esc(c.name)}: ${esc(c.detail)}">
-        <i class="led"></i>${esc(c.name)}${c.detail ? ` <b>${esc(c.detail)}</b>` : ""}
+      return `<div class="st ${cls}">
+        <i class="led"></i><span class="st-name">${esc(c.name)}</span>${
+          c.detail ? `<b>${esc(c.detail)}</b>` : ""}
       </div>`;
     }).join("");
+
+    // Состояние всех подключений сразу — одной точкой на иконке. Свернуть
+    // ленту в иконку можно было только так: иначе поломка перестала бы быть
+    // видна, а она и есть единственное, ради чего эта лента нужна.
+    const broken = s.connections.filter((c) => c.level === "fail");
+    const idle = s.connections.filter((c) => c.level === "idle");
+    const btn = $("conn-toggle");
+    btn.classList.toggle("bad", broken.length > 0);
+    btn.classList.toggle("idle", broken.length === 0 && idle.length > 0);
+    btn.title = broken.length
+      ? "Не работает: " + broken.map((c) => c.name).join(", ")
+      : idle.length
+        ? "Не настроено: " + idle.map((c) => c.name).join(", ")
+        : "Всё подключено";
+
     $("version").textContent = s.version;
+  }
+
+  // Окошко подключений.
+  //
+  // Именно окошко, а не раздел меню: сюда заглядывают на секунду, посреди
+  // эфира, чтобы понять, что именно отвалилось. Открывать ради этого целое
+  // меню — слишком много движений.
+  function toggleConns(open) {
+    const pop = $("conn-pop");
+    const want = open === undefined ? pop.hidden : open;
+    pop.hidden = !want;
+    $("conn-toggle").classList.toggle("on", want);
+    $("conn-toggle").setAttribute("aria-expanded", String(want));
   }
 
   // ── эфир ───────────────────────────────────────────────────────────
@@ -258,7 +287,21 @@
   // и вперемешку с отказами.
   function lastPlayed(s) {
     const l = s.last_played;
-    if (!l || !l.title) return "";
+
+    // Ещё ничего не играло. Выдумывать сюда трек нельзя — человек поверит и
+    // пойдёт искать его в хронике; пустое место тоже плохо — непонятно, то ли
+    // не работает, то ли нечего показывать. Поэтому честная пустая карточка.
+    if (!l || !l.title) {
+      return `
+        <div class="last empty">
+          <div class="last-art">${icon("music")}</div>
+          <div class="last-text">
+            <div class="last-kicker">Последним играло</div>
+            <div class="last-title">Пока ничего не воспроизводилось</div>
+            <div class="last-sub">Первый сыгравший трек появится здесь</div>
+          </div>
+        </div>`;
+    }
 
     const marks = [];
     if (l.requester) marks.push("заказал " + l.requester);
@@ -1500,6 +1543,7 @@
     if (pick) applyFix(pick.dataset.pick, pick);
   };
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("conn-pop").hidden) { toggleConns(false); return; }
     if (e.key === "Escape" && !$("fix").hidden) { closeFix(); return; }
     // Esc закрывает меню. Окно «не тот трек» лежит поверх него, поэтому
     // первым закрывается оно.
@@ -1620,6 +1664,16 @@
   // У самой страницы событие приходит окну, а полоса принадлежит <html>.
   fadingScrollbar(window, document.documentElement);
   fadingScrollbar($("menu-body"), $("menu-body"));
+
+  $("conn-toggle").onclick = (e) => {
+    e.stopPropagation();
+    toggleConns();
+  };
+  // Клик мимо окошка закрывает его — так ведут себя все всплывающие окошки, и
+  // отдельной кнопки «закрыть» для этого заводить не надо.
+  document.addEventListener("click", (e) => {
+    if (!$("conn-pop").hidden && !e.target.closest(".conn-slot")) toggleConns(false);
+  });
 
   $("menu-back").onclick = closeMenu;
   // Клик по затемнению — тот же «назад». Затемнение для того и нужно: видно,
