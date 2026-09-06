@@ -100,19 +100,86 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
   z-index: 5;
 }
 
-.conns { display: flex; flex: 1; min-width: 0; overflow: hidden; }
+/* Одна иконка вместо ленты из пяти ячеек.
+
+   Лента занимала всю ширину полосы и каждую секунду эфира сообщала то, что
+   человек и так знает: «Не настроено», «Не настроено», «Не настроено». При
+   этом единственное, ради чего она нужна, — заметить поломку. Поэтому от неё
+   осталась одна точка на иконке, а подробности переехали в окошко. */
+.conn-slot { position: relative; display: flex; align-items: stretch; }
+
+.conn-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: var(--s3) var(--s4);
+  background: none; border: 0; border-right: 1px solid var(--line);
+  color: var(--dimmer); cursor: pointer;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.conn-btn:hover { color: var(--text); background: var(--hover); }
+.conn-btn.on { color: var(--lime); background: var(--hover); }
+.conn-btn svg { width: 16px; height: 16px; }
+
+/* Точка — весь смысл свёртки. Лайм: всё на месте. Серый: что-то не настроено,
+   но это не поломка. Красный с ореолом: что-то отвалилось прямо сейчас, и
+   заметить это нужно из другого конца комнаты. */
+.conn-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--lime); flex: none;
+  transition: background var(--slow) var(--ease), box-shadow var(--slow) var(--ease);
+}
+.conn-btn.idle .conn-dot { background: var(--faint); }
+.conn-btn.bad .conn-dot { background: var(--bad); box-shadow: 0 0 0 3px rgba(255, 77, 77, .18); }
+
+.bar-gap { flex: 1; min-width: 0; }
+
+/* Окошко подключений. Маленькое и у самой иконки: сюда заглядывают на секунду,
+   посреди эфира, чтобы понять, что именно отвалилось. */
+.conn-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: var(--s2);
+  width: 320px;
+  max-width: calc(100vw - 2 * var(--s4));
+  padding: var(--s3);
+  background: var(--raise);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, .55);
+  z-index: 20;
+  transform-origin: top left;
+  animation: pop-in .18s var(--ease-soft);
+}
+.conn-pop[hidden] { display: none; }
+
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(.96) translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.conn-pop-head {
+  font-size: var(--t-xs); font-weight: 700;
+  letter-spacing: var(--track-caps); text-transform: uppercase;
+  color: var(--dimmer);
+  padding: var(--s1) var(--s2) var(--s3);
+}
+
+.conns { display: flex; flex-direction: column; gap: 2px; }
 
 .st {
   display: flex; align-items: center; gap: var(--s2);
-  padding: var(--s3) var(--s4);
-  border-right: 1px solid var(--line);
+  padding: var(--s2) var(--s3);
+  border-radius: 8px;
   font-size: 12px;
   color: var(--dimmer);
   white-space: nowrap;
   min-width: 0;
   transition: background var(--slow) var(--ease), color var(--slow) var(--ease);
 }
-.st b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.st-name { flex: none; }
+.st b {
+  font-weight: 500; margin-left: auto;
+  overflow: hidden; text-overflow: ellipsis;
+}
 
 /* Засечка вместо кружка: она не светится и не притягивает взгляд. */
 .st .led {
@@ -121,21 +188,16 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
   transition: background var(--slow) var(--ease);
 }
 .st.on { color: var(--dim); }
-.st.on .led { background: var(--lime-lo); }
+.st.on .led { background: var(--lime); }
 .st.on b { color: var(--text); }
 
-/* Неисправность — единственное, что кричит. Вес не меняем: иначе ячейка
-   раздаётся вширь и соседние прыгают вбок. */
-.st.off { background: var(--bad); color: #1a0000; flex: none; }
+/* Неисправность — единственное, что кричит. */
+.st.off { background: var(--bad); color: #1a0000; }
 .st.off .led { background: #1a0000; }
 .st.off b { color: #1a0000; font-weight: 700; }
 
-/* Ненастроенное сжимаем: две колонки «Не настроено» не должны занимать
-   половину ленты. */
-.st.idle { color: var(--dimmer); min-width: 0; flex: 0 1 auto; overflow: hidden; }
-.st.idle .led { background: transparent; width: 0; }
-
-.st:last-child { border-right: none; }
+.st.idle { color: var(--dimmer); }
+.st.idle .led { background: var(--faint); }
 
 .bar-tail {
   display: flex; align-items: center; gap: var(--s1);
@@ -310,6 +372,12 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .last-marks { margin-left: auto; font-size: 12px; color: var(--dimmer); }
+
+/* Ещё ничего не играло. Карточка та же, только приглушённая: место занято
+   честно, а не выдуманным треком. */
+.last.empty { border-style: dashed; }
+.last.empty .last-title { color: var(--dim); }
+.last.empty .last-sub { color: var(--dimmer); }
 
 /* ── Кнопки ─────────────────────────────────────────────────────────── */
 
