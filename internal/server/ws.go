@@ -37,6 +37,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx := conn.CloseRead(r.Context()) // входящие сообщения нам не нужны
 
+	// Панель помечает себя сама. Виджет в OBS этого не делает: он висит весь
+	// стрим, и секундный опрос ради него — плата запросами за картинку,
+	// которая меняется раз в три минуты.
+	if r.URL.Query().Has("panel") {
+		s.panelOpened()
+		defer s.panelClosed()
+	}
+
 	changed, unsubscribe := s.state.Subscribe()
 	defer unsubscribe()
 

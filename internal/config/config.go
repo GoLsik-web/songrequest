@@ -29,6 +29,34 @@ type Config struct {
 	// Локальный сервер
 	Port int `json:"port"` // 0 = выбрать свободный порт
 
+	// Window — размер и положение окна программы с прошлого запуска.
+	// Пустое (все нули) означает «открыть по умолчанию, посередине экрана».
+	Window Window `json:"window"`
+	// TrayHintShown — показывали ли уже подсказку «программа свернулась к
+	// часам». Один раз объяснить надо: Windows 11 прячет новые значки в
+	// список под стрелкой, и человек уверен, что программа закрылась.
+	TrayHintShown bool `json:"tray_hint_shown"`
+
+	// SetupDone — прошёл ли человек первую настройку по шагам.
+	//
+	// Пока признака нет, приложение после заставки открывает не панель, а
+	// мастер настройки: без ключей от Spotify и Twitch панель всё равно
+	// пустая, а куда в ней нажимать, новому человеку неоткуда узнать.
+	// Мастер можно пройти заново из настроек — люди ломают настройку и
+	// хотят повторить, а не разбираться, что именно они сломали.
+	SetupDone bool `json:"setup_done"`
+
+	// Обход блокировок. Сам ключ здесь не лежит — он секрет и хранится в
+	// хранилище паролей Windows (internal/secrets). Тут только то, что можно
+	// показывать: включён ли обход, что за ключ вставлен (без секретной части)
+	// и какой сервер сработал в прошлый раз.
+	TunnelOn      bool   `json:"tunnel_on"`
+	TunnelKeyHint string `json:"tunnel_key_hint"`
+	TunnelServer  string `json:"tunnel_server"`
+	// TunnelToolPath — путь к xray.exe, если человек положил его руками.
+	// Пусто — приложение скачает и будет держать свою копию.
+	TunnelToolPath string `json:"tunnel_tool_path"`
+
 	// Spotify
 	SpotifyClientID string `json:"spotify_client_id"`
 	// SpotifyProxy — посредник только для запросов к Spotify. Пусто — прямое
@@ -77,6 +105,14 @@ type Config struct {
 	YouTubeBrowser string `json:"youtube_browser"`
 	YtDlpPath      string `json:"ytdlp_path"` // пусто = встроенная копия
 	MpvPath        string `json:"mpv_path"`
+	// YouTubeVolume — громкость заказов с YouTube в процентах от той, что
+	// стоит в Spotify. Сто означает «ровно как Spotify», пятьдесят — вдвое
+	// тише. Считаем именно от Spotify, а не сами по себе: заказ звучит
+	// вперемешку с музыкой стримера, и громкости обязаны совпадать.
+	//
+	// Появилось после 27.08: mpv запускался вообще без --volume, то есть на
+	// сто процентов, и первый же заказ с YouTube оглушил эфир.
+	YouTubeVolume int `json:"youtube_volume"`
 
 	// Фильтр «это не музыка»
 	RejectKeywords []string `json:"reject_keywords"`
@@ -109,6 +145,7 @@ func Defaults() Config {
 		ResumeFail:         ResumeFallbackPlaylist,
 		ResumeDelaySeconds: 1,
 		WaitForCurrent:     true,
+		YouTubeVolume:      100,
 		MatchAccept:        0.80,
 		MatchMaybe:         0.55,
 		MatchWeight: MatchWeights{
@@ -124,6 +161,19 @@ func Defaults() Config {
 			"1 hour", "1 час", "10 hours", "podcast", "livestream", "best moments",
 		},
 	}
+}
+
+// Window — где и какого размера было окно программы, когда его закрыли.
+//
+// Живёт в настройках, а не вычисляется заново: стример один раз растянул окно
+// под свой экран, и каждый следующий запуск обязан открыться так же. В панели
+// этих полей нет — их пишет само окно.
+type Window struct {
+	X         int  `json:"x"`
+	Y         int  `json:"y"`
+	Width     int  `json:"width"`
+	Height    int  `json:"height"`
+	Maximized bool `json:"maximized"`
 }
 
 // File — конфиг на диске. Все обращения идут через него, поэтому чтение из
@@ -248,6 +298,14 @@ func (f *File) Get() Config {
 // оно перезапуск, поэтому проверяем при каждой записи.
 func (c *Config) NormalizeMatching() {
 	d := Defaults()
+
+	// Ноль здесь законен — это «выключить звук заказов». А вот отсутствие
+	// поля в старом config.json тоже даёт ноль, и тихий эфир после
+	// обновления выглядел бы как поломка. Различить их нечем, поэтому
+	// нижняя граница — единица: почти тишина, но слышно, что играет.
+	if c.YouTubeVolume < 1 || c.YouTubeVolume > 100 {
+		c.YouTubeVolume = d.YouTubeVolume
+	}
 
 	if c.MatchAccept <= 0 || c.MatchAccept > 1 {
 		c.MatchAccept = d.MatchAccept

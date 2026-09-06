@@ -23,7 +23,7 @@ type Playlist struct {
 
 // HasPlaylistAccess сообщает, выдал ли стример право читать список плейлистов.
 // Права запрашиваются при входе, поэтому у того, кто подключился на прошлой
-// версии приложения, их нет — ему нужно нажать «Подключить заново».
+// версии приложения, их нет — ему нужно ещё раз нажать «Подключить Spotify».
 func (c *Client) HasPlaylistAccess() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -39,7 +39,7 @@ func (c *Client) Playlists(ctx context.Context) ([]Playlist, error) {
 	}
 	if !c.HasPlaylistAccess() {
 		return nil, errs.New(errs.SpotifyNoScope,
-			"Чтобы приложение видело твои плейлисты, нужно один раз переподключить Spotify — нажми «Подключить заново».")
+			"Чтобы приложение видело твои плейлисты, нужно один раз переподключить Spotify — нажми «Подключить Spotify» ещё раз.")
 	}
 
 	var out []Playlist

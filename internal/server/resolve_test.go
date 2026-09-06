@@ -130,6 +130,58 @@ func TestOrderWithoutTextIsHandled(t *testing.T) {
 	}
 }
 
+// Ссылка на видео без проигрывателя — это не «зритель ничего не написал».
+//
+// У тестера не стоял mpv, ссылку играть было нечем, адрес вырезался из текста
+// заказа — и зритель получал «ты не написал, что заказываешь», хотя написал
+// ровно то, что просили.
+func TestYouTubeLinkWithoutPlayerSaysWhy(t *testing.T) {
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("играть нечем — в Spotify ходить не нужно")
+	})
+
+	r := placeOrder(srv, "https://youtu.be/hZEPgjqOhS8")
+	srv.resolveOrder(context.Background(), r)
+
+	m := orderMatch(t, srv, r.ID)
+	if m.State != app.MatchFailed {
+		t.Fatalf("состояние заказа: %q", m.State)
+	}
+	if !strings.Contains(m.Note, "проигрыватель") {
+		t.Fatalf("в панели не сказано про проигрыватель: %q", m.Note)
+	}
+}
+
+// 27.08 владелец кинул обычную ссылку на YouTube и получил в ответ «ты не
+// написал, что заказываешь. Баллы вернул» — при том что написал он ровно то,
+// что просили. Ссылку не удалось прочитать, но зритель об этом не узнал:
+// приложение отвечало ему самым сбивающим с толку текстом из возможных.
+//
+// Здесь то же самое, но ссылкой на Spotify: он на неё не отвечает.
+func TestUnreadableLinkSaysWhy(t *testing.T) {
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/tracks/") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	r := placeOrder(srv, "https://open.spotify.com/track/7MZyREIMPkgc7v5vzCGw87")
+	srv.resolveOrder(context.Background(), r)
+
+	m := orderMatch(t, srv, r.ID)
+	if m.State != app.MatchFailed {
+		t.Fatalf("состояние заказа: %q", m.State)
+	}
+	if strings.Contains(m.Note, "не написал") {
+		t.Fatalf("зритель написал ссылку, а ему говорят обратное: %q", m.Note)
+	}
+	if !strings.Contains(m.Note, "Ссылку прочитать не вышло") {
+		t.Fatalf("в панели не сказано, что случилось со ссылкой: %q", m.Note)
+	}
+}
+
 // Второй такой же заказ обязан браться из памяти: за стрим один трек
 // заказывают десятками, и каждый раз ходить в Spotify пятью запросами незачем.
 func TestRepeatedOrderComesFromCache(t *testing.T) {

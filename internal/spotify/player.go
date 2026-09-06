@@ -77,6 +77,10 @@ type Snapshot struct {
 	IsPlaying   bool      `json:"is_playing"`
 	Shuffle     bool      `json:"shuffle"`
 	Repeat      string    `json:"repeat"`
+	// Volume — громкость устройства в процентах на момент снимка. Нужна
+	// заказам с YouTube: их играет отдельная программа, и без этого числа
+	// она включается на полную, оглушая эфир.
+	Volume int `json:"volume"`
 }
 
 // Describe — короткое описание снимка для панели.
@@ -176,6 +180,7 @@ func (c *Client) Capture(ctx context.Context) (*Snapshot, error) {
 		IsPlaying:  st.IsPlaying,
 		Shuffle:    st.ShuffleState,
 		Repeat:     st.RepeatState,
+		Volume:     st.Device.Volume,
 	}
 	if len(st.Item.Artists) > 0 {
 		snap.ArtistName = st.Item.Artists[0].Name
@@ -189,7 +194,8 @@ func (c *Client) Capture(ctx context.Context) (*Snapshot, error) {
 	c.log.Info("снял снимок Spotify",
 		"трек", snap.TrackName, "артист", snap.ArtistName,
 		"контекст", snap.ContextURI, "позиция_мс", snap.PositionMs,
-		"играл", snap.IsPlaying, "устройство", snap.DeviceName)
+		"играл", snap.IsPlaying, "устройство", snap.DeviceName,
+		"громкость", snap.Volume)
 	return snap, nil
 }
 

@@ -167,7 +167,7 @@ func New(dir string, debug bool) (*Logger, error) {
 	level := new(slog.LevelVar)
 	red := &Redactor{}
 
-	base := slog.NewTextHandler(io.MultiWriter(os.Stderr, out), &slog.HandlerOptions{
+	base := slog.NewTextHandler(io.MultiWriter(out, consoleWriter()), &slog.HandlerOptions{
 		Level: level,
 	})
 	l := &Logger{
@@ -179,6 +179,26 @@ func New(dir string, debug bool) (*Logger, error) {
 	}
 	l.SetDebug(debug)
 	return l, nil
+}
+
+// consoleWriter — куда дублировать лог на экран, кроме файла.
+//
+// С тех пор как приложение стало обычной программой с окном, консоли у него
+// обычно нет вовсе: os.Stderr указывает в никуда, и запись туда кончается
+// ошибкой «неверный дескриптор». Само по себе это не беда, но писатели
+// собраны в цепочку, а она бросает работу на первой же ошибке — и лог
+// перестал бы попадать на диск, то есть чинить приложение по логу с чужого
+// компьютера стало бы нечем. Поэтому спрашиваем систему один раз: есть
+// консоль — пишем и туда (удобно при запуске из PowerShell), нет — только в
+// файл. Файл в цепочке идёт первым по той же причине.
+func consoleWriter() io.Writer {
+	if os.Stderr == nil {
+		return io.Discard
+	}
+	if _, err := os.Stderr.Stat(); err != nil {
+		return io.Discard
+	}
+	return os.Stderr
 }
 
 // logFile — файл лога, который сам себя подрезает.

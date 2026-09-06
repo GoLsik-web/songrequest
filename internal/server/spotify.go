@@ -27,7 +27,21 @@ func (s *Server) handleSpotifyLogin(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, map[string]string{"url": url, "redirect_uri": s.redirectURI()})
+	// Пока обход работает, вход открываем в своём окне: браузер про обход не
+	// знает, и страница входа Spotify из России у него просто не откроется.
+	// Раньше на этом месте была просьба «включи VPN на время первого входа» —
+	// то есть человеку всё равно нужна была отдельная программа обхода, ради
+	// избавления от которой всё и делалось.
+	if open := s.openAuth.Load(); open != nil && s.tunnel != nil && s.tunnel.Status().On {
+		if err := (*open)(url); err != nil {
+			s.log.Warn("не смог открыть вход в своём окне", "ошибка", err)
+		} else {
+			writeJSON(w, map[string]any{
+				"url": url, "redirect_uri": s.redirectURI(), "in_app": true})
+			return
+		}
+	}
+	writeJSON(w, map[string]any{"url": url, "redirect_uri": s.redirectURI()})
 }
 
 // handleSpotifyCallback принимает ответ Spotify после входа. Открывается в
@@ -71,7 +85,7 @@ func (s *Server) handleSpotifyCallback(w http.ResponseWriter, r *http.Request) {
 		s.callbackPage(w, "Вход выполнен", problem.Message)
 		return
 	}
-	s.callbackPage(w, "Готово", "Spotify подключён. Эту вкладку можно закрыть и вернуться в панель.")
+	s.callbackPage(w, "Готово", "Spotify подключён. Возвращайся в панель — эта страница больше не нужна.")
 }
 
 func (s *Server) handleSpotifyLogout(w http.ResponseWriter, r *http.Request) {
@@ -85,9 +99,16 @@ func (s *Server) handleSpotifyCheck(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	// Человек нажал кнопку сам — значит, объявленную Spotify паузу он видел и
+	// решил попробовать ещё раз. Запирать его до конца паузы нельзя: он ничего
+	// другого сделать и не может. Один запрос по нажатию ограничение не
+	// продлевает — продлевает поток запросов, а его держит пауза.
+	s.spotify.ClearPause()
+
 	me, err := s.spotify.CheckAccount(ctx)
 	s.syncSpotifyInfo()
 	if err != nil {
+		s.noteSpotifyError(err)
 		s.state.NotifyError(err)
 		s.fail(w, err)
 		return
@@ -98,6 +119,82 @@ func (s *Server) handleSpotifyCheck(w http.ResponseWriter, r *http.Request) {
 		s.reportPlanProblem(problem)
 	}
 	writeJSON(w, me)
+}
+
+// handleSpotifyProbe перебирает способы спросить у Spotify поиск и содержимое
+// плейлиста, а всё, что он ответил, кладёт в лог.
+//
+// Кнопка «Проверить поиск» в панели. Нужна одному человеку и один раз: у
+// тестера поиск трека отвечает отказом «Invalid limit», хотя поиск артиста и
+// всё остальное на том же аккаунте работает. Причина снаружи приложения, и
+// увидеть её можно только живыми пробами на его машине.
+func (s *Server) handleSpotifyProbe(w http.ResponseWriter, r *http.Request) {
+	// Проб полтора десятка, каждая с походом в сеть: срок щедрый.
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		query = "into you"
+	}
+
+	// Плейлист берём выбранный запасным, а нет такого — первый попавшийся:
+	// пробы по нему объясняют жалобу «в плейлистах 0 треков».
+	playlist := s.cfg.Get().FallbackPlaylistID
+	if playlist == "" {
+		if list, err := s.spotify.Playlists(ctx); err == nil && len(list) > 0 {
+			playlist = list[0].ID
+		}
+	}
+
+	probes := s.spotify.ProbeSearch(ctx, query, playlist)
+
+	ok := 0
+	for _, p := range probes {
+		if p.OK() {
+			ok++
+		}
+	}
+
+	level := "info"
+	if ok == 0 {
+		level = "error"
+	}
+	s.state.Notify(level, fmt.Sprintf(
+		"Проверка поиска: удачных проб %d из %d. Выгрузи лог и пришли его.", ok, len(probes)))
+
+	writeJSON(w, map[string]any{"probes": probes, "ok": ok, "total": len(probes)})
+}
+
+// autoProbeSearch прогоняет пробы поиска сам, без кнопки, — один раз за
+// запуск и только после того, как поиск уже отказал.
+//
+// Кнопка «Проверить поиск» появилась в 0.22.0 и не была нажата ни разу: два
+// присланных лога подряд пришли без единой строки `проба поиска`, и разбор
+// оба раза упёрся в «попроси нажать кнопку». Человека из этой цепочки надо
+// убрать. Отказ поиска — сам по себе достаточный повод спросить Spotify
+// пятнадцатью способами: строки лягут в тот же лог, который стример и так
+// пришлёт, и следующий разбор начнётся с ответа, а не с просьбы.
+//
+// Один раз за запуск, потому что проб полтора десятка: повторять их на
+// каждый заказ — это утопить лог и получить от Spotify паузу за частые
+// запросы.
+func (s *Server) autoProbeSearch(query string) {
+	s.probeOnce.Do(func() {
+		go func() {
+			// Свой срок и свой контекст: заказ, из-за которого всё началось,
+			// к этому времени давно закончится и свой контекст закроет.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+
+			s.log.Warn("поиск отказал — проверяю поиск сам, кнопку ждать не будем",
+				"запрос", query)
+			s.spotify.ProbeSearch(ctx, query, s.cfg.Get().FallbackPlaylistID)
+			s.state.Notify("error",
+				"Поиск в Spotify отказал. Приложение проверило его само — нажми "+
+					"«Сохранить лог и историю» и пришли архив.")
+		}()
+	})
 }
 
 // handleSpotifySnapshot снимает состояние плеера. На следующих этапах это
@@ -233,7 +330,26 @@ func (s *Server) handleProxyDetect(w http.ResponseWriter, r *http.Request) {
 // Вызывается при запуске и после каждого сохранения настроек: прокси должен
 // начинать работать сразу, а не после перезапуска приложения — иначе человек
 // решит, что он не работает вовсе.
+//
+// Обход внутри приложения главнее ручного поля «Прокси для Spotify». Двух
+// посредников подряд быть не может, а выбирать за человека приходится: если
+// он включил обход, значит ручной прокси ему как раз не помог.
 func (s *Server) applyProxy() {
+	if s.tunnel != nil {
+		if st := s.tunnel.Status(); st.On {
+			label := "обход внутри приложения"
+			if st.Server != "" {
+				label += " · " + st.Server
+			}
+			if err := s.spotify.SetTunnel(st.Addr, label); err != nil {
+				s.log.Error("не смог направить Spotify через обход", "ошибка", err)
+			} else {
+				s.syncSpotifyInfo()
+				return
+			}
+		}
+	}
+
 	shown, err := s.spotify.SetProxy(s.cfg.Get().SpotifyProxy)
 	if err != nil {
 		s.log.Error("прокси для Spotify не настроен", "ошибка", err)
@@ -252,6 +368,20 @@ func (s *Server) syncSpotifyInfo() {
 		Plan:        string(spotify.PlanUnknown),
 		Proxy:       s.spotify.ProxyLabel(),
 	}
+
+	if left, part := s.spotify.PauseInfo(); left > 0 {
+		until := time.Now().Add(left)
+		info.PausedUntil = &until
+		info.PausedPart = part
+	}
+	// Признак «пауза показана» держим здесь, рядом с самим показом.
+	//
+	// Раньше его переключал только notePause, и стоило карточке пересобраться
+	// из другого места (проверка связи, вход, правка настроек), как признак
+	// расходился с тем, что в панели: notePause считал, что пауза уже
+	// нарисована, и молчал, а в карточке её не было. Живьём это выглядело как
+	// «всё сломалось без объяснений».
+	s.paused.Store(info.PausedUntil != nil)
 
 	if me != nil {
 		info.Account = me.DisplayName
@@ -377,6 +507,15 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	// заблокированная база, повреждённый файл — исчезала бесследно.
 	code, text := errs.Describe(err)
 	s.log.Error("отказ панели", "код", code, "текст", text, "ошибка", err)
+
+	// Через эту воронку проходят все отказы панели — значит здесь же удобнее
+	// всего заметить те, что говорят о дороге до Spotify.
+	//
+	// Живьём 31.08: приложение решило, что обход не нужен (Spotify отвечал), а
+	// список плейлистов тут же получил «SP-16 Spotify не работает из этой
+	// страны». Разбор дороги висел только на опросе плеера и на кнопке
+	// «Проверить связь», и такой отказ проходил мимо него.
+	s.noteSpotifyError(err)
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)

@@ -9,6 +9,7 @@ package player
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"songrequest/internal/errs"
@@ -23,6 +24,9 @@ type YouTube interface {
 	Play(ctx context.Context, url string) error
 	Wait(ctx context.Context) bool
 	Stop()
+	// SetBase сообщает громкость Spotify, от которой считается громкость
+	// заказа. Без неё mpv играет на полную и оглушает эфир.
+	SetBase(volume int)
 }
 
 // Spotify — то, что умеет играть. Интерфейсом ради тестов.
@@ -55,10 +59,13 @@ type Player struct {
 	youtube YouTube
 	log     *logx.Logger
 
-	// PollEvery — шаг проверки Spotify, пока играет заказ. Вынесен наружу
-	// ради тестов: они не должны ждать живые шесть секунд, чтобы проверить,
-	// что перемотка доезжает.
-	PollEvery time.Duration
+	// pollEvery — шаг проверки Spotify, пока играет заказ.
+	//
+	// Атомарный, потому что меняется на ходу: пока панель открыта, стример
+	// может перемотать трек в самом Spotify, и полоса в панели обязана
+	// поехать следом сразу, а не через шесть секунд. Как только панель
+	// закрыли, шаг возвращается к экономному.
+	pollEvery atomic.Int64
 
 	// WaitForCurrent — дожидаться конца трека, который играет у стримера,
 	// прежде чем включить первый заказ.
@@ -106,9 +113,12 @@ type Player struct {
 	paused       bool
 	// waiting — заказ взят, но ждёт конца трека стримера.
 	waiting bool
-	wake    chan struct{}
-	skip    chan struct{}
-	running bool
+	// waitingItem — что именно ждёт. Панель показывает его в очереди, иначе
+	// заказ исчезает с экрана на всё время ожидания.
+	waitingItem *queue.Item
+	wake        chan struct{}
+	skip        chan struct{}
+	running     bool
 }
 
 // SetYouTube подключает запасной проигрыватель.
@@ -120,15 +130,16 @@ func (p *Player) SetYouTube(y YouTube) {
 
 // New создаёт плеер.
 func New(q *queue.Queue, sp Spotify, log *logx.Logger) *Player {
-	return &Player{
+	p := &Player{
 		q:           q,
 		spotify:     sp,
 		log:         log,
 		ResumeDelay: time.Second,
-		PollEvery:   defaultPoll,
 		wake:        make(chan struct{}, 1),
 		skip:        make(chan struct{}, 1),
 	}
+	p.SetPollEvery(defaultPoll)
+	return p
 }
 
 // Now отдаёт текущий заказ.
@@ -149,10 +160,33 @@ func (p *Player) Now() *Now {
 // Waiting сообщает, что заказ уже взят в работу, но ждёт конца трека
 // стримера. Для панели и для чата это «сейчас играет» в смысле «есть что
 // торопить скипом».
+// WaitingItem — заказ, который уже вынут из очереди, но ещё не заиграл:
+// ждёт, пока доиграет трек стримера.
+//
+// Нужен панели. Без него такой заказ не виден нигде: из очереди он уже взят,
+// а «В эфире» ещё пусто. 27.08 владелец кинул ссылку, приложение всё нашло
+// правильно — и полминуты на экране не было ничего, будто заказ потерялся.
+func (p *Player) WaitingItem() *queue.Item {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.waitingItem == nil {
+		return nil
+	}
+	item := *p.waitingItem
+	return &item
+}
+
 func (p *Player) Waiting() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.waiting
+}
+
+// setWaitingItem запоминает, чего именно мы ждём.
+func (p *Player) setWaitingItem(item *queue.Item) {
+	p.mu.Lock()
+	p.waitingItem = item
+	p.mu.Unlock()
 }
 
 func (p *Player) setWaiting(v bool) {
@@ -282,7 +316,9 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 		// видел «заиграет примерно через три минуты» и не мог это ускорить
 		// ничем — при том что сам скип ожидание прерывать умеет.
 		p.setWaiting(true)
+		p.setWaitingItem(&item)
 		p.waitForOwnTrack(ctx, item)
+		p.setWaitingItem(nil)
 		p.setWaiting(false)
 		if ctx.Err() != nil {
 			return
@@ -377,6 +413,16 @@ func (p *Player) playYouTube(ctx context.Context, item queue.Item) error {
 	if err := p.spotify.Pause(ctx, ""); err != nil {
 		p.log.Warn("не поставил Spotify на паузу перед заказом с YouTube", "ошибка", err)
 	}
+
+	// Громкость берём из снимка: заказ должен звучать так же, как звучала
+	// музыка стримера секунду назад. Снимка нет — mpv посчитает от ста, и
+	// это честнее тишины.
+	base := 0
+	if snap := p.Snapshot(); snap != nil {
+		base = snap.Volume
+	}
+	yt.SetBase(base)
+
 	return yt.Play(ctx, item.URI)
 }
 
@@ -450,6 +496,12 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 	deadline := time.Now().Add(length + 15*time.Second)
 
 	left := length
+	// endBy — когда трек доиграет по нашим часам. Пока музыка идёт, срок
+	// переставляется по настоящему положению в треке; на паузе он стоит
+	// вместе с треком. Нужен он ради одного случая: доигравший заказ Spotify
+	// показывает как тот же трек с нулевой позиции и на паузе, и отличить
+	// это от настоящей паузы можно только по своим часам.
+	endBy := time.Now().Add(length)
 	// paused — сколько в сумме простояли на паузе. Своя мерка, отдельная от
 	// общего срока: пауза не должна его растягивать без предела.
 	var paused time.Duration
@@ -491,23 +543,56 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 			return toEnd
 		}
 
-		// Перемотка сбивает отсчёт: точка отсчёта переставляется на настоящее
-		// положение, и панель с виджетом узнают об этом сразу.
-		p.reposition(st.ProgressMs)
-
 		left = time.Duration(st.Item.DurationMs-st.ProgressMs) * time.Millisecond
+
+		if st.IsPlaying {
+			// Перемотка сбивает отсчёт: точка отсчёта переставляется на
+			// настоящее положение, и панель с виджетом узнают об этом сразу.
+			//
+			// Читаем её только у играющей музыки. На паузе Spotify
+			// показывает не то место, где остановился стример: доигравший
+			// заказ он отматывает на ноль — и перемотка «на ноль» каждые
+			// шесть секунд двигала точку отсчёта на «сейчас», отчего остаток
+			// трека всегда равнялся полной длительности, а срок не наступал
+			// никогда.
+			p.reposition(st.ProgressMs)
+			endBy = time.Now().Add(left)
+			if left <= 0 {
+				return true
+			}
+			wasPaused = false
+			continue
+		}
+
+		// Дальше музыка стоит.
+
+		// Заказ доиграл, а Spotify показывает его же с нулевой позиции.
+		//
+		// Так кончается каждый заказ: включаем мы один трек без источника,
+		// продолжать Spotify нечем, и он отматывает тот же трек на начало и
+		// встаёт на паузу. Раньше это считалось паузой стримера — очередь
+		// замирала на пять минут, следующий заказ не играл, возврата
+		// плейлиста не было. Со стороны: «поиграл — и всё стопится».
+		//
+		// Порог по своим часам обязателен: без него настоящая пауза на первых
+		// секундах заказа тоже сошла бы за конец.
+		slack := p.endSlack(length)
+		if time.Duration(st.ProgressMs)*time.Millisecond <= slack &&
+			!time.Now().Add(slack).Before(endBy) {
+			p.log.Info("заказ доиграл: Spotify отмотал трек на начало и встал",
+				"трек", item.Artist+" — "+item.Title)
+			return true
+		}
 
 		// Трек на паузе у самого конца — это конец, а не пауза: Spotify так
 		// показывает доигравший трек, и ждать тут нечего.
-		if !st.IsPlaying && left <= 2*time.Second {
+		if left <= 2*time.Second {
 			return true
 		}
-		if left <= 0 {
-			return true
-		}
-		if !st.IsPlaying {
-			// Настоящая пауза: стример остановил музыку сам. Ждём его, но не
-			// бесконечно.
+
+		// Настоящая пауза: стример остановил музыку сам. Ждём его, но не
+		// бесконечно.
+		{
 			//
 			// Раньше срок продлевался на десять секунд на каждой проверке, а
 			// проверки шли чаще, — то есть убегал быстрее, чем шло время, и
@@ -538,12 +623,38 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 			// (`left = p.step()`), из-за чего toEnd на паузе выходил всегда
 			// истинным, и оборванный заказ выдавался за отыгравший — вместе
 			// с возвратом музыки поверх того, что стример только что выбрал.
+			// Трек стоит — вместе с ним стоит и срок его конца. Иначе через
+			// время, равное остатку трека, пауза превратилась бы в «доиграл».
+			//
+			// Но первую проверку на паузе срок не двигаем: между нашим
+			// расчётом конца и настоящим есть задержка сети, и пауза может
+			// прийти на мгновение раньше срока. Сдвинь мы его сразу — он
+			// убегал бы ровно с той же скоростью, что идёт время, и «трек
+			// доиграл» не наступило бы никогда.
+			if wasPaused {
+				endBy = endBy.Add(nap)
+			}
 			wasPaused = true
-			continue
 		}
-		wasPaused = false
 	}
 	return false
+}
+
+// endSlack — насколько близко к нулю должна быть позиция и насколько
+// разрешаем ошибиться своим часам, чтобы счесть трек доигравшим.
+//
+// Меньше шага проверки взять нельзя: раньше него мы о конце трека всё равно
+// не узнаем. Больше трёх секунд — тоже: тогда под конец трека настоящая
+// пауза начнёт сходить за конец.
+func (p *Player) endSlack(length time.Duration) time.Duration {
+	slack := p.step()
+	if slack > 3*time.Second {
+		slack = 3 * time.Second
+	}
+	if quarter := length / 4; slack > quarter {
+		slack = quarter
+	}
+	return slack
 }
 
 // maxPause — сколько всего готовы ждать стримера, если он поставил паузу.
@@ -568,9 +679,17 @@ func (p *Player) awaitNap(left time.Duration) time.Duration {
 	}
 }
 
+// SetPollEvery меняет шаг проверки Spotify на ходу.
+func (p *Player) SetPollEvery(d time.Duration) {
+	if d <= 0 {
+		d = defaultPoll
+	}
+	p.pollEvery.Store(int64(d))
+}
+
 func (p *Player) step() time.Duration {
-	if p.PollEvery > 0 {
-		return p.PollEvery
+	if d := p.pollEvery.Load(); d > 0 {
+		return time.Duration(d)
 	}
 	return defaultPoll
 }

@@ -59,7 +59,10 @@
   let knownOrderIds = null;
 
   function connect() {
-    const socket = new WebSocket(`ws://${location.host}/ws`);
+    // Метка «это панель»: пока она открыта, приложение спрашивает Spotify
+    // раз в секунду, чтобы перемотка в самом Spotify сразу двигала полосу.
+    // Виджет в OBS такой метки не ставит — он висит весь стрим.
+    const socket = new WebSocket(`ws://${location.host}/ws?panel=1`);
 
     socket.onopen = () => {
       retryDelay = 1000;
@@ -93,10 +96,16 @@
     }
   }
 
-  async function post(path, btn) {
+  // body — необязательный: почти все ручки панели ничего не принимают, а
+  // обходу блокировок надо передать ключ, и в адрес его класть нельзя —
+  // адреса попадают в лог целиком.
+  async function post(path, btn, body) {
     if (btn) btn.disabled = true;
     try {
-      const r = await fetch(path, { method: "POST" });
+      const r = await fetch(path, body === undefined
+        ? { method: "POST" }
+        : { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         say(d.code ? `${d.code} · ${d.error}` : "Не получилось", true);
@@ -149,6 +158,13 @@
         return { state: "todo", value: "Вход не выполнен",
                  hint: "Разреши доступ на странице Spotify",
                  button: `<button class="act key small" data-do="login">Подключить Spotify</button>` };
+      }
+      const paused = pauseLeft(sp);
+      if (paused) {
+        const at = paused.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+        return { state: "fail", value: "Spotify просит паузу",
+                 hint: `Ограничил приложение до ${at}: ${pausedParts[sp.paused_part] || "часть возможностей не работает"}`,
+                 button: `<button class="act small" data-do="check">Проверить связь</button>` };
       }
       if (!sp.account) {
         return { state: "fail", value: "Spotify не отвечает",
@@ -237,11 +253,19 @@
     const list = steps(s);
     const now = s.now;
 
-    // Играет заказ — всё остальное отходит на второй план. Но если что-то
-    // сломано, прятать это нельзя: иначе при играющем фоновом плейлисте
-    // отвалившийся Twitch не виден вовсе, и попасть к настройке неоткуда.
-    if (now && !list.some((x) => x.state === "fail")) {
+    // Играет заказ — всё остальное отходит на второй план.
+    //
+    // Раньше карточка пряталась целиком, если хоть один шаг настройки
+    // сломан: вместо неё показывался список шагов. Вместе с карточкой
+    // исчезала кнопка «Скипнуть» — ровно тогда, когда она нужнее всего.
+    // Так 27.08 стример и не смог оборвать заказ, оглушивший эфир: скип в
+    // плеере работал, нажать его было нечем. Теперь карточка остаётся
+    // всегда, а поломка живёт полосой под кнопками — вместе со своей
+    // кнопкой починки, чтобы попасть к настройке было откуда.
+    if (now) {
       const own = now.source === "own";
+      const broken = list.filter((x) => x.state === "fail");
+      const yt = now.provider === "youtube";
       swap($("stage"), `
         <div class="eyebrow">
           <i class="live"></i> В эфире
@@ -256,11 +280,12 @@
             <h1 class="headline">${esc(now.title)}</h1>
             <div class="subhead">${esc(now.artist)}</div>
             ${now.requester ? `<div class="credit">${icon("user")}заказал <b>${esc(now.requester)}</b></div>` : ""}
+            ${now.duration_ms > 0 ? `
             <div class="meter">
               <span class="t" id="at">${mmss(now.position_ms)}</span>
               <span class="bar"><i id="at-bar"></i></span>
               <span class="t">${mmss(now.duration_ms)}</span>
-            </div>
+            </div>` : ""}
           </div>
         </div>
         <div class="acts">${own ? `
@@ -268,7 +293,25 @@
             приложению тут нечего.</span>` : `
           <button class="act key" data-do="skip">${icon("skip-forward")}Скипнуть</button>
           <button class="act" data-do="restore">${icon("rotate-cw")}Вернуть Spotify</button>`}
-        </div>`);
+        </div>
+        ${yt ? `
+        <label class="stage-vol">
+          ${icon("volume-2")}
+          <span class="t">Громкость <b id="vol-val">${config.youtube_volume ?? 100}%</b></span>
+          <input type="range" id="vol" min="1" max="100" step="1"
+                 value="${config.youtube_volume ?? 100}">
+          <span class="hint">От громкости Spotify. Действует сразу, на этот же трек.</span>
+        </label>` : ""}
+        ${broken.length ? `
+        <div class="stage-alarm">
+          ${icon("triangle-alert")}
+          <div>
+            <b>${broken.map((x) => esc(x.name)).join(", ")}: ${esc(broken[0].value)}</b>
+            <div class="hint">${esc(broken[0].hint)}</div>
+          </div>
+          ${broken[0].button || ""}
+        </div>` : ""}`);
+      if (yt) bindVolume();
       runMeter(now);
       return;
     }
@@ -290,7 +333,8 @@
     } else {
       brow = `<div class="eyebrow quiet"><i class="live"></i> Настройка · ${done} из ${list.length}</div>`;
       mark = "Ещё не всё готово";
-      sub = "Пройди шаги ниже — это делается один раз.";
+      sub = "Пройди шаги ниже — это делается один раз. " +
+        "Или нажми «Провести по шагам»: мастер сделает то же самое, но с картинками и по одному шагу за раз.";
     }
 
     swap($("stage"), `
@@ -299,6 +343,9 @@
         <h1 class="big">${mark}</h1>
         <p class="lead">${sub}</p>
       </div>
+      ${ready || broken ? "" : `<div class="step-acts" style="margin:0 0 20px">
+        <button class="act small key" id="stage-setup">Провести по шагам</button>
+      </div>`}
       <div class="rail"><i style="width:${(done / list.length) * 100}%"></i></div>
       <ol class="steps">
         ${list.map((step, i) => `
@@ -312,6 +359,30 @@
             </div>
           </li>`).join("")}
       </ol>`);
+
+    // Кнопка живёт ровно столько, сколько карточка, поэтому вешается заново
+    // после каждой отрисовки — как ползунок громкости рядом.
+    const go = $("stage-setup");
+    if (go) go.onclick = () => window.srSetupOpen && window.srSetupOpen();
+  }
+
+  // Ползунок громкости на карточке. Живёт ровно столько, сколько карточка,
+  // поэтому вешается заново после каждой отрисовки.
+  //
+  // Пишем в те же настройки, что и ползунок в разделе «Если трека нет в
+  // Spotify»: одно значение, два места, где до него можно дотянуться. Правка
+  // уезжает в уже играющий mpv, а не только к следующему заказу.
+  function bindVolume() {
+    const el = $("vol");
+    if (!el) return;
+    el.oninput = () => { $("vol-val").textContent = el.value + "%"; };
+    el.onchange = async () => {
+      const v = parseInt(el.value, 10);
+      if (await saveConfig({ youtube_volume: v })) {
+        const slider = $("yt-volume");
+        if (slider) { slider.value = v; $("yt-volume-val").textContent = v + "%"; }
+      }
+    };
   }
 
   // Плавная подмена содержимого: без неё блок мигает новым текстом рывком.
@@ -371,6 +442,26 @@
 
     box.innerHTML = `<ul class="rows queue-rows">${list.map((r, i) => {
       const fresh = !first && !knownOrderIds.has(r.id) ? " fresh" : "";
+      // Заказ, который ждёт конца трека стримера, уже вынут из очереди и
+      // живёт у плеера: двигать и удалять его нечего, перетаскивать тоже.
+      // Но показать обязаны — иначе его не видно нигде: из очереди пропал,
+      // а «В эфире» ещё пусто. Ровно так 27.08 заказ и «потерялся».
+      if (r.waiting) {
+        return `<li class="waiting-row">
+          <span class="grip">${icon("clock")}</span>
+          <span class="idx">${String(i + 1).padStart(2, "0")}</span>
+          <span class="body">
+            <span class="ttl">${esc(r.artist)} — ${esc(r.title)}</span>
+            <span class="sub">
+              ${r.provider === "youtube" ? `<span class="tag miss">YouTube</span>` : ""}
+              ${esc(r.requester)}
+              <span class="tag">заиграет сразу после трека стримера</span>
+            </span>
+          </span>
+          <span class="len">${mmss(r.duration_ms)}</span>
+          <span class="deal"></span>
+        </li>`;
+      }
       return `<li class="${fresh.trim()}" draggable="true" data-id="${r.id}">
         <span class="grip" title="перетащи, чтобы поменять порядок">${icon("grip-vertical")}</span>
         <span class="idx">${String(i + 1).padStart(2, "0")}</span>
@@ -404,6 +495,7 @@
   let meterTimer = null;
   let meterFrom = 0;        // Date.now() в момент начала трека
   let meterLength = 0;
+  let meterTick = null;     // перерисовка полосы, зовётся и вне таймера
 
   // Полоса идёт по своему таймеру: приложение шлёт состояние редко, а время
   // должно бежать каждую секунду.
@@ -413,7 +505,7 @@
     meterFrom = Date.now() - (now.position_ms || 0);
     if (!meterLength) return;
 
-    const tick = () => {
+    meterTick = () => {
       const bar = $("at-bar");
       if (!bar) {           // карточку перерисовали — этот таймер уже лишний
         clearInterval(meterTimer);
@@ -423,8 +515,8 @@
       bar.style.width = (at / meterLength) * 100 + "%";
       $("at").textContent = mmss(at);
     };
-    tick();
-    meterTimer = setInterval(tick, 1000);
+    meterTick();
+    meterTimer = setInterval(meterTick, 1000);
   }
 
   // Сверка со Spotify. Свой таймер знает только, когда трек начался, — а его
@@ -437,6 +529,10 @@
     if (!now || !now.duration_ms) return;
     if (!meterTimer || meterLength !== now.duration_ms) return;
     meterFrom = Date.now() - (now.position_ms || 0);
+    // И сразу перерисовываем. Без этого перемотка доезжала до экрана только
+    // к следующему тику своего таймера — то есть на секунду позже, чем мы уже
+    // знали правду. На перемотке это заметно: полоса дёргалась с задержкой.
+    if (meterTick) meterTick();
   }
 
   // Перетаскивание порядка. Родной drag&drop браузера: своя реализация на
@@ -665,6 +761,38 @@
   const note = (code, text) =>
     `<div class="note">${code ? `<b>${esc(code)}</b> ` : ""}${esc(text)}</div>`;
 
+  // Пауза, которую объявил сам Spotify. Пока она идёт, не работает ничего:
+  // ни заказы, ни «Запомнить». Живьём это выглядело как поломка всего
+  // приложения сразу после включения обхода блокировок, и чинили не то.
+  //
+  // Время считаем в панели: сервер отдаёт конец паузы, а не остаток —
+  // остаток протухает между обновлениями состояния.
+  function pauseLeft(sp) {
+    if (!sp.paused_until) return null;
+    const until = new Date(sp.paused_until);
+    if (isNaN(until.getTime()) || until <= new Date()) return null;
+    return until;
+  }
+
+  // Что именно закрыто — важно: Spotify считает части по отдельности, и
+  // закрытый плеер при работающем поиске совершенно обычное дело.
+  const pausedParts = {
+    "плеер": "заказы пока не сыграют, а «Запомнить» не сработает",
+    "поиск": "новые заказы пока не найдутся",
+    "аккаунт": "аккаунт пока не проверить",
+    "плейлисты": "список плейлистов пока не обновить",
+  };
+
+  function pauseNote(sp) {
+    const until = pauseLeft(sp);
+    if (!until) return "";
+    const at = until.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    const what = pausedParts[sp.paused_part] || "часть возможностей пока не работает";
+    return note("SP-08", `Spotify ограничил приложение до ${at}: ${what}. ` +
+      `Это не поломка и не обход блокировок — Spotify снимет ограничение сам. ` +
+      `Кнопка «Проверить связь» пробует ещё раз.`);
+  }
+
   function renderSpotifyCard(sp) {
     const box = $("account");
     if (!sp.connected) {
@@ -675,7 +803,8 @@
     if (!sp.account) {
       box.className = "account bad";
       box.innerHTML = `<div class="who">Вход сохранён</div>
-        <div class="plan">но связи со Spotify не было — аккаунт неизвестен</div>`;
+        <div class="plan">но связи со Spotify не было — аккаунт неизвестен</div>
+        ${pauseNote(sp)}`;
       return;
     }
     // Страна аккаунта важнее подписки: в неработающей стране Premium есть,
@@ -685,11 +814,48 @@
     box.innerHTML = `
       <div class="who">${esc(sp.account || "аккаунт без имени")}</div>
       ${sp.email ? `<div class="mail">${esc(sp.email)}</div>` : ""}
-      ${sp.proxy ? `<div class="mail">через прокси ${esc(sp.proxy)}</div>` : ""}
+      ${sp.proxy ? `<div class="mail">через ${esc(sp.proxy)}</div>` : ""}
       <div class="plan">${esc(sp.plan_label)}${
         sp.country ? ` · страна аккаунта ${esc(sp.country)}` : ""}</div>
+      ${pauseNote(sp)}
       ${sp.country_note ? note("SP-16", sp.country_note) : ""}
       ${sp.plan_note ? note(sp.plan_note_code, sp.plan_note) : ""}`;
+  }
+
+  // Карточка обхода блокировок. Ключа здесь нет и не будет: сервер его не
+  // отдаёт, а показывать «vless://11111111-…» на стриме нельзя тем более.
+  function renderTunnel(t) {
+    const box = $("tunnel-state");
+
+    // Поле после включения пустое: ключ уже лежит в хранилище паролей Windows,
+    // и держать его на экране незачем. Но пустое поле читается как «ключ
+    // слетел» — владелец так и решил. Поэтому подсказка внутри поля говорит,
+    // что именно сохранено.
+    const field = $("tunnel-key");
+    if (field && !field.value) {
+      field.placeholder = t.has_key
+        ? `ключ сохранён (${t.hint}) — вставлять заново не надо`
+        : "vless://… , trojan://… , ss://… или https://…";
+    }
+
+    if (!t.has_key) {
+      box.className = "account";
+      box.innerHTML = `<div class="who muted">Ключ не вставлен</div>
+        <div class="plan">Spotify идёт напрямую или через прокси ниже</div>
+        ${t.note ? `<div class="plan">${esc(t.note)}</div>` : ""}`;
+      return;
+    }
+    // «Наготове» — это не поломка: ключ есть, обход разрешён, но поднимать
+    // его не понадобилось, потому что Spotify отвечает и без него (обычно так
+    // бывает, когда у стримера включён свой VPN на весь компьютер). Показывать
+    // это как «выключен» нельзя — человек полезет чинить работающее.
+    const standby = !t.on && t.standby;
+    box.className = "account " + (t.on || standby ? "ok" : "iffy");
+    box.innerHTML = `
+      <div class="who">${t.on ? "Обход работает" : standby ? "Обход наготове" : "Обход выключен"}</div>
+      <div class="mail">ключ сохранён · ${esc(t.hint)}</div>
+      ${t.on && t.server ? `<div class="plan">через ${esc(t.server)}</div>` : ""}
+      ${t.note ? `<div class="plan">${esc(t.note)}</div>` : ""}`;
   }
 
   function renderTwitchCard(tw) {
@@ -752,6 +918,20 @@
     }
   };
 
+  $("yt-volume").oninput = () => {
+    $("yt-volume-val").textContent = $("yt-volume").value + "%";
+  };
+  $("yt-volume").onchange = async (e) => {
+    const v = parseInt(e.target.value, 10);
+    if (await saveConfig({ youtube_volume: v })) {
+      // Тот же ползунок есть на карточке играющего трека: если он сейчас на
+      // экране, он обязан показать то же число.
+      const live = $("vol");
+      if (live) { live.value = v; $("vol-val").textContent = v + "%"; }
+      markSaved(e.target);
+    }
+  };
+
   // ── настройки ──────────────────────────────────────────────────────
 
   // Стоп-слова хранятся списком, а редактируются текстом по строке на слово.
@@ -764,18 +944,127 @@
   let playlistsFailed = false;
   let redirectShown = false;
 
-  function toggleSettings(open) {
-    const panel = $("settings");
-    const want = open === undefined ? panel.hidden : open;
-    panel.hidden = !want;
-    $("settings-toggle").classList.toggle("active", want);
-    $("settings-toggle").setAttribute("aria-expanded", String(want));
-    if (want) {
-      toggleLog(false);
-      toggleWidget(false);
-      panel.scrollIntoView({ behavior: "smooth", block: "start" });
-      loadPlaylists();
+  // ── Меню разделов ─────────────────────────────────────────
+  //
+  // Как было. Каждая из трёх кнопок в верхней полосе снимала hidden со своего
+  // куска страницы и прокручивала экран вниз, к нему. Человек терял место, на
+  // которое смотрел, кнопки «назад» не было вовсе — только прокрутка обратно,
+  // а настройки лежали одной сеткой из девяти блоков подряд.
+  //
+  // Как стало. Разделы живут в меню поверх страницы: слева список разделов,
+  // справа один раздел за раз. Признак «раздел открыт» остался прежним —
+  // hidden на самой секции, — поэтому весь остальной код (проверки вида
+  // «панель виджета на экране, значит перерисуй кадр») работает как работал и
+  // про меню ничего не знает.
+
+  const MENU_SECTIONS = ["settings", "widget", "log"];
+
+  // Меню гаснет плавно, и до конца исчезновения прятать его нельзя — иначе
+  // вместо ухода будет рывок. Отсюда таймер и обязательная его отмена, если
+  // меню успели открыть заново.
+  let menuHideTimer = null;
+
+  function menuShown() {
+    return !$("menu").hidden;
+  }
+
+  // markSection зажигает один раздел и гасит остальные — и в самом меню, и в
+  // верхней полосе. null означает «все погашены»: так меню закрывается.
+  function markSection(name) {
+    MENU_SECTIONS.forEach((id) => {
+      const on = id === name;
+      $(id).hidden = !on;
+      const btn = $(id + "-toggle");
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-expanded", String(on));
+      const item = document.querySelector('#menu-nav [data-menu="' + id + '"]');
+      if (item) item.classList.toggle("on", on);
+    });
+  }
+
+  // Содержимое раздела собирается в тот момент, когда его открыли. Галерея из
+  // сорока пяти наборов, история из базы и список плейлистов Spotify нужны
+  // далеко не каждому заходу, а строятся и запрашиваются небесплатно.
+  function fillSection(name) {
+    if (name === "settings") fillTab(settingsTab);
+    if (name === "log") { loadHistory(); loadModLog(); }
+    if (name === "widget") { buildGallery(); drawWidget(); }
+  }
+
+  function openSection(name) {
+    clearTimeout(menuHideTimer);
+    menuHideTimer = null;
+
+    const menu = $("menu");
+    if (menu.hidden) {
+      menu.hidden = false;
+      // Класс вешаем следующим кадром: смену прямо в момент появления
+      // элемента браузер переходом не считает, и меню выскочило бы рывком.
+      requestAnimationFrame(() => menu.classList.add("on"));
     }
+    markSection(name);
+    $("menu-body").scrollTop = 0;
+    fillSection(name);
+  }
+
+  function closeMenu() {
+    const menu = $("menu");
+    if (menu.hidden) return;
+    menu.classList.remove("on");
+    // Разделы прячем не сразу, а вместе с самим меню: иначе на время ухода в
+    // нём осталась бы пустая рамка.
+    menuHideTimer = setTimeout(() => {
+      menu.hidden = true;
+      markSection(null);
+      menuHideTimer = null;
+    }, 300);
+  }
+
+  // ── Вкладки внутри настроек ─────────────────────────────────
+
+  const SETTINGS_TABS = ["conn", "orders", "fallback", "misc"];
+  let settingsTab = "conn";
+
+  function fillTab(tab) {
+    // Единственное здесь, что стоит запроса к Spotify, — список плейлистов.
+    // Раньше он запрашивался при любом заходе в настройки, даже если человек
+    // пришёл за громкостью YouTube. Норма запросов у Spotify тесная, и такие
+    // «на всякий случай» из неё и складываются.
+    if (tab === "fallback") loadPlaylists();
+  }
+
+  function openTab(tab) {
+    if (!SETTINGS_TABS.includes(tab)) return;
+    settingsTab = tab;
+    SETTINGS_TABS.forEach((t) => { $("tab-" + t).hidden = t !== tab; });
+    document.querySelectorAll("#settings-tabs .tab").forEach((b) => {
+      b.classList.toggle("on", b.dataset.tab === tab);
+    });
+    $("menu-body").scrollTop = 0;
+    fillTab(tab);
+  }
+
+  // Старые имена оставлены нарочно: их зовут из подсказок, с главного экрана и
+  // кнопками верхней полосы. Смысл прежний — «показать этот раздел», меняется
+  // только способ показа. Второй довод у настроек — вкладка, на которую надо
+  // попасть: подсказка «впиши Client ID» обязана открыть именно ту.
+  function toggleSettings(open, tab) {
+    if (open === false) { closeMenu(); return; }
+    if (open === undefined && menuShown() && !$("settings").hidden) { closeMenu(); return; }
+    if (tab) openTab(tab);
+    openSection("settings");
+  }
+
+  function toggleLog(open) {
+    if (open === false) { closeMenu(); return; }
+    if (open === undefined && menuShown() && !$("log").hidden) { closeMenu(); return; }
+    openSection("log");
+  }
+
+  function toggleWidget(open) {
+    if (open === false) { closeMenu(); return; }
+    if (open === undefined && menuShown() && !$("widget").hidden) { closeMenu(); return; }
+    openSection("widget");
   }
 
   async function loadConfig() {
@@ -790,6 +1079,8 @@
       $("donation-min").value = config.donation_min ?? "";
       $("yt-browser").value = config.youtube_browser || "";
       $("yt-device").value = config.audio_device || "";
+    $("yt-volume").value = config.youtube_volume ?? 100;
+    $("yt-volume-val").textContent = ($("yt-volume").value) + "%";
 
       $("reward-title").value = config.reward_title || "";
       $("reward-cost").value = config.reward_cost ?? "";
@@ -867,6 +1158,28 @@
     }
   }
 
+  // showProbe рисует итог проверки поиска.
+  //
+  // Список нужен, чтобы человек своими глазами увидел: «этот способ прошёл, а
+  // этот — нет». Разбираться всё равно буду я по логу, поэтому подробности
+  // ответа тут обрезаны до кода и числа находок.
+  function showProbe(d) {
+    const box = $("probe-out");
+    if (!box) return;
+    if (!d || !d.probes) {
+      box.innerHTML = "";
+      return;
+    }
+    const rows = d.probes.map((p) => {
+      const ok = p.http >= 200 && p.http < 300;
+      const what = p.error ? esc(p.error) : `${p.http || "нет ответа"}`;
+      return `<div>${ok ? "✅" : "❌"} ${esc(p.way)} — <b>${what}</b>` +
+        `${ok ? `, нашлось ${p.found}` : ""}</div>`;
+    }).join("");
+    box.innerHTML = `<b>Проверка поиска: прошло ${d.ok} из ${d.total}.</b>` +
+      `${rows}<br>Теперь нажми «Сохранить лог и историю» и пришли архив.`;
+  }
+
   async function loadPlaylists() {
     if (playlistsLoaded) return;
     playlistsFailed = false;
@@ -913,6 +1226,24 @@
     return run(btn);
   }
 
+  // tunnelStart отдаёт ключ серверу и ждёт. Ждать приходится долго: в первый
+  // раз внутри скачивается программа обхода, а потом перебираются серверы
+  // подписки — до нескольких минут. Поле после успеха очищаем: ключ уже
+  // сохранён в хранилище Windows, и держать его на экране незачем.
+  async function tunnelStart(btn) {
+    const key = $("tunnel-key").value.trim();
+    const d = await post("/api/tunnel/on", btn, key ? { key } : {});
+    if (d) {
+      $("tunnel-key").value = "";
+      // standby — приложение проверило и решило, что обход сейчас не нужен:
+      // Spotify отвечает и без него. Ключ при этом сохранён.
+      say(d.standby
+        ? "Spotify отвечает и без обхода — держу обход наготове"
+        : `Обход работает: ${d.server}`);
+    }
+    return d;
+  }
+
   const actions = {
     login: (btn) => saveThenConnect("client-id", "spotify_client_id",
       (b) => post("/api/spotify/login", b), btn).then((d) => {
@@ -920,11 +1251,27 @@
       // Показываем адрес возврата: если вход не пройдёт, первым делом сверяют
       // именно эту строку с тем, что вписано в настройках Spotify.
       $("redirect").textContent = `Адрес возврата: ${d.redirect_uri}`;
-      window.open(d.url, "_blank", "noopener");
+      // in_app означает, что приложение уже открыло вход в своём окне — так
+      // бывает, когда работает обход. Открыть ту же страницу ещё и в браузере
+      // значит показать человеку два входа сразу, причём браузерный из России
+      // не загрузится вовсе, и виноватым окажется приложение.
+      if (!d.in_app) window.open(d.url, "_blank", "noopener");
       redirectShown = true;
       return d;
     }),
     logout: (btn) => post("/api/spotify/logout", btn),
+    // «Включить обход» и «Проверить обход» — одна и та же ручка: проверка и
+    // есть попытка поднять всё заново. Отдельная «проверка», которая ничего
+    // не чинит, человеку бесполезна.
+    "tunnel-on": (btn) => tunnelStart(btn),
+    "tunnel-check": (btn) => tunnelStart(btn),
+    "tunnel-off": (btn) => post("/api/tunnel/off", btn),
+    "tunnel-forget": (btn) => new Promise((done) => {
+      confirmThen(btn, "забыть ключ?", async () => {
+        $("tunnel-key").value = "";
+        done(await post("/api/tunnel/forget", btn));
+      });
+    }),
     "proxy-detect": (btn) => post("/api/spotify/proxy/detect", btn).then((d) => {
       // Сервер уже сохранил найденный адрес и включил его; поле просто
       // догоняет. Раньше поле заполнялось, а «Проверить связь» рядом
@@ -941,6 +1288,13 @@
         playlistsLoaded = false;
         loadPlaylists();
       }
+      return d;
+    }),
+    // Пробник поиска: жмут его по моей просьбе, когда поиск отказывает без
+    // видимой причины. Главное здесь — не картинка в панели, а строки «проба
+    // поиска» в логе; на экране просто видно, что проверка дошла до конца.
+    probe: (btn) => post("/api/spotify/probe", btn).then((d) => {
+      showProbe(d);
       return d;
     }),
     snapshot: (btn) => post("/api/spotify/snapshot", btn),
@@ -961,7 +1315,7 @@
   // способ однажды об этом забыть.
   document.addEventListener("click", (e) => {
     if (e.target.closest("[data-open-settings]")) {
-      toggleSettings(true);
+      toggleSettings(true, "conn");
       $("client-id").focus();
       $("client-id").scrollIntoView({ block: "center", behavior: "smooth" });
       return;
@@ -1100,7 +1454,10 @@
     if (pick) applyFix(pick.dataset.pick, pick);
   };
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("fix").hidden) closeFix();
+    if (e.key === "Escape" && !$("fix").hidden) { closeFix(); return; }
+    // Esc закрывает меню. Окно «не тот трек» лежит поверх него, поэтому
+    // первым закрывается оно.
+    if (e.key === "Escape" && menuShown()) closeMenu();
   });
 
   // ── хроника ────────────────────────────────────────────────────────
@@ -1110,22 +1467,6 @@
   // хрень» и «кто её скипнул».
 
   let histTimer = null;
-
-  function toggleLog(open) {
-    const panel = $("log");
-    const want = open === undefined ? panel.hidden : open;
-    panel.hidden = !want;
-    $("log-toggle").classList.toggle("active", want);
-    $("log-toggle").setAttribute("aria-expanded", String(want));
-    if (!want) return;
-
-    // Настройки и хроника — обе во весь экран, вместе они не помещаются.
-    toggleSettings(false);
-    toggleWidget(false);
-    panel.scrollIntoView({ behavior: "smooth", block: "start" });
-    loadHistory();
-    loadModLog();
-  }
 
   const outcomeWord = {
     played: ["сыграл", "ok"],
@@ -1219,6 +1560,19 @@
 
   $("settings-toggle").onclick = () => toggleSettings();
 
+  $("menu-back").onclick = closeMenu;
+  // Клик по затемнению — тот же «назад». Затемнение для того и нужно: видно,
+  // что главный экран никуда не делся и до него один клик.
+  document.querySelector(".menu-scrim").onclick = closeMenu;
+  $("menu-nav").onclick = (e) => {
+    const b = e.target.closest("[data-menu]");
+    if (b) openSection(b.dataset.menu);
+  };
+  $("settings-tabs").onclick = (e) => {
+    const b = e.target.closest(".tab");
+    if (b) openTab(b.dataset.tab);
+  };
+
   $("save-id").onclick = async () => {
     if (await saveConfig({ spotify_client_id: $("client-id").value.trim() })) {
       say("Client ID сохранён. Теперь нажми «Подключить Spotify».");
@@ -1227,7 +1581,7 @@
   $("save-proxy").onclick = async () => {
     if (await saveConfig({ spotify_proxy: $("proxy").value.trim() }, "?proxy=1")) {
       say($("proxy").value.trim()
-        ? "Прокси включён. Не забудь вписать тот же адрес в саму программу Spotify."
+        ? "Прокси включён. Самой программе Spotify он не нужен — нажми «Проверить связь»."
         : "Прокси убран, Spotify идёт напрямую.");
     }
   };
@@ -1364,21 +1718,6 @@
 
   function widget() {
     return (config && config.widget) || {};
-  }
-
-  function toggleWidget(open) {
-    const panel = $("widget");
-    const want = open === undefined ? panel.hidden : open;
-    panel.hidden = !want;
-    $("widget-toggle").classList.toggle("active", want);
-    $("widget-toggle").setAttribute("aria-expanded", String(want));
-    if (!want) return;
-
-    toggleSettings(false);
-    toggleLog(false);
-    buildGallery();
-    drawWidget();
-    panel.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   // Одевает карточку по настройкам. Используется и образцом в кадре, и
@@ -1682,6 +2021,16 @@
     if (e.key === "Enter") $("ban-add").click();
   };
 
+  // Мастер первой настройки: показать ещё раз по просьбе. Сам мастер живёт в
+  // setup.js — здесь только кнопка.
+  const again = $("setup-again");
+  if (again) {
+    again.onclick = () => {
+      if (window.srSetupOpen) window.srSetupOpen();
+      else say("Мастер настройки не загрузился — перезапусти приложение", true);
+    };
+  }
+
   // ── сборка ─────────────────────────────────────────────────────────
 
   let lastState = null;
@@ -1711,12 +2060,24 @@
     draw("banner", sig([s.twitch.pending_code, s.twitch.pending_expires]), () => renderBanner(s.twitch));
     draw("sp-card", sig(s.spotify), () => renderSpotifyCard(s.spotify));
     draw("tw-card", sig(s.twitch), () => renderTwitchCard(s.twitch));
+    draw("tunnel", sig(s.tunnel), () => renderTunnel(s.tunnel));
 
-    if (s.spotify.connected && !playlistsLoaded && !$("settings").hidden) loadPlaylists();
+    if (s.spotify.connected && !playlistsLoaded &&
+        !$("settings").hidden && settingsTab === "fallback") loadPlaylists();
     if (redirectShown && s.spotify.account) {
       $("redirect").textContent = "";
       redirectShown = false;
     }
+
+    // Мастер настройки живёт в отдельном файле, но состояние у нас одно:
+    // отдаём снимок ему, чтобы его проверки («Spotify подключён», «обход
+    // работает») загорались сами, без единого нажатия.
+    if (window.srSetupState) window.srSetupState(s);
+
+    // В своей полосе заголовка окна пишем, что играет: панель бывает
+    // прокручена, а полоса на виду всегда.
+    const tb = $("titlebar-now");
+    if (tb) tb.textContent = s.now ? `${s.now.artist} — ${s.now.title}` : "";
 
     // Заголовок вкладки — тоже часть панели: стример держит её в фоне.
     document.title = s.now

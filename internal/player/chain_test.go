@@ -103,7 +103,7 @@ func TestOrderPlaysOnStreamerDevice(t *testing.T) {
 // десятой секунде, обрывался на шестой минуте и записывался «отыгравшим».
 func TestPauseDoesNotCutLongOrder(t *testing.T) {
 	p, q, sp := newPlayer(t)
-	p.PollEvery = 20 * time.Millisecond
+	p.SetPollEvery(20 * time.Millisecond)
 	// Заказ на «десять минут» в масштабе теста.
 	addTrack(t, q, "длинный", 4000)
 
@@ -136,7 +136,7 @@ func TestPauseDoesNotCutLongOrder(t *testing.T) {
 // «доиграл»: возврату нельзя спорить со стримером.
 func TestSwitchWhilePausedIsNotNaturalEnd(t *testing.T) {
 	p, q, sp := newPlayer(t)
-	p.PollEvery = 20 * time.Millisecond
+	p.SetPollEvery(20 * time.Millisecond)
 	addTrack(t, q, "заказ", 4000)
 
 	done := make(chan bool, 1)

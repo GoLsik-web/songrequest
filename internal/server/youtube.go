@@ -28,6 +28,17 @@ func (s *Server) setupYouTube(ctx context.Context) {
 
 	go func() {
 		cfg := s.cfg.Get()
+
+		// Первый запуск качает yt-dlp и mpv — вместе это тридцать с лишним
+		// мегабайт и до минуты времени. Пока идёт загрузка, в панели должно
+		// быть написано, что происходит: иначе там просто «не готов», и
+		// человек решает, что сломалось.
+		s.state.UpdateYouTube(func(y *app.YouTubeInfo) {
+			y.Ready = false
+			y.Note = "Готовлю запасной проигрыватель: качаю yt-dlp и mpv (около 35 МБ). Это разовая загрузка."
+			y.NoteCode = ""
+		})
+
 		if err := s.ytTools.Ensure(ctx, cfg.YtDlpPath, cfg.MpvPath); err != nil {
 			code, text := errs.Describe(err)
 			s.log.Warn("запасной проигрыватель не готов", "код", code, "ошибка", err)
@@ -58,9 +69,18 @@ func (s *Server) setupYouTube(ctx context.Context) {
 	}()
 }
 
+// Подписи под заказом, который играется мимо Spotify. Их две, потому что
+// причины разные, и стример по подписи должен понять, что происходит:
+// «в Spotify такого нет» — обычное дело, «Spotify не ответил» — поломка,
+// про которую он захочет узнать.
+const (
+	noteYouTubeMissing  = "Играем с YouTube — в Spotify такого нет"
+	noteYouTubeNoAnswer = "Играем с YouTube: Spotify не ответил на поиск"
+)
+
 // tryYouTube ищет заказ на YouTube и ставит его в очередь.
 // false означает «не вышло, возвращай баллы».
-func (s *Server) tryYouTube(ctx context.Context, r twitch.Redemption, query string) bool {
+func (s *Server) tryYouTube(ctx context.Context, r twitch.Redemption, query, note string) bool {
 	if s.youtube == nil || !s.ytTools.Ready() {
 		return false
 	}
@@ -106,7 +126,7 @@ func (s *Server) tryYouTube(ctx context.Context, r twitch.Redemption, query stri
 		Artist:   track.Artist,
 		CoverURL: track.CoverURL,
 		Duration: track.DurationMs,
-		Note:     "Играем с YouTube — в Spotify такого нет",
+		Note:     note,
 	})
 
 	s.enqueue(ctx, queue.Item{
@@ -150,5 +170,5 @@ func (s *Server) applyYouTubeSettings() {
 		return
 	}
 	cfg := s.cfg.Get()
-	s.youtube.SetOptions(cfg.AudioDevice, cfg.YouTubeBrowser)
+	s.youtube.SetOptions(cfg.AudioDevice, cfg.YouTubeBrowser, cfg.YouTubeVolume)
 }

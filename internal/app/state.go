@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+// Marker — по этому слову в ответе /api/state приложение узнаёт само себя.
+//
+// Нужно второму запуску: он стучится на наш порт и должен понять, там наша же
+// копия или чужая программа, которая случайно села на 8977. Проверять одну
+// занятость порта мало — из-за чужого соседа приложение молча не стартовало бы.
+const Marker = "songrequest"
+
 // Уровни состояния подключения. Разделять «сломалось» и «недоступно» важно:
 // красная ячейка означает «чини», и показывать её там, где чинить нечего —
 // например, когда на канале в принципе нет баллов, — значит врать человеку.
@@ -72,6 +79,10 @@ type QueueItem struct {
 	CoverURL   string `json:"cover_url"`
 	DurationMs int    `json:"duration_ms"`
 	Uncertain  bool   `json:"uncertain"`
+	// Waiting — заказ уже взят из очереди и ждёт конца трека стримера.
+	// Двигать и удалять такую строку нечего: в очереди её больше нет,
+	// она у плеера.
+	Waiting bool `json:"waiting"`
 }
 
 // Notice — сообщение для стримера в панели.
@@ -114,6 +125,20 @@ type SpotifyInfo struct {
 	PlanNoteCode string     `json:"plan_note_code"`
 	SnapshotText string     `json:"snapshot_text"`
 	SnapshotAt   *time.Time `json:"snapshot_at"`
+
+	// PausedUntil — до какого времени Spotify просил не приходить.
+	//
+	// Пока пауза идёт, не работает ничего: ни «Запомнить», ни заказы, ни
+	// проверка связи. Живьём это выглядело как поломка всего приложения сразу
+	// после включения обхода блокировок, и владелец чинил не то. Поэтому
+	// причина висит в карточке, а не только в тексте отдельной ошибки.
+	// Отдаём временем, а не остатком: остаток протухает между обновлениями,
+	// и панель считает его сама.
+	PausedUntil *time.Time `json:"paused_until"`
+	// PausedPart — что именно закрыто: «плеер», «поиск», «аккаунт». Spotify
+	// считает их по отдельности, и закрытый плеер при работающем поиске —
+	// обычное дело.
+	PausedPart string `json:"paused_part"`
 }
 
 // TwitchInfo — состояние Twitch для панели.
@@ -214,6 +239,9 @@ type Session struct {
 
 // Snapshot — вся картинка целиком, ровно то, что уходит в панель одним JSON.
 type Snapshot struct {
+	// App — всегда Marker. Смотри его описание: по нему вторая копия
+	// приложения узнаёт первую.
+	App         string           `json:"app"`
 	Connections []ConnState      `json:"connections"`
 	Now         *NowPlaying      `json:"now"`
 	Queue       []QueueItem      `json:"queue"`
@@ -228,9 +256,29 @@ type Snapshot struct {
 	// нормальным в чате и неуместным в заказах.
 	Bans    []Ban       `json:"bans"`
 	YouTube YouTubeInfo `json:"youtube"`
+	// Tunnel — обход блокировок: включён ли и через какой сервер.
+	Tunnel TunnelInfo `json:"tunnel"`
 	// Widget — оформление виджета. Едет вместе с состоянием, чтобы правка в
 	// панели доезжала до OBS сразу: перезагружать источник не нужно.
 	Widget any `json:"widget"`
+}
+
+// TunnelInfo — состояние обхода блокировок для панели.
+//
+// Ключа здесь нет и быть не может: панель его не показывает никогда, даже
+// звёздочками. Есть только признак «ключ вставлен» и подпись сервера — то,
+// что человеку нужно, чтобы понять, работает обход или нет.
+type TunnelInfo struct {
+	On     bool   `json:"on"`
+	HasKey bool   `json:"has_key"`
+	Hint   string `json:"hint"`   // что вставлено: «подписка sub.example.com»
+	Server string `json:"server"` // какой сервер сейчас работает
+	Note   string `json:"note"`   // что сказать человеку: чем кончилась проверка
+
+	// Standby — ключ есть и обход разрешён, но сейчас он не поднят: Spotify
+	// отвечает и без него. Так бывает, когда у стримера включён свой VPN на
+	// весь компьютер. Для панели это не «выключено», а «наготове».
+	Standby bool `json:"standby"`
 }
 
 // Ban — закрытый доступ к заказам.
@@ -254,6 +302,7 @@ type State struct {
 	twitch      TwitchInfo
 	redemptions []RedemptionView
 	session     Session
+	tunnel      TunnelInfo
 	bans        []Ban
 	youtube     YouTubeInfo
 	widget      any
@@ -486,6 +535,14 @@ func (s *State) UpdateYouTube(fn func(*YouTubeInfo)) {
 	s.notify()
 }
 
+// SetTunnel меняет сведения об обходе блокировок.
+func (s *State) SetTunnel(info TunnelInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tunnel = info
+	s.notify()
+}
+
 // Notify добавляет сообщение для стримера.
 func (s *State) Notify(level, text string) {
 	s.NotifyCode(level, "", text)
@@ -523,6 +580,7 @@ func (s *State) Snapshot() Snapshot {
 
 	// Пустые срезы, а не nil: панель ждёт массив и на null споткнётся.
 	snap := Snapshot{
+		App:         Marker,
 		Queue:       append(make([]QueueItem, 0, len(s.queue)), s.queue...),
 		Notices:     append(make([]Notice, 0, len(s.notices)), s.notices...),
 		Paused:      s.paused,
@@ -533,6 +591,7 @@ func (s *State) Snapshot() Snapshot {
 		Session:     s.session,
 		Bans:        append(make([]Ban, 0, len(s.bans)), s.bans...),
 		YouTube:     s.youtube,
+		Tunnel:      s.tunnel,
 		Widget:      s.widget,
 	}
 	for _, name := range s.order {

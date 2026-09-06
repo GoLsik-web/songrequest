@@ -8,12 +8,34 @@
 <link rel="stylesheet" href="/static/fonts/fonts.css">
 <link rel="stylesheet" href="/static/widget.css">
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/setup.css">
 </head>
 <body>
 
 <!-- Иконки вставляются сюда при загрузке: <use> на внешний файл
      Chrome не поддерживает, поэтому спрайт живёт прямо в странице. -->
 <div id="sprite" hidden></div>
+
+<!-- Своя полоса заголовка. Показывается только в окне программы: в браузере
+     двигать и закрывать нечего, и setup.js её не включает. Системную полосу
+     окно снимает с себя само — она белая и в «Эфир» не вписывается. -->
+<header class="titlebar" id="titlebar">
+  <div class="tb-grip">
+    <span class="live"></span>
+    <span class="name">Заказ музыки</span>
+    <span class="now" id="titlebar-now"></span>
+  </div>
+  <button class="win-btn win-min" title="Свернуть" aria-label="Свернуть">
+    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6h10" stroke="currentColor" stroke-width="1.4"/></svg>
+  </button>
+  <button class="win-btn win-max" title="Развернуть" aria-label="Развернуть">
+    <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" rx="1"
+      fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+  </button>
+  <button class="win-btn win-close close" title="Свернуть к часам" aria-label="Свернуть к часам">
+    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.4"/></svg>
+  </button>
+</header>
 
 <header class="status-bar">
   <div class="conns" id="conns"></div>
@@ -63,6 +85,383 @@
     </aside>
   </div>
 </main>
+
+<!-- Меню разделов.
+
+     Раньше «настройки», «виджет» и «хроника» были тремя длинными кусками,
+     дописанными снизу к главному экрану: нажатие на кнопку просто прокручивало
+     страницу вниз. Найти в этой простыне нужное было нечем, а возвращаться
+     наверх приходилось прокруткой же.
+
+     Теперь это отдельное меню поверх страницы: слева разделы, справа один
+     раздел за раз. Сами разделы не переписаны — они переехали внутрь как есть,
+     со всеми своими id, поэтому весь остальной код о переезде не знает. -->
+<div class="menu" id="menu" hidden>
+  <div class="menu-scrim" data-menu-close></div>
+  <div class="menu-sheet" role="dialog" aria-modal="true" aria-label="Меню">
+
+    <aside class="menu-rail">
+      <button class="menu-back" id="menu-back">
+        <svg aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+        Назад
+      </button>
+      <nav class="menu-nav" id="menu-nav">
+        <button class="menu-item" data-menu="settings">
+          <svg aria-hidden="true"><use href="#i-settings"></use></svg>Настройки
+        </button>
+        <button class="menu-item" data-menu="widget">
+          <svg aria-hidden="true"><use href="#i-monitor"></use></svg>Виджеты
+        </button>
+        <button class="menu-item" data-menu="log">
+          <svg aria-hidden="true"><use href="#i-history"></use></svg>Хроника
+        </button>
+      </nav>
+      <div class="menu-tail">Esc — закрыть</div>
+    </aside>
+
+    <div class="menu-body" id="menu-body">
+
+<!-- Настройки. Раньше это была одна сетка из девяти блоков подряд: чтобы
+     добраться до последнего, приходилось прокручивать экран целиком. Теперь
+     блоки разложены по четырём вкладкам, и на экране всегда только те,
+     которые сейчас нужны. Сами блоки не тронуты — переехали как есть. -->
+<section class="panel" id="settings" hidden>
+
+  <div class="tabs" id="settings-tabs">
+    <button class="tab on" data-tab="conn">Подключения</button>
+    <button class="tab" data-tab="orders">Заказы</button>
+    <button class="tab" data-tab="fallback">Если трека нет</button>
+    <button class="tab" data-tab="misc">Прочее</button>
+  </div>
+
+  <div class="grid tab-pane" id="tab-conn">
+
+    <div class="col">
+      <div class="kicker">Spotify</div>
+      <label class="field">
+        <span>Client ID — из инструкции, шаг 3</span>
+        <input type="text" id="client-id" spellcheck="false" autocomplete="off"
+               placeholder="набор букв и цифр">
+      </label>
+      <div class="acts">
+        <button class="act small" id="save-id">Сохранить</button>
+        <button class="act small key" data-do="login">Подключить Spotify</button>
+        <button class="act small" data-do="check">Проверить связь</button>
+        <button class="act small" data-do="probe">Проверить поиск</button>
+        <button class="act small risky" data-do="logout">Отключить</button>
+      </div>
+      <div class="account" id="account"></div>
+      <div class="hint" id="redirect"></div>
+      <div class="hint" id="probe-out"></div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Обход блокировок — ключ от VPN или ссылка на подписку</span>
+        <input type="password" id="tunnel-key" spellcheck="false" autocomplete="off"
+               placeholder="vless://… , trojan://… , ss://… или https://…">
+      </label>
+      <div class="acts">
+        <button class="act small key" data-do="tunnel-on">Включить обход</button>
+        <button class="act small" data-do="tunnel-check">Проверить обход</button>
+        <button class="act small" data-do="tunnel-off">Выключить</button>
+        <button class="act small risky" data-do="tunnel-forget">Забыть ключ</button>
+      </div>
+      <div class="account" id="tunnel-state"></div>
+      <div class="hint">
+        Вставь сюда ключ от своего VPN или ссылку на подписку — приложение само
+        скачает всё нужное, переберёт серверы и оставит тот, через который
+        Spotify отвечает. Никаких отдельных программ и консолей запускать не
+        надо.
+        <br><br>
+        Через обход пойдут <b>только запросы этого приложения к Spotify</b>.
+        Twitch, чат, донаты, игра и загрузка стрима останутся на прямом
+        канале — в отличие от VPN, который уводит туда же весь компьютер.
+        <br><br>
+        <b>Ключ никому не виден.</b> Он ложится в хранилище паролей Windows,
+        в настройках и в архиве диагностики его нет, в панели он больше не
+        показывается — ни целиком, ни звёздочками. Если ключ сменился, вставь
+        новый поверх; кнопка «Забыть ключ» стирает его совсем.
+        <br><br>
+        <b>Вход в Spotify всё равно один раз через VPN.</b> Кнопка «Подключить
+        Spotify» открывает страницу входа, а она идёт мимо обхода. Включи VPN,
+        войди, выключи VPN — дальше приложение живёт на обходе само.
+      </div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Прокси для Spotify — если обход поднимаешь сам, своей программой</span>
+        <input type="text" id="proxy" spellcheck="false" autocomplete="off"
+               placeholder="socks5://адрес:порт">
+      </label>
+      <div class="acts">
+        <button class="act small key" data-do="proxy-detect">Найти автоматически</button>
+        <button class="act small" id="save-proxy">Сохранить</button>
+        <button class="act small" data-do="check">Проверить связь</button>
+      </div>
+      <div class="hint">
+        Это старый путь, для тех, у кого обход уже поднят своей программой:
+        Psiphon, свой клиент VPN, что угодно, что даёт локальный прокси.
+        Вписанный сюда адрес работает так же, как обход выше, — только его
+        приложение не поднимает и не следит, жив ли он.
+        <br><br>
+        <b>Включён обход выше — он главнее.</b> Двух посредников подряд не
+        бывает, поэтому пока обход работает, это поле не используется.
+        <br><br>
+        <b>Стало медленно везде?</b> Значит твоя программа обхода увела за
+        собой весь компьютер, а не только нас. У Psiphon это системный прокси
+        Windows: <b>Win+I → Сеть и Интернет → Прокси</b> → «Использовать
+        прокси-сервер» выключить. У остальных — режим «весь трафик через VPN»
+        в их же настройках. Нам это не нужно, мы ходим на 127.0.0.1 сами.
+        <br><br>
+        <b>Программе Spotify посредник не нужен.</b> Она ходит другими
+        адресами, и если музыка у тебя играет без VPN — в ней ничего менять не
+        надо. Блокируют обычно только адреса, по которым работают приложения
+        вроде этого.
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Twitch</div>
+      <label class="field">
+        <span>Client ID — из инструкции по Twitch, шаг 3</span>
+        <input type="text" id="twitch-id" spellcheck="false" autocomplete="off"
+               placeholder="набор букв и цифр">
+      </label>
+      <div class="acts">
+        <button class="act small" id="save-twitch-id">Сохранить</button>
+        <button class="act small key" data-do="twitch-login">Подключить Twitch</button>
+        <button class="act small risky" data-do="twitch-logout">Отключить</button>
+      </div>
+      <div class="account" id="twitch-account"></div>
+    </div>
+
+  </div>
+
+  <div class="grid tab-pane" id="tab-orders" hidden>
+
+    <div class="col">
+      <div class="kicker">Правила заказа</div>
+      <label class="field">
+        <span>Название награды на Twitch</span>
+        <input type="text" id="reward-title" spellcheck="false" autocomplete="off"
+               placeholder="Заказ музыки">
+      </label>
+      <label class="field">
+        <span>Сколько стоит, баллов</span>
+        <input type="number" id="reward-cost" min="1" step="1" inputmode="numeric">
+      </label>
+      <label class="check">
+        <input type="checkbox" id="auto-reward">
+        Создать награду самому
+      </label>
+      <div class="hint">Название и цена уезжают на канал сразу, как только ты их
+        здесь поменяешь. Править их на самом Twitch бесполезно — приложение
+        вернёт своё.
+        <br>Сними галочку, если хочешь завести награду сам: тогда приложение
+        не будет её создавать.</div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Не длиннее, минут</span>
+        <input type="number" id="max-minutes" min="1" max="60" step="1" inputmode="numeric">
+      </label>
+      <div class="hint">Отсекает часовые лупы и концерты целиком. Баллы за такой
+        заказ возвращаются зрителю.</div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Сколько заказов держит один зритель</span>
+        <input type="number" id="max-per-user" min="1" max="20" step="1" inputmode="numeric">
+      </label>
+      <div class="hint">Считаются только те, что ещё стоят в очереди.
+        Отыгравшие место не занимают.</div>
+
+      <label class="check" style="margin-top:16px">
+        <input type="checkbox" id="donation-priority">
+        Донаты вперёд баллов
+      </label>
+
+      <label class="check" style="margin-top:16px">
+        <input type="checkbox" id="wait-current">
+        Не обрывать трек, который сейчас играет
+      </label>
+      <div class="hint">Заказ дождётся конца твоего трека и только потом заиграет.
+        Ждать может минуты — если надоело ждать, нажми «Скипнуть» или сними галочку.</div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Стоп-слова</span>
+        <textarea id="reject-words" rows="3" spellcheck="false"
+                  placeholder="по одному в строке"></textarea>
+      </label>
+      <div class="hint">Заказ с таким словом в названии не пройдёт, баллы вернутся.
+        Регистр и раскладка значения не имеют.</div>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Донаты</div>
+      <label class="field">
+        <span>Client ID DonationAlerts</span>
+        <input type="text" id="da-id" spellcheck="false" autocomplete="off"
+               placeholder="из инструкции по донатам">
+      </label>
+      <div class="acts">
+        <button class="act small" id="save-da-id">Сохранить</button>
+        <button class="act small key" data-do="da-login">Подключить DonationAlerts</button>
+        <button class="act small risky" data-do="da-logout">Отключить</button>
+      </div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Ключ DonatePay — из профиля DonatePay</span>
+        <input type="text" id="dp-key" spellcheck="false" autocomplete="off"
+               placeholder="вставь ключ">
+      </label>
+      <div class="acts">
+        <button class="act small" id="save-dp-key">Сохранить</button>
+      </div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Ключ DonateX — личный кабинет, Настройки → Api</span>
+        <input type="text" id="dx-key" spellcheck="false" autocomplete="off"
+               placeholder="вставь ключ">
+      </label>
+      <div class="acts">
+        <button class="act small" id="save-dx-key">Сохранить</button>
+      </div>
+
+      <label class="field" style="margin-top:16px">
+        <span>Заказ за донат от какой суммы</span>
+        <input type="text" id="donation-min" spellcheck="false" autocomplete="off">
+      </label>
+      <div class="hint">Донаты меньше этой суммы просто показываются в хронике —
+        заказом они не становятся. Деньги в любом случае остаются у тебя.</div>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Кому закрыт заказ музыки</div>
+      <div class="hint" style="margin-top:0">Отдельный список от бана в чате.</div>
+      <div id="banlist"></div>
+      <div class="acts">
+        <input type="text" id="ban-login" class="inline-input" placeholder="ник"
+               spellcheck="false" autocomplete="off">
+        <button class="act small risky" id="ban-add">Закрыть заказы</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="grid tab-pane" id="tab-fallback" hidden>
+
+    <div class="col">
+      <div class="kicker">Если трека нет в Spotify</div>
+      <div class="account" id="yt-status"></div>
+      <label class="field" style="margin-top:14px">
+        <span>Браузер, из которого брать доступ к YouTube</span>
+        <select id="yt-browser">
+          <option value="">выбрать самому</option>
+          <option value="chrome">Chrome</option>
+          <option value="edge">Edge</option>
+          <option value="firefox">Firefox</option>
+          <option value="yandex">Яндекс.Браузер</option>
+          <option value="opera">Opera</option>
+          <option value="brave">Brave</option>
+          <option value="vivaldi">Vivaldi</option>
+        </select>
+        <span class="hint">YouTube иногда требует подтвердить, что запросы не от
+          робота. Тогда приложение берёт доступ из браузера, в котором ты вошёл в
+          YouTube — само перебирает те, что стоят на этом компьютере. Указывать
+          браузер вручную нужно редко.
+          <br><br>
+          Помогает это редко: Chrome, Edge, Brave и Яндекс.Браузер держат файл с
+          куками заблокированным, пока открыты, — а закрывать браузер ради заказа
+          никто не будет. Проверка «я не бот» у YouTube временная, приложение само
+          ждёт и пробует ещё раз. Firefox отдаёт куки и на ходу.
+          Применяется к следующему заказу, перезапуск не нужен.</span>
+      </label>
+
+      <label class="field" style="margin-top:14px">
+        <span>Громкость заказов с YouTube — <b id="yt-volume-val">100%</b></span>
+        <input type="range" id="yt-volume" min="1" max="100" step="1">
+        <span class="hint">Считается <b>от громкости Spotify</b>: сто процентов —
+          заказ звучит ровно как музыка стримера, пятьдесят — вдвое тише. Меняется
+          на лету, даже посреди играющего трека. Тот же ползунок есть на карточке
+          «В эфире», когда играет заказ с YouTube.</span>
+      </label>
+
+      <label class="field" style="margin-top:14px">
+        <span>Куда выводить звук с YouTube</span>
+        <select id="yt-device"><option value="">системное устройство</option></select>
+        <span class="hint">Отдельное устройство нужно, чтобы в OBS это был отдельный
+          источник звука: его можно приглушить в записи и дать зрителям громкость
+          отдельно от фоновой музыки.</span>
+      </label>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Запасной вариант</div>
+      <div class="hint" style="margin-top:0">Что включить, если вернуть музыку на место не вышло.</div>
+      <div class="modes">
+        <label class="mode">
+          <input type="radio" name="resume" value="nothing">
+          <span>
+            <span class="name">Ничего не включать</span>
+            <span class="why">Просто уведомление в панели. Тишина, пока не включишь сам.</span>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="resume" value="playlist">
+          <span>
+            <span class="name">Включить запасной плейлист</span>
+            <span class="why">Самый предсказуемый вариант: заранее знаешь, что заиграет.</span>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="resume" value="radio">
+          <span>
+            <span class="name">Включить музыку последнего артиста</span>
+            <span class="why">Ближе всего к тому, что играло. Настоящее радио Spotify через
+              API недоступно, поэтому берём популярные треки этого артиста.</span>
+          </span>
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Запасной плейлист</span>
+        <select id="playlist"><option value="">— не выбран —</option></select>
+      </label>
+      <div class="hint" id="playlist-hint"></div>
+    </div>
+
+  </div>
+
+  <div class="grid tab-pane" id="tab-misc" hidden>
+
+    <div class="col">
+      <div class="kicker">Первая настройка</div>
+      <div class="hint">
+        Пошаговый мастер: обход блокировок, Spotify, Twitch, награда, виджет для
+        OBS. Тот самый, что открывается при первом запуске. Что-то сломалось или
+        настраиваешь заново на другом компьютере — пройди его ещё раз, ничего не
+        потеряется.
+      </div>
+      <div class="acts">
+        <button class="act small key" id="setup-again">Пройти настройку заново</button>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Диагностика</div>
+      <div class="hint">
+        Подробный лог пишется всегда — ничего включать не нужно. Если что-то
+        сломалось, повтори это и нажми кнопку: в архив попадут лог, история
+        заказов с возвратами баллов, действия в панели и настройки. Ключи
+        доступа, Client ID и почта из архива вырезаются.
+      </div>
+      <div class="acts">
+        <a class="act small" href="/api/diag/export">
+          <svg aria-hidden="true"><use href="#i-download"></use></svg>
+          Сохранить лог и историю
+        </a>
+      </div>
+
+  </div>
+
+</section>
 
 <section class="panel" id="widget" hidden>
   <div class="wx">
@@ -191,257 +590,9 @@
   </div>
 </section>
 
-<section class="panel" id="settings" hidden>
-  <div class="grid">
-
-    <div class="col">
-      <div class="kicker">Spotify</div>
-      <label class="field">
-        <span>Client ID — из инструкции, шаг 3</span>
-        <input type="text" id="client-id" spellcheck="false" autocomplete="off"
-               placeholder="набор букв и цифр">
-      </label>
-      <div class="acts">
-        <button class="act small" id="save-id">Сохранить</button>
-        <button class="act small key" data-do="login">Подключить Spotify</button>
-        <button class="act small" data-do="check">Проверить связь</button>
-        <button class="act small risky" data-do="logout">Отключить</button>
-      </div>
-      <div class="account" id="account"></div>
-      <div class="hint" id="redirect"></div>
-
-      <label class="field" style="margin-top:16px">
-        <span>Прокси для Spotify — если напрямую не пускает</span>
-        <input type="text" id="proxy" spellcheck="false" autocomplete="off"
-               placeholder="socks5://адрес:порт">
-      </label>
-      <div class="acts">
-        <button class="act small key" data-do="proxy-detect">Найти автоматически</button>
-        <button class="act small" id="save-proxy">Сохранить</button>
-        <button class="act small" data-do="check">Проверить связь</button>
-      </div>
-      <div class="hint">
-        Через него пойдут <b>только запросы этого приложения к Spotify</b>.
-        Twitch, чат, донаты и сам стрим останутся на прямом канале — в отличие
-        от VPN, который уводит туда же игру и загрузку на Twitch.
-        <br><br>
-        Нечего вписывать? Запусти <b>Psiphon</b> (psiphon.ca, бесплатный,
-        без регистрации) и нажми «Найти автоматически» — подробности в файле
-        «Инструкция-Прокси».
-        <br><br>
-        <b>Программе Spotify прокси не нужен.</b> Она ходит другими адресами,
-        и если музыка у тебя играет без VPN — в ней ничего менять не надо.
-        Блокируют обычно только адреса, по которым работают приложения вроде
-        этого.
-        <br><br>
-        <b>Вход всё равно один раз через VPN.</b> Кнопка «Подключить Spotify»
-        открывает страницу входа в браузере, а браузер про этот прокси не знает.
-        Включи VPN, войди, выключи VPN — дальше приложение живёт на прокси само.
-      </div>
     </div>
-
-    <div class="col">
-      <div class="kicker">Twitch</div>
-      <label class="field">
-        <span>Client ID — из инструкции по Twitch, шаг 3</span>
-        <input type="text" id="twitch-id" spellcheck="false" autocomplete="off"
-               placeholder="набор букв и цифр">
-      </label>
-      <div class="acts">
-        <button class="act small" id="save-twitch-id">Сохранить</button>
-        <button class="act small key" data-do="twitch-login">Подключить Twitch</button>
-        <button class="act small risky" data-do="twitch-logout">Отключить</button>
-      </div>
-      <div class="account" id="twitch-account"></div>
-    </div>
-
-    <div class="col">
-      <div class="kicker">Запасной вариант</div>
-      <div class="hint" style="margin-top:0">Что включить, если вернуть музыку на место не вышло.</div>
-      <div class="modes">
-        <label class="mode">
-          <input type="radio" name="resume" value="nothing">
-          <span>
-            <span class="name">Ничего не включать</span>
-            <span class="why">Просто уведомление в панели. Тишина, пока не включишь сам.</span>
-          </span>
-        </label>
-        <label class="mode">
-          <input type="radio" name="resume" value="playlist">
-          <span>
-            <span class="name">Включить запасной плейлист</span>
-            <span class="why">Самый предсказуемый вариант: заранее знаешь, что заиграет.</span>
-          </span>
-        </label>
-        <label class="mode">
-          <input type="radio" name="resume" value="radio">
-          <span>
-            <span class="name">Включить музыку последнего артиста</span>
-            <span class="why">Ближе всего к тому, что играло. Настоящее радио Spotify через
-              API недоступно, поэтому берём популярные треки этого артиста.</span>
-          </span>
-        </label>
-      </div>
-
-      <label class="field">
-        <span>Запасной плейлист</span>
-        <select id="playlist"><option value="">— не выбран —</option></select>
-      </label>
-      <div class="hint" id="playlist-hint"></div>
-    </div>
-
-    <div class="col">
-      <div class="kicker">Донаты</div>
-      <label class="field">
-        <span>Client ID DonationAlerts</span>
-        <input type="text" id="da-id" spellcheck="false" autocomplete="off"
-               placeholder="из инструкции по донатам">
-      </label>
-      <div class="acts">
-        <button class="act small" id="save-da-id">Сохранить</button>
-        <button class="act small key" data-do="da-login">Подключить DonationAlerts</button>
-        <button class="act small risky" data-do="da-logout">Отключить</button>
-      </div>
-
-      <label class="field" style="margin-top:16px">
-        <span>Ключ DonatePay — из профиля DonatePay</span>
-        <input type="text" id="dp-key" spellcheck="false" autocomplete="off"
-               placeholder="вставь ключ">
-      </label>
-      <div class="acts">
-        <button class="act small" id="save-dp-key">Сохранить</button>
-      </div>
-
-      <label class="field" style="margin-top:16px">
-        <span>Ключ DonateX — личный кабинет, Настройки → Api</span>
-        <input type="text" id="dx-key" spellcheck="false" autocomplete="off"
-               placeholder="вставь ключ">
-      </label>
-      <div class="acts">
-        <button class="act small" id="save-dx-key">Сохранить</button>
-      </div>
-
-      <label class="field" style="margin-top:16px">
-        <span>Заказ за донат от какой суммы</span>
-        <input type="text" id="donation-min" spellcheck="false" autocomplete="off">
-      </label>
-      <div class="hint">Донаты меньше этой суммы просто показываются в хронике —
-        заказом они не становятся. Деньги в любом случае остаются у тебя.</div>
-    </div>
-
-    <div class="col">
-      <div class="kicker">Правила заказа</div>
-      <label class="field">
-        <span>Название награды на Twitch</span>
-        <input type="text" id="reward-title" spellcheck="false" autocomplete="off"
-               placeholder="Заказ музыки">
-      </label>
-      <label class="field">
-        <span>Сколько стоит, баллов</span>
-        <input type="number" id="reward-cost" min="1" step="1" inputmode="numeric">
-      </label>
-      <label class="check">
-        <input type="checkbox" id="auto-reward">
-        Создать награду самому
-      </label>
-      <div class="hint">Название и цена уезжают на канал сразу, как только ты их
-        здесь поменяешь. Править их на самом Twitch бесполезно — приложение
-        вернёт своё.
-        <br>Сними галочку, если хочешь завести награду сам: тогда приложение
-        не будет её создавать.</div>
-
-      <label class="field" style="margin-top:16px">
-        <span>Не длиннее, минут</span>
-        <input type="number" id="max-minutes" min="1" max="60" step="1" inputmode="numeric">
-      </label>
-      <div class="hint">Отсекает часовые лупы и концерты целиком. Баллы за такой
-        заказ возвращаются зрителю.</div>
-
-      <label class="field" style="margin-top:16px">
-        <span>Сколько заказов держит один зритель</span>
-        <input type="number" id="max-per-user" min="1" max="20" step="1" inputmode="numeric">
-      </label>
-      <div class="hint">Считаются только те, что ещё стоят в очереди.
-        Отыгравшие место не занимают.</div>
-
-      <label class="check" style="margin-top:16px">
-        <input type="checkbox" id="donation-priority">
-        Донаты вперёд баллов
-      </label>
-
-      <label class="check" style="margin-top:16px">
-        <input type="checkbox" id="wait-current">
-        Не обрывать трек, который сейчас играет
-      </label>
-      <div class="hint">Заказ дождётся конца твоего трека и только потом заиграет.
-        Ждать может минуты — если надоело ждать, нажми «Скипнуть» или сними галочку.</div>
-
-      <label class="field" style="margin-top:16px">
-        <span>Стоп-слова</span>
-        <textarea id="reject-words" rows="3" spellcheck="false"
-                  placeholder="по одному в строке"></textarea>
-      </label>
-      <div class="hint">Заказ с таким словом в названии не пройдёт, баллы вернутся.
-        Регистр и раскладка значения не имеют.</div>
-    </div>
-
-    <div class="col">
-      <div class="kicker">Кому закрыт заказ музыки</div>
-      <div class="hint" style="margin-top:0">Отдельный список от бана в чате.</div>
-      <div id="banlist"></div>
-      <div class="acts">
-        <input type="text" id="ban-login" class="inline-input" placeholder="ник"
-               spellcheck="false" autocomplete="off">
-        <button class="act small risky" id="ban-add">Закрыть заказы</button>
-      </div>
-    </div>
-
-    <div class="col">
-      <div class="kicker">Если трека нет в Spotify</div>
-      <div class="account" id="yt-status"></div>
-      <label class="field" style="margin-top:14px">
-        <span>Браузер, из которого брать доступ к YouTube</span>
-        <select id="yt-browser">
-          <option value="">выбрать самому</option>
-          <option value="chrome">Chrome</option>
-          <option value="edge">Edge</option>
-          <option value="firefox">Firefox</option>
-          <option value="opera">Opera</option>
-          <option value="brave">Brave</option>
-          <option value="vivaldi">Vivaldi</option>
-        </select>
-        <span class="hint">YouTube иногда требует подтвердить, что запросы не от
-          робота. Приложение берёт доступ из браузера, в котором ты вошёл в YouTube.
-          Применяется к следующему заказу, перезапуск не нужен.</span>
-      </label>
-
-      <label class="field" style="margin-top:14px">
-        <span>Куда выводить звук с YouTube</span>
-        <select id="yt-device"><option value="">системное устройство</option></select>
-        <span class="hint">Отдельное устройство нужно, чтобы в OBS это был отдельный
-          источник звука: его можно приглушить в записи и дать зрителям громкость
-          отдельно от фоновой музыки.</span>
-      </label>
-    </div>
-
-    <div class="col">
-      <div class="kicker">Диагностика</div>
-      <div class="hint">
-        Подробный лог пишется всегда — ничего включать не нужно. Если что-то
-        сломалось, повтори это и нажми кнопку: в архив попадут лог, история
-        заказов с возвратами баллов, действия в панели и настройки. Ключи
-        доступа, Client ID и почта из архива вырезаются.
-      </div>
-      <div class="acts">
-        <a class="act small" href="/api/diag/export">
-          <svg aria-hidden="true"><use href="#i-download"></use></svg>
-          Сохранить лог и историю
-        </a>
-      </div>
-    </div>
-
   </div>
-</section>
+</div>
 
 <div id="fix" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="fix-head">
@@ -470,8 +621,38 @@
   </div>
 </div>
 
+<!-- Заставка. Показывается один раз за запуск приложения (не за загрузку
+     страницы, иначе она играла бы на каждое F5) и уходит сама. -->
+<div class="intro" id="intro" hidden>
+  <button class="skip" id="intro-skip">пропустить интро</button>
+  <div class="intro-inner">
+    <div class="intro-eq"><i></i><i></i><i></i><i></i><i></i></div>
+    <h1><span>Заказ</span> <span>музыки</span></h1>
+    <div class="sub">зрители заказывают — играет твой Spotify</div>
+    <div class="line"></div>
+  </div>
+</div>
+
+<!-- Мастер первой настройки. Слева дорожка шагов, справа один шаг за раз. -->
+<div class="setup" id="setup" hidden>
+  <div class="setup-progress"><i id="setup-progress-line"></i></div>
+  <aside class="setup-rail">
+    <h2>Настройка</h2>
+    <div class="rail-sub">Один раз, минут пятнадцать. Любой шаг можно пропустить
+      и вернуться к нему потом.</div>
+    <div id="setup-rail-steps"></div>
+    <div class="rail-tail">
+      <button data-act="finish">закрыть и настроить потом</button>
+    </div>
+  </aside>
+  <div class="setup-body">
+    <div class="setup-card" id="setup-card"></div>
+  </div>
+</div>
+
 <footer id="status" class="offline">Подключаюсь к приложению…</footer>
 <script src="/static/widget-presets.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/setup.js"></script>
 </body>
 </html>

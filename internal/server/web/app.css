@@ -71,6 +71,7 @@ body {
 main, .status-bar, .panel { transition: opacity var(--slow) var(--ease); }
 body.stale main,
 body.stale .status-bar,
+body.stale .menu,
 body.stale .panel { opacity: .4; pointer-events: none; }
 
 h1 { font-family: Unbounded, Manrope, sans-serif; font-weight: 600; }
@@ -270,6 +271,33 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 
 .acts { display: flex; gap: var(--s2); margin-top: var(--s6); flex-wrap: wrap; align-items: center; }
 
+/* Громкость заказа с YouTube прямо на карточке: убавлять просят тот трек,
+   который оглушает сейчас, а не следующий. */
+.stage-vol {
+  display: grid; grid-template-columns: 16px auto 1fr; align-items: center;
+  gap: var(--s2) var(--s3);
+  margin-top: var(--s4); padding: var(--s3) var(--s4);
+  border: 1px solid var(--line); border-radius: 2px;
+}
+.stage-vol svg { width: 16px; height: 16px; color: var(--dim); }
+.stage-vol .t { font-size: var(--t-sm); color: var(--dim); white-space: nowrap; }
+.stage-vol .t b { color: var(--text); font-variant-numeric: tabular-nums; }
+.stage-vol input[type="range"] { width: 100%; min-width: 120px; accent-color: var(--lime); }
+.stage-vol .hint { grid-column: 2 / -1; margin: 0; }
+
+/* Поломка не прячет карточку играющего трека, а живёт полосой под ней —
+   вместе со своей кнопкой починки. */
+.stage-alarm {
+  display: flex; align-items: flex-start; gap: var(--s3); flex-wrap: wrap;
+  margin-top: var(--s4); padding: var(--s3) var(--s4);
+  border: 1px solid var(--bad); border-radius: 2px;
+  background: #170808;
+}
+.stage-alarm svg { width: 16px; height: 16px; color: var(--bad); flex: none; margin-top: 2px; }
+.stage-alarm > div { flex: 1 1 200px; }
+.stage-alarm b { color: var(--bad); font-size: var(--t-sm); }
+.stage-alarm .hint { margin: 0; }
+
 .act {
   display: inline-flex; align-items: center; gap: var(--s2);
   border: 1px solid var(--line-2); background: transparent; color: var(--text);
@@ -448,12 +476,13 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 .void.hot .rule { background: var(--bad); }
 .void.hot .mark { color: var(--bad); }
 
-/* ── Настройки ──────────────────────────────────────────────────────── */
+/* ── Разделы меню ───────────────────────────────────────────────────────
+   Раньше каждый раздел был куском страницы, дописанным снизу, и поэтому
+   отбивался сверху линией и своим фоном. Теперь они живут внутри меню, где
+   фон и края даёт само меню, — а здесь остаётся только отступ. */
 
 .panel {
-  border-top: 1px solid var(--line);
-  background: var(--raise);
-  padding: var(--s7) var(--edge) var(--edge);
+  padding: var(--s6) var(--edge) var(--edge);
   animation: unfold var(--slow) var(--ease);
 }
 .panel[hidden] { display: none; }
@@ -729,6 +758,11 @@ footer.online { color: var(--dimmer); }
 .grip svg { width: 14px; height: 14px; }
 .queue-rows li:hover .grip { opacity: 1; }
 .queue-rows li.dragging { opacity: .4; }
+
+/* Заказ, ждущий конца трека стримера: он уже не в очереди и кнопок не имеет,
+   но на экране быть обязан. */
+.queue-rows li.waiting-row .grip { opacity: 1; color: var(--lime); cursor: default; }
+.queue-rows li.waiting-row .ttl { color: var(--dim); }
 .queue-rows li.over { box-shadow: inset 0 2px 0 var(--lime); }
 
 .icon-btn {
@@ -1098,3 +1132,164 @@ input[type="range"]:disabled::-moz-range-thumb { background: var(--dimmer); }
    ответило» на любое нажатие. */
 body.stale #banner,
 body.stale #fix { opacity: .35; pointer-events: none; }
+
+/* ── Меню разделов ──────────────────────────────────────────────────────
+
+   Что было: кнопки «виджет», «хроника» и «настройки» просто прокручивали
+   страницу вниз, к трём длинным кускам, дописанным под главным экраном.
+   Человек терял место, куда смотрел, а возвращаться приходилось прокруткой.
+
+   Что стало: меню поверх страницы. Слева разделы, справа один раздел за раз,
+   позади затемнение — по нему видно, что главный экран никуда не делся и
+   ждёт. Устроено так же, как мастер первой настройки: рельс плюс тело, —
+   чтобы в приложении не было двух разных представлений об одном и том же. */
+
+.menu {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  opacity: 0;
+  transition: opacity var(--slow) var(--ease);
+}
+.menu.on { opacity: 1; }
+.menu[hidden] { display: none; }
+
+/* Полосу заголовка меню не закрывает: свернуть и закрыть окно человек должен
+   мочь в любой момент, в том числе стоя в настройках. Правило то же, что у
+   мастера настройки. */
+body.has-titlebar .menu { top: 38px; }
+
+.menu-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 5, 6, .66);
+  cursor: pointer;
+}
+
+.menu-sheet {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: min(1240px, 100%);
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  transform: translateX(18px);
+  transition: transform var(--slow) var(--ease);
+}
+.menu.on .menu-sheet { transform: none; }
+
+/* Дорожка разделов */
+.menu-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  border-right: 1px solid var(--line);
+  background: var(--raise);
+  padding: var(--s5) var(--s4);
+  overflow-y: auto;
+}
+
+.menu-back {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  align-self: flex-start;
+  background: none; border: 0; cursor: pointer;
+  color: var(--dim);
+  font-size: var(--t-sm);
+  padding: var(--s2);
+  margin-bottom: var(--s4);
+  border-radius: 8px;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.menu-back:hover { color: var(--text); background: var(--hover); }
+.menu-back svg { width: 15px; height: 15px; }
+
+.menu-nav { display: flex; flex-direction: column; gap: var(--s1); }
+
+.menu-item {
+  display: flex; align-items: center; gap: var(--s3);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  padding: var(--s3) var(--s3);
+  color: var(--dim);
+  font-size: var(--t-md);
+  cursor: pointer;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.menu-item:hover { color: var(--text); background: var(--hover); }
+.menu-item svg { width: 17px; height: 17px; flex: none; }
+
+/* Открытый раздел красится лаймом — тем же цветом, что и активная кнопка в
+   верхней полосе, чтобы связь между ними читалась без объяснений. */
+.menu-item.on {
+  color: var(--lime);
+  background: rgba(200, 247, 81, .07);
+}
+
+.menu-tail {
+  margin-top: auto;
+  padding: var(--s3);
+  color: var(--dimmer);
+  font-size: var(--t-xs);
+}
+
+.menu-body { overflow-y: auto; }
+
+/* ── Вкладки внутри раздела ────────────────────────────────────────────
+   Второй уровень для настроек: девять блоков подряд не читаются никак, а
+   человек обычно приходит за одним из них. Липкая полоса — чтобы при
+   прокрутке длинной вкладки было видно, где стоишь. */
+
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin: calc(var(--s6) * -1) calc(var(--edge) * -1) var(--s6);
+  padding: var(--s4) var(--edge);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 7px var(--s4);
+  color: var(--dim);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease),
+              border-color var(--fast) var(--ease);
+}
+.tab:hover { color: var(--text); background: var(--hover); }
+.tab.on {
+  color: var(--lime);
+  border-color: var(--lime-lo);
+  background: rgba(200, 247, 81, .07);
+}
+
+.tab-pane { animation: unfold var(--slow) var(--ease); }
+.tab-pane[hidden] { display: none; }
+
+/* Окно бывает и узким: тогда рельс уезжает наверх строкой, а не съедает
+   половину ширины под три пункта. */
+@media (max-width: 860px) {
+  .menu-sheet { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .menu-rail { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); }
+  .menu-back { margin: 0; }
+  .menu-nav { flex-direction: row; }
+  .menu-tail { display: none; }
+  .panel { padding: var(--s5) var(--s5) var(--s6); }
+  .tabs { margin: calc(var(--s5) * -1) calc(var(--s5) * -1) var(--s5); padding: var(--s3) var(--s5); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu, .menu-sheet { transition: none; }
+  .tab-pane, .panel { animation: none; }
+}

@@ -34,6 +34,42 @@ func TestOrderWaitsForCurrentTrackToEnd(t *testing.T) {
 	})
 }
 
+// 27.08: заказ по ссылке нашёлся правильно, но на полминуты пропал с экрана.
+// Из очереди его уже взяли, а «В эфире» ещё пусто — значит панели надо
+// показывать и то, чего плеер ждёт.
+func TestWaitingOrderStaysVisible(t *testing.T) {
+	p, q, sp := newPlayer(t)
+	p.WaitForCurrent = true
+
+	// У стримера играет свой трек, до конца пара секунд: хватит, чтобы
+	// увидеть ожидание, и не придётся ждать в тесте всерьёз.
+	sp.setPlaying("spotify:track:своё", 200000, 197500)
+	addTrack(t, q, "заказ", 60000)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx)
+
+	waitFor(t, "плеер начал ждать конца трека стримера", func() bool { return p.Waiting() })
+
+	item := p.WaitingItem()
+	if item == nil {
+		t.Fatal("заказ, которого ждём, обязан быть виден панели")
+	}
+	if item.Title != "заказ" {
+		t.Fatalf("виден не тот заказ: %q", item.Title)
+	}
+
+	// Трек стримера доиграл — заказ пошёл, и строка ожидания обязана уйти.
+	sp.setPlaying("spotify:track:следующий", 190000, 400)
+	waitUntil(t, 6*time.Second, "заказ так и не заиграл", func() bool {
+		return playedURIs(sp)[0] == "spotify:track:заказ"
+	})
+	waitUntil(t, 3*time.Second, "строка ожидания не убралась", func() bool {
+		return p.WaitingItem() == nil
+	})
+}
+
 // Снимок делается ПОСЛЕ ожидания, а не в момент заказа. Иначе возврат
 // приведёт на трек, который зрители только что дослушали целиком, и он
 // заиграет второй раз подряд.
@@ -219,5 +255,40 @@ func TestPausedAtTheEndCountsAsFinished(t *testing.T) {
 		func() bool {
 			played, _, _ := sp.stats()
 			return len(played) >= 2
+		})
+}
+
+// Доигравший заказ Spotify показывает как тот же трек, отмотанный на ноль и
+// поставленный на паузу: продолжать ему нечем — заказ включается одним треком
+// без источника.
+//
+// Плеер считал это паузой стримера: очередь замирала на пять минут, следующий
+// заказ не играл, плейлист не возвращался. Со стороны — «поиграл, и всё
+// стопится». Взято из лога тестера от 26.08: `позиция_мс=0` каждые шесть
+// секунд на треке, который давно кончился.
+func TestRewoundToZeroAndPausedCountsAsFinished(t *testing.T) {
+	p, q, sp := newPlayer(t)
+	p.SetPollEvery(20 * time.Millisecond)
+	addTrack(t, q, "первый", 2000)
+	addTrack(t, q, "второй", 2000)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx)
+
+	waitUntil(t, 3*time.Second, "первый не заиграл",
+		func() bool { return p.Now() != nil })
+
+	// Трек у самого конца — плеер это видит и знает, когда он кончится.
+	sp.setPlaying("spotify:track:первый", 2000, 1990)
+	time.Sleep(100 * time.Millisecond)
+
+	// А теперь Spotify отматывает его на начало и встаёт на паузу.
+	sp.pause("spotify:track:первый", 2000, 0)
+
+	waitUntil(t, 3*time.Second, "второй заказ не пошёл: очередь замёрзла на доигравшем первом",
+		func() bool {
+			played, _, _ := sp.stats()
+			return len(played) >= 2 && played[1] == "spotify:track:второй"
 		})
 }

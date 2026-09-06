@@ -47,6 +47,14 @@ body { -webkit-font-smoothing: antialiased; }
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 
+  // Обложку берём не со склада Spotify напрямую, а у самого приложения.
+  //
+  // Браузер внутри OBS ходит в интернет сам по себе и про обход блокировок,
+  // поднятый приложением, не знает: в панели обложка была видна, а в кадре —
+  // нет. Приложение качает её через тот же обход и отдаёт со 127.0.0.1, а если
+  // не смогло — переводит браузер на прямой адрес, как было раньше.
+  const coverSrc = (u) => "/cover?u=" + encodeURIComponent(u);
+
   const NOTE = `<svg class="no" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/>
       <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
@@ -169,7 +177,7 @@ body { -webkit-font-smoothing: antialiased; }
         $("title").textContent = now.title;
         $("artist").textContent = now.artist;
         $("by").textContent = byLine(now);
-        $("art").innerHTML = now.cover_url ? `<img src="${esc(now.cover_url)}" alt="">` : NOTE;
+        $("art").innerHTML = now.cover_url ? `<img src="${esc(coverSrc(now.cover_url))}" alt="">` : NOTE;
       };
 
       // Плашка уже висела — значит трек просто сменился, заново выезжать

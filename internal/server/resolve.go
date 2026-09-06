@@ -51,9 +51,45 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	if req.Title == "" {
 		// Текста нет, но есть ссылка, которую умеет сыграть YouTube.
 		if hasLink && link.YouTube != nil {
-			s.acceptYouTube(ctx, r, *link.YouTube)
+			s.acceptYouTube(ctx, r, *link.YouTube, noteYouTubeMissing)
 			return
 		}
+		// Ссылка есть, а играть её нечем: запасной проигрыватель ещё не
+		// готов. Раньше зритель получал в ответ «ты не написал, что
+		// заказываешь» — самый сбивающий с толку ответ из возможных, ведь
+		// написал он ровно то, что просили.
+		if s.youtubeLinkNotReady(r.UserInput) {
+			s.log.Info("ссылка на видео, а проигрыватель не готов",
+				"зритель", r.UserLogin, "заказ", r.UserInput, "код", errs.YouTubeNoMpv)
+			s.state.SetOrderMatch(r.ID, app.OrderMatch{
+				State: app.MatchFailed,
+				Note:  "Ссылка на видео, а запасной проигрыватель ещё не готов",
+			})
+			s.rejectRedemption(s.afterSearch(base), r,
+				"это ссылка на видео, а проигрыватель для него ещё не готов — попробуй позже или закажи текстом")
+			return
+		}
+
+		// Ссылка в заказе была, но прочитать её не вышло: YouTube не отдал
+		// ролик, страница Яндекс.Музыки не открылась, Spotify не ответил.
+		//
+		// 27.08 владелец кинул обычную ссылку на YouTube и получил в ответ
+		// «ты не написал, что заказываешь. Баллы вернул» — при том что
+		// написал он ровно то, что просили. Проверка ниже ловила только
+		// один случай из многих: «проигрыватель ещё не качается». Здесь
+		// причина уже известна, её и говорим.
+		if link.Note != "" {
+			s.log.Info("ссылку прочитать не вышло",
+				"зритель", r.UserLogin, "заказ", r.UserInput, "причина", link.Note)
+			s.state.SetOrderMatch(r.ID, app.OrderMatch{
+				State: app.MatchFailed,
+				Note:  "Ссылку прочитать не вышло: " + link.Note,
+			})
+			s.rejectRedemption(s.afterSearch(base), r,
+				"твою ссылку не удалось прочитать ("+link.Note+") — попробуй другую или напиши название текстом")
+			return
+		}
+
 		s.log.Info("заказ без текста", "зритель", r.UserLogin)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{
 			State: app.MatchFailed,
@@ -92,6 +128,30 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	if err != nil {
 		code, text := errs.Describe(err)
 		s.log.Error("поиск трека не удался", "заказ", r.UserInput, "код", code, "ошибка", err)
+		s.autoProbeSearch(req.Clean)
+
+		// Отказ поиска — не конец заказа. Запасные пути раньше стояли
+		// только ниже, в ветке «поиск отработал, но ничего не подошло», и
+		// любая ошибка Spotify выбрасывала вместе с собой уже разобранную
+		// ссылку на ролик: название, длительность и адрес лежали готовые,
+		// mpv стоял готовый, а зритель получал «попробуй ещё раз».
+		//
+		// Ровно это и увидел тестер 27.08: Spotify отвечал 400 на каждый
+		// поиск трека, и вместе с текстовыми заказами перестали работать
+		// ссылки на YouTube и Яндекс.Музыку — хотя играть их Spotify не
+		// требуется вовсе.
+		if hasLink && link.YouTube != nil {
+			s.log.Info("Spotify не ответил — играю прямо по ссылке",
+				"заказ", r.UserInput, "код", code)
+			s.acceptYouTube(ctx, r, *link.YouTube, noteYouTubeNoAnswer)
+			return
+		}
+		if s.tryYouTube(ctx, r, req.Clean, noteYouTubeNoAnswer) {
+			s.log.Info("Spotify не ответил — нашёл на YouTube",
+				"заказ", r.UserInput, "код", code)
+			return
+		}
+
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{State: app.MatchFailed, Note: text})
 		s.rejectRedemption(s.afterSearch(base), r, "не получилось поискать трек, попробуй ещё раз")
 		return
@@ -130,12 +190,12 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 
 		// Ссылка на ролик уже разобрана — играем прямо её, искать нечего.
 		if hasLink && link.YouTube != nil {
-			s.acceptYouTube(ctx, r, *link.YouTube)
+			s.acceptYouTube(ctx, r, *link.YouTube, noteYouTubeMissing)
 			return
 		}
 		// Spotify не всесилен: в нём нет половины русского андеграунда и
 		// почти ничего из мемов. Такой заказ ищем на YouTube.
-		if s.tryYouTube(ctx, r, req.Clean) {
+		if s.tryYouTube(ctx, r, req.Clean, noteYouTubeMissing) {
 			return
 		}
 		if res.AbroadOnly > 0 {

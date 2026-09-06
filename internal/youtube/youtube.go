@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,14 @@ type Player struct {
 	// Preferred — браузер, выбранный стримером вручную. Если он задан,
 	// перебор не нужен.
 	Preferred string
+
+	// baseVolume — громкость Spotify на момент снимка, volumePercent —
+	// ползунок в панели. Итог считает finalVolume, см. volume.go.
+	baseVolume    int
+	volumePercent int
+	// ipc — канал управления запущенным mpv. Через него меняется громкость
+	// на ходу: другого способа mpv не даёт.
+	ipc string
 }
 
 // NewPlayer создаёт плеер.
@@ -76,8 +85,6 @@ func (p *Player) Lookup(ctx context.Context, url string) (*Track, error) {
 
 // browsers — откуда пробуем взять куки. YouTube всё чаще требует
 // подтверждения «я не бот», и без куки живого браузера отвечает отказом.
-var browsers = []string{"chrome", "edge", "firefox", "opera", "brave", "vivaldi"}
-
 // metadata спрашивает у yt-dlp сведения о ролике, не качая его.
 //
 // Сначала пробуем без куки: так быстрее и не трогает чужой браузер. Если
@@ -93,15 +100,16 @@ func (p *Player) metadata(ctx context.Context, target string) (*Track, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	// Порядок попыток: как есть, потом запомненный браузер, потом перебор.
+	// Порядок попыток: как есть, потом запомненный браузер, потом перебор
+	// установленных.
 	attempts := []string{""}
 	switch {
 	case p.Preferred != "":
-		attempts = []string{p.Preferred, ""}
+		attempts = []string{browserArg(p.Preferred), ""}
 	case p.browser() != "":
 		attempts = []string{p.browser(), ""}
 	default:
-		attempts = append(attempts, browsers...)
+		attempts = append(attempts, installedBrowsers()...)
 	}
 
 	var (
@@ -144,10 +152,46 @@ func (p *Player) metadata(ctx context.Context, target string) (*Track, error) {
 		p.log.Debug("не подошли куки браузера", "браузер", browser)
 	}
 
+	// Проверка «я не бот» у YouTube временная: она прилетает пачками и через
+	// несколько секунд отпускает. 27.08 владелец получил её на ссылку, а
+	// ровно та же ссылка минутой позже открылась без единой куки — и это
+	// при том, что ни в одном браузере доступа не нашлось.
+	//
+	// Раз так, отказываться после перебора браузеров рано: заказ дешевле
+	// подождать пару секунд, чем отменить. Куки к этому моменту всё равно
+	// испробованы, поэтому пробуем ровно так же, как в первый раз, — начисто.
+	//
+	// Пауза одна и короткая: на весь подбор заказа отведено двадцать пять
+	// секунд, из них перебор браузеров уже съел несколько. Лучше один
+	// честный повтор, чем упереться в срок и оставить зрителя вообще без
+	// ответа.
+	if botCheck && sleepCtx(ctx, 3*time.Second) {
+		p.log.Info("YouTube не пустил и с куками — жду и пробую ещё раз начисто")
+		out, stderr, err := p.runYtdlp(ctx, ytdlp, "", target)
+		if stderr != "" {
+			lastStderr = stderr
+		}
+		if err == nil {
+			track, perr := parseInfo(out)
+			if perr == nil {
+				p.log.Info("со второго захода YouTube отдал ролик")
+				return track, nil
+			}
+			lastErr = perr
+		} else {
+			lastErr = err
+		}
+	}
+
 	p.log.Warn("yt-dlp не смог найти ролик",
 		"запрос", target, "ошибка", lastErr, "жалобы", strings.TrimSpace(lastStderr))
 	if botCheck {
-		return nil, errs.Wrap(errs.YouTubeCookies, notFoundText("bot"), lastErr)
+		// Раньше здесь стояло notFoundText("bot") — попытка заставить
+		// функцию выдать текст про куки условным словом. Слово это её
+		// проверку не проходило, и стример получал «На YouTube ничего не
+		// нашлось» ровно тогда, когда ролик есть, а не пускают. Диагноз
+		// известен наверняка, поэтому и текст берём прямой.
+		return nil, errs.Wrap(errs.YouTubeCookies, cookiesText, lastErr)
 	}
 	return nil, errs.Wrap(errs.YouTubeNotFound, notFoundText(lastStderr), lastErr)
 }
@@ -189,12 +233,21 @@ func needsCookies(stderr string) bool {
 		strings.Contains(low, "sign in to confirm")
 }
 
+// cookiesText — что сказать, когда YouTube требует доказать, что мы не робот.
+//
+// Совет тут ровно один, и он про подождать. Куки из браузера — путь, который
+// на Windows чаще не работает, чем работает: Chrome, Edge, Brave и
+// Яндекс.Браузер держат файл с куками заблокированным, пока браузер открыт
+// («Could not copy Chrome cookie database»), а закрывать браузер посреди
+// эфира никто не станет. Проверка же у YouTube временная и отпускает сама.
+const cookiesText = "YouTube потребовал подтвердить, что запросы не от робота, и не отдал ролик. " +
+	"Это ненадолго — попробуй ту же ссылку через минуту или закажи трек текстом. " +
+	"Приложение уже подождало и попробовало ещё раз."
+
 // notFoundText объясняет отказ человеческими словами.
 func notFoundText(stderr string) string {
 	if needsCookies(stderr) {
-		return "YouTube требует подтвердить, что запросы не от робота, и не отдал трек. " +
-			"Открой YouTube в браузере и войди в аккаунт — приложение возьмёт доступ оттуда. " +
-			"Если не поможет, укажи браузер в настройках."
+		return cookiesText
 	}
 	return "На YouTube ничего не нашлось."
 }
@@ -290,6 +343,12 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	}
 	p.Stop()
 
+	p.mu.Lock()
+	volume := finalVolume(p.baseVolume, p.volumePercent)
+	p.mu.Unlock()
+
+	ipc := newIPCPath()
+
 	args := []string{
 		"--no-video",
 		"--no-terminal",
@@ -297,6 +356,12 @@ func (p *Player) Play(ctx context.Context, url string) error {
 		// Свой заголовок окна: если mpv всё же покажется, будет понятно, что это.
 		"--title=Заказ музыки",
 		"--force-window=no",
+		// Без этого ключа mpv играет на сто процентов, и заказ с YouTube
+		// врывается в эфир вдвое громче музыки стримера.
+		"--volume=" + strconv.Itoa(volume),
+		// Канал управления: по нему ползунок в панели меняет громкость,
+		// пока трек играет.
+		"--input-ipc-server=" + ipc,
 	}
 	if p.Device != "" {
 		args = append(args, "--audio-device="+p.Device)
@@ -320,9 +385,11 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	p.cmd = cmd
 	p.gen++
 	p.playing = url
+	p.ipc = ipc
 	p.mu.Unlock()
 
-	p.log.Info("играю с YouTube", "адрес", url, "устройство", p.Device)
+	p.log.Info("играю с YouTube", "адрес", url, "устройство", p.Device,
+		"громкость_mpv", volume, "громкость_spotify", p.baseVolume)
 	return nil
 }
 
@@ -378,6 +445,7 @@ func (p *Player) clearIfMine(gen uint64) {
 	}
 	p.cmd = nil
 	p.playing = ""
+	p.ipc = ""
 }
 
 // Stop убивает mpv.
@@ -389,6 +457,7 @@ func (p *Player) Stop() {
 	cmd := p.cmd
 	p.cmd = nil
 	p.playing = ""
+	p.ipc = ""
 	p.gen++
 	p.mu.Unlock()
 
@@ -456,9 +525,17 @@ func firstNonEmpty(values ...string) string {
 //
 // Поля читает горутина проигрывания, поэтому только под блокировкой: голое
 // присваивание снаружи — гонка.
-func (p *Player) SetOptions(device, browser string) {
+func (p *Player) SetOptions(device, browser string, volumePercent int) {
 	p.mu.Lock()
 	p.Device = device
 	p.Preferred = browser
+	changed := p.volumePercent != volumePercent
 	p.mu.Unlock()
+
+	// Громкость идёт отдельным путём: её надо не только запомнить, но и
+	// передать уже играющему mpv. Иначе ползунок подействует только на
+	// следующий заказ — а убавить просят именно тот, что оглушает сейчас.
+	if changed {
+		p.SetVolumePercent(volumePercent)
+	}
 }
