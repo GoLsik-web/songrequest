@@ -265,12 +265,12 @@ type Session struct {
 type Snapshot struct {
 	// App — всегда Marker. Смотри его описание: по нему вторая копия
 	// приложения узнаёт первую.
-	App         string           `json:"app"`
-	Connections []ConnState      `json:"connections"`
-	Now         *NowPlaying      `json:"now"`
+	App         string      `json:"app"`
+	Connections []ConnState `json:"connections"`
+	Now         *NowPlaying `json:"now"`
 	// LastPlayed — что играло перед этим. Показывается в тишине, когда
 	// показывать больше нечего, и переживает перезапуск приложения.
-	LastPlayed *LastPlayed `json:"last_played"`
+	LastPlayed  *LastPlayed      `json:"last_played"`
 	Queue       []QueueItem      `json:"queue"`
 	Notices     []Notice         `json:"notices"`
 	Paused      bool             `json:"paused"` // приём заказов остановлен
@@ -290,6 +290,22 @@ type Snapshot struct {
 	Widget any `json:"widget"`
 }
 
+// Состояние обхода одним словом — для панели и для лампочки в верхней полосе.
+//
+// Раньше состояние приходилось угадывать по трём признакам сразу (включён ли,
+// есть ли ключ, поднят ли посредник) плюс по тексту в Note. Угадывалось плохо:
+// «поднять не вышло» и «поднимать не понадобилось» выглядели одинаково —
+// обход не работает, ключ есть, — и панель писала «наготове» там, где на самом
+// деле всё лежало.
+const (
+	TunnelOff          = "off"          // ключа нет или обход выключен человеком
+	TunnelConnecting   = "connecting"   // поднимаем: качаем список, перебираем серверы
+	TunnelConnected    = "connected"    // работает
+	TunnelReconnecting = "reconnecting" // работал и отвалился, поднимаем заново
+	TunnelStandby      = "standby"      // ключ есть, но Spotify отвечает и без обхода
+	TunnelDown         = "down"         // должен работать, а не работает
+)
+
 // TunnelInfo — состояние обхода блокировок для панели.
 //
 // Ключа здесь нет и быть не может: панель его не показывает никогда, даже
@@ -306,6 +322,14 @@ type TunnelInfo struct {
 	// отвечает и без него. Так бывает, когда у стримера включён свой VPN на
 	// весь компьютер. Для панели это не «выключено», а «наготове».
 	Standby bool `json:"standby"`
+
+	// Phase — то же самое одним словом, см. постоянные Tunnel* выше. Панель
+	// красит карточку и лампочку по нему, а не разбирает текст в Note.
+	Phase string `json:"phase"`
+
+	// FromCache — список серверов взят из памяти: сервис подписки не ответил.
+	// Обход при этом работает, но список мог устареть, и сказать об этом надо.
+	FromCache bool `json:"from_cache"`
 }
 
 // Ban — закрытый доступ к заказам.

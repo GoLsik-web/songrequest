@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // ResumeFailMode — что делать, если вернуть Spotify в исходное состояние не удалось.
@@ -56,6 +57,15 @@ type Config struct {
 	// TunnelToolPath — путь к xray.exe, если человек положил его руками.
 	// Пусто — приложение скачает и будет держать свою копию.
 	TunnelToolPath string `json:"tunnel_tool_path"`
+	// TunnelBad — серверы, через которые Spotify отказал по стране, и когда
+	// это случилось. Тут только подписи (имя, вид, адрес и порт) — секретов в
+	// них нет, они и в панели показываются.
+	//
+	// Зачем хранить: перезапуск приложения не делает негодный сервер годным.
+	// Раньше список забывался вместе с процессом, и вечер начинался с тех же
+	// самых граблей — перебор упирался в те же серверы. Пометки истекают сами
+	// (см. badFor в internal/tunnel).
+	TunnelBad map[string]time.Time `json:"tunnel_bad,omitempty"`
 
 	// Spotify
 	SpotifyClientID string `json:"spotify_client_id"`

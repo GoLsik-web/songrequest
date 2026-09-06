@@ -117,6 +117,7 @@ func (s *Server) handleTunnelOn(w http.ResponseWriter, r *http.Request) {
 	}
 	if direct {
 		s.log.Info("обход не понадобился: Spotify отвечает напрямую")
+		s.standby.Store(true)
 		s.applyProxy()
 		s.syncTunnel("Обход наготове: Spotify пока отвечает и без него.")
 		s.state.Notify("info", "Spotify отвечает и без обхода — похоже, у тебя уже включён VPN. "+
@@ -125,6 +126,9 @@ func (s *Server) handleTunnelOn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.standby.Store(false)
+	s.starting.Store(true)
+	defer s.starting.Store(false)
 	s.syncTunnel("Включаю обход… это может занять пару минут.")
 
 	status, err := s.tunnel.Start(ctx, key, s.cfg.Get().TunnelServer, s.cfg.Get().TunnelToolPath)
@@ -158,6 +162,7 @@ func (s *Server) handleTunnelOff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.applyProxy()
+	s.standby.Store(false)
 	s.syncTunnel("Обход выключен.")
 	s.state.Notify("info", "Обход выключен.")
 	writeJSON(w, map[string]any{"on": false})
@@ -182,6 +187,7 @@ func (s *Server) handleTunnelForget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.applyProxy()
+	s.standby.Store(false)
 	s.syncTunnel("Ключ забыт.")
 	s.state.Notify("info", "Ключ обхода забыт.")
 	writeJSON(w, map[string]any{"on": false, "has_key": false})
@@ -258,6 +264,16 @@ func (s *Server) StartTunnel(ctx context.Context) {
 		s.log.Redactor.Add(saved.Key)
 	}
 
+	// Список серверов помним между запусками: сервис подписки — обычный сайт,
+	// он падает и его блокируют, а вчерашние серверы обычно живы.
+	s.tunnel.SetCache(tunnelCache{secrets: s.secrets})
+	// И пометки о негодных серверах тоже: перезапуск приложения не делает
+	// негодный сервер годным.
+	if len(cfg.TunnelBad) > 0 {
+		s.tunnel.SetBad(cfg.TunnelBad)
+		s.log.Debug("вспомнил негодные серверы обхода", "сколько", len(cfg.TunnelBad))
+	}
+
 	// Сторож работает всегда, даже когда обход сейчас выключен: его могут
 	// включить кнопкой в панели, и следить за ним надо с этой же минуты.
 	go s.watchTunnel(ctx)
@@ -267,8 +283,11 @@ func (s *Server) StartTunnel(ctx context.Context) {
 		return
 	}
 
+	s.starting.Store(true)
 	s.syncTunnel("Проверяю, нужен ли обход…")
 	go func() {
+		defer s.starting.Store(false)
+
 		startCtx, cancel := context.WithTimeout(ctx, tunnelStartTimeout)
 		defer cancel()
 
@@ -288,14 +307,18 @@ func (s *Server) StartTunnel(ctx context.Context) {
 		}
 		if direct {
 			s.log.Info("обход не понадобился: Spotify отвечает напрямую")
+			s.standby.Store(true)
+			s.starting.Store(false)
 			s.syncTunnel("Обход наготове: Spotify пока отвечает и без него.")
 			s.state.Notify("info", "Spotify отвечает без обхода — обход держу наготове. "+
 				"Перестанет отвечать (например, выключишь свой VPN) — подниму сам.")
 			return
 		}
 
+		s.standby.Store(false)
 		status, err := s.tunnel.Start(startCtx, saved.Key, cfg.TunnelServer, cfg.TunnelToolPath)
 		if err != nil {
+			s.starting.Store(false)
 			s.log.Error("обход не поднялся при запуске", "ошибка", err)
 			s.state.NotifyError(err)
 			s.syncTunnel(tunnelNote(err))
@@ -392,6 +415,7 @@ func (s *Server) noteSpotifyError(err error) {
 
 	s.log.Warn("через этот сервер обхода Spotify отказывает — беру другой", "сервер", st.Server)
 	s.tunnel.MarkBad(st.Server)
+	s.rememberBad()
 	s.state.Notify("info", "Через сервер обхода «"+st.Server+"» Spotify не работает. Беру другой сервер.")
 	s.syncTunnel("Сервер не подошёл — ищу другой…")
 
@@ -529,6 +553,22 @@ func (s *Server) reviveTunnel(reason string) bool {
 // tunnelWatchStep — как часто сторож проверяет, что посредник ещё живой.
 const tunnelWatchStep = time.Minute
 
+// tunnelRoadStep — как часто сторож проверяет не посредника, а саму дорогу до
+// Spotify.
+//
+// Зачем отдельно от tunnelWatchStep. Проверка посредника — стук в свой же порт
+// на 127.0.0.1: она бесплатна, но видит только «программа обхода жива». А
+// живая программа обхода — это ещё не работающий Spotify: сервер мог перестать
+// пускать дальше, у стримера могла кончиться подписка, Spotify мог занести
+// адрес сервера в неподходящую страну. Всё это выглядело в панели как «Обход
+// работает» ровно до первого заказа.
+//
+// Почему пять минут, а не минута. Проверка сетевая, и хотя ключа доступа в ней
+// нет (значит норму запросов приложения она не тратит), гонять её каждую
+// минуту весь стрим — это лишние сотни запросов за вечер ни за чем. Пять минут
+// — это «поломку заметим раньше, чем зритель успеет пожаловаться дважды».
+const tunnelRoadStep = 5 * time.Minute
+
 // watchTunnel сторожит обход изнутри приложения.
 //
 // Смерть программы обхода ловится сама (см. tunnel.watch), но бывает тише:
@@ -539,12 +579,14 @@ const tunnelWatchStep = time.Minute
 func (s *Server) watchTunnel(ctx context.Context) {
 	t := time.NewTicker(tunnelWatchStep)
 	defer t.Stop()
+
+	var lastRoad time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if !s.cfg.Get().TunnelOn || s.reviving.Load() {
+			if !s.cfg.Get().TunnelOn || s.reviving.Load() || s.reselecting.Load() || s.starting.Load() {
 				continue
 			}
 			if !s.tunnel.Status().On {
@@ -559,9 +601,68 @@ func (s *Server) watchTunnel(ctx context.Context) {
 				s.tunnel.Stop()
 				s.applyProxy()
 				s.reviveTunnel("посредник перестал отвечать")
+				continue
 			}
+
+			// Программа обхода жива — но доходит ли через неё до Spotify?
+			// Это разные вопросы, и раньше приложение задавало только первый.
+			if time.Since(lastRoad) < tunnelRoadStep {
+				continue
+			}
+			lastRoad = time.Now()
+			s.checkRoad(ctx)
 		}
 	}
+}
+
+// checkRoad проверяет, доходит ли через поднятый обход до Spotify.
+//
+// Ключа доступа в проверке нет, поэтому норму запросов приложения она не
+// тратит: Spotify отвечает «нужен вход», и этого достаточно. А вот отказ по
+// стране (403) она видит — тот самый случай, когда обход работает, панель
+// пишет «Обход работает», а заказы не проходят.
+func (s *Server) checkRoad(ctx context.Context) {
+	addr := s.tunnel.Addr()
+	if addr == "" {
+		return
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	err := tunnel.CheckSpotify(probeCtx, addr)
+	cancel()
+	if err == nil {
+		return
+	}
+
+	// Проверка могла не дойти по случайности (моргнула сеть). Второй раз через
+	// несколько секунд: поднимать обход заново из-за одной осечки — значит
+	// обрывать работающий стрим на ровном месте.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(5 * time.Second):
+	}
+	probeCtx, cancel = context.WithTimeout(ctx, 20*time.Second)
+	err = tunnel.CheckSpotify(probeCtx, addr)
+	cancel()
+	if err == nil {
+		return
+	}
+
+	server := s.tunnel.Status().Server
+	s.log.Warn("через обход до Spotify не достучаться", "сервер", server, "ошибка", err)
+
+	// Отказ по стране — вина сервера, и лечится он сменой сервера, а не
+	// подъёмом того же самого. Этим занимается noteSpotifyError: у него на
+	// такой случай есть и счётчик попыток, и пометка негодного сервера.
+	if errs.CodeOf(err) == errs.TunnelCountry {
+		s.tunnel.MarkBad(server)
+		s.rememberBad()
+	}
+
+	s.tunnel.Stop()
+	s.applyProxy()
+	s.reviveTunnel("через обход Spotify не отвечает")
 }
 
 // spotifyWorksDirect отвечает на главный вопрос: нужен ли обход прямо сейчас.
@@ -699,6 +800,7 @@ func (s *Server) noteSpotifySilence() {
 
 			s.log.Info("Spotify отвечает напрямую, а через обход нет — выключаю обход")
 			s.tunnel.Stop()
+			s.standby.Store(true)
 			s.applyProxy()
 			s.syncTunnel("Обход выключен: Spotify отвечает и без него.")
 			s.state.Notify("info", "Spotify отвечает и без обхода — похоже, у тебя включён свой VPN. "+
@@ -748,12 +850,72 @@ func (s *Server) syncTunnel(note string) {
 		st := s.tunnel.Status()
 		info.On = st.On
 		info.Server = st.Server
-		// Ключ есть, обход разрешён, а поднимать его не понадобилось: Spotify
-		// отвечает и так. Человеку это надо показать иначе, чем «выключен», —
-		// иначе он будет чинить то, что работает.
-		info.Standby = !st.On && info.HasKey && cfg.TunnelOn
+		info.FromCache = st.FromCache
+		info.Standby = !st.On && s.standby.Load()
 	}
+	info.Phase = s.tunnelPhase(info)
 	s.state.SetTunnel(info)
+}
+
+// tunnelPhase сводит состояние обхода к одному слову.
+//
+// Раньше панель разбирала три признака сразу и всё равно ошибалась: «поднять
+// не вышло» и «поднимать не понадобилось» выглядели одинаково — ключ есть,
+// обход не работает, — и в карточке писалось «наготове» ровно тогда, когда
+// обход лежал и заказы не проходили. Теперь «наготове» ставится только там, где
+// приложение действительно решило, что обход не нужен.
+func (s *Server) tunnelPhase(info app.TunnelInfo) string {
+	switch {
+	case !info.HasKey || !s.cfg.Get().TunnelOn:
+		return app.TunnelOff
+	case info.On:
+		return app.TunnelConnected
+	case s.reviving.Load() || s.reselecting.Load():
+		return app.TunnelReconnecting
+	case s.starting.Load():
+		return app.TunnelConnecting
+	case info.Standby:
+		return app.TunnelStandby
+	default:
+		return app.TunnelDown
+	}
+}
+
+// tunnelCache — где приложение помнит список серверов между запусками.
+//
+// Не файл на диске: в списке лежат uuid и пароли от VPN стримера, а весь
+// остальной код нарочно не даёт этому секрету попасть на диск (настройка
+// уходит в Xray через стандартный ввод именно поэтому). Поэтому список живёт
+// там же, где сам ключ, — в хранилище паролей Windows.
+type tunnelCache struct {
+	secrets Secrets
+}
+
+// keyringServers — под каким именем список серверов лежит в хранилище паролей.
+const keyringServers = "tunnel_servers"
+
+func (c tunnelCache) Save(servers []tunnel.Server) error {
+	return c.secrets.PutJSON(keyringServers, servers)
+}
+
+func (c tunnelCache) Load() ([]tunnel.Server, bool) {
+	var servers []tunnel.Server
+	if err := c.secrets.GetJSON(keyringServers, &servers); err != nil {
+		return nil, false
+	}
+	return servers, len(servers) > 0
+}
+
+// rememberBad сохраняет пометки о негодных серверах, чтобы они пережили
+// перезапуск. В подписи сервера секретов нет — она и в панели показывается.
+func (s *Server) rememberBad() {
+	if s.tunnel == nil {
+		return
+	}
+	bad := s.tunnel.Bad()
+	if err := s.cfg.Update(func(c *config.Config) { c.TunnelBad = bad }); err != nil {
+		s.log.Warn("не запомнил негодные серверы обхода", "ошибка", err)
+	}
 }
 
 // tunnelNote превращает ошибку в строчку для карточки обхода: с кодом, чтобы
