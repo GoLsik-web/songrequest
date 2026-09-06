@@ -87,7 +87,7 @@ func TestLiveSubscription(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	servers, err := tun.resolve(ctx, link)
+	servers, _, err := tun.resolve(ctx, link)
 	if err != nil {
 		t.Fatalf("список серверов не получился: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestLiveEachServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	servers, err := tun.resolve(ctx, link)
+	servers, _, err := tun.resolve(ctx, link)
 	if err != nil {
 		t.Fatal(err)
 	}

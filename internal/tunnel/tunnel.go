@@ -46,7 +46,32 @@ const (
 	// программу обхода, а потом ещё десять секунд ждать Spotify — значит
 	// заставить человека сидеть перед крутящимся кружком минуты.
 	dialTimeout = 2500 * time.Millisecond
+
+	// subTimeout — сколько ждём ответа от сервиса подписки на одну попытку.
+	//
+	// Было тридцать секунд одной попыткой. Живьём это худший из вариантов:
+	// сервис подписки либо отвечает за секунду, либо не отвечает вовсе, а
+	// человек всё это время смотрит на «включаю обход…». Лучше короткий срок
+	// и несколько попыток: временная потеря связи так переживается, а
+	// зависший сервис не съедает полминуты.
+	subTimeout = 12 * time.Second
+
+	// badFor — сколько сервер числится непригодным после отказа Spotify.
+	//
+	// Насовсем помечать нельзя: «Spotify не работает из этой страны» —
+	// причина не вечная. Сервис подписки переставляет серверы между
+	// дата-центрами, а Spotify пересматривает свои списки. Полчаса — это
+	// «не суйся туда сегодня вечером», а не «забудь навсегда»: за это время
+	// приложение успеет обойти остальные серверы и вернуться.
+	badFor = 30 * time.Minute
 )
+
+// subRetries — паузы перед повторами обращения к сервису подписки.
+//
+// Повторяем только тогда, когда дело в связи (сервис молчит, оборвалось,
+// ответил пятисоткой). Если он ответил внятно, но не тем, повторять бесполезно
+// — ответ будет тот же.
+var subRetries = []time.Duration{0, 2 * time.Second, 6 * time.Second}
 
 // probeURL — по чему проверяем, что обход рабочий. Отвечает «нужен вход»
 // (401) и без всякого ключа, зато отвечает только тем, кого пускает.
@@ -54,6 +79,24 @@ const (
 // Переменная, а не константа, только ради проверок: в них вместо Spotify
 // отвечает поддельный сервер.
 var probeURL = "https://api.spotify.com/v1/me"
+
+// ServerCache — где приложение помнит список серверов между запусками.
+//
+// Зачем это нужно. Список живёт у сервиса подписки, и сервис этот — обычный
+// сайт: он падает, у него кончается домен, его блокируют. Раньше в такой
+// вечер обхода не было вовсе, хотя вчерашние серверы никуда не делись и
+// прекрасно работали.
+//
+// Почему интерфейс, а не файл рядом с xray.exe. В списке лежат uuid и пароли
+// от VPN стримера — то есть ровно тот секрет, который во всём остальном
+// приложении на диск не попадает: сама настройка отдаётся Xray через
+// стандартный ввод именно поэтому. Класть его в JSON рядом с программой
+// значило бы отменить эту осторожность. Поэтому хранилище передают снаружи, а
+// снаружи это хранилище паролей Windows.
+type ServerCache interface {
+	Save(servers []Server) error
+	Load() ([]Server, bool)
+}
 
 // Tunnel — обход блокировок: запущенный рядом Xray и адрес его посредника.
 type Tunnel struct {
@@ -75,7 +118,7 @@ type Tunnel struct {
 	says *safeBuf
 
 	// bad — серверы, через которые Spotify отказался работать уже после
-	// того, как обход поднялся.
+	// того, как обход поднялся, и когда это случилось.
 	//
 	// Проверка при выборе сервера ходит без ключа доступа и видит не всё:
 	// бывает, что Spotify отвечает обычному запросу, а на запрос с входом
@@ -83,7 +126,17 @@ type Tunnel struct {
 	// запомнить и больше не предлагать — иначе приложение выбирает его
 	// снова и снова, а человек видит «обход работает» при неработающем
 	// Spotify.
-	bad map[string]bool
+	//
+	// Время нужно, чтобы пометка сама истекала: см. badFor.
+	bad map[string]time.Time
+
+	// cache — где помнить список серверов между запусками, см. ServerCache.
+	// Пусто — не помним нигде, и это не поломка.
+	cache ServerCache
+
+	// fromCache — нынешний список серверов взят из памяти, а не от сервиса
+	// подписки. Человеку это стоит сказать: серверы могли устареть.
+	fromCache bool
 }
 
 // MarkBad помечает сервер как непригодный: обход через него поднимается, а
@@ -95,17 +148,53 @@ func (t *Tunnel) MarkBad(label string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.bad == nil {
-		t.bad = map[string]bool{}
+		t.bad = map[string]time.Time{}
 	}
-	t.bad[label] = true
+	t.bad[label] = time.Now()
 }
 
-// badList — копия списка непригодных серверов.
+// Bad — копия пометок вместе со временем. Нужна тому, кто сохраняет их между
+// запусками: перезапуск приложения не делает негодный сервер годным, а раньше
+// список забывался целиком, и вечер начинался с тех же самых граблей.
+func (t *Tunnel) Bad() map[string]time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]time.Time, len(t.bad))
+	for k, at := range t.bad {
+		if time.Since(at) > badFor {
+			continue
+		}
+		out[k] = at
+	}
+	return out
+}
+
+// SetBad возвращает пометки, сохранённые в прошлый запуск. Просроченные
+// отбрасываются здесь же: нести их дальше незачем.
+func (t *Tunnel) SetBad(m map[string]time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bad = make(map[string]time.Time, len(m))
+	for k, at := range m {
+		if time.Since(at) > badFor {
+			continue
+		}
+		t.bad[k] = at
+	}
+}
+
+// badList — какие серверы сейчас считаются непригодными.
+//
+// Заодно чистит просроченные пометки: полчаса прошло — сервер снова обычный.
 func (t *Tunnel) badList() map[string]bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	out := make(map[string]bool, len(t.bad))
-	for k := range t.bad {
+	for k, at := range t.bad {
+		if time.Since(at) > badFor {
+			delete(t.bad, k)
+			continue
+		}
 		out[k] = true
 	}
 	return out
@@ -126,18 +215,54 @@ func New(log *logx.Logger, dataDir string) *Tunnel {
 	return &Tunnel{log: log, dir: filepath.Join(dataDir, "tools")}
 }
 
+// SetCache говорит, где помнить список серверов между запусками.
+func (t *Tunnel) SetCache(c ServerCache) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.cache = c
+}
+
+// remember кладёт свежий список в память. Ошибки только в лог: не сумели
+// запомнить — обход всё равно работает, просто в следующий раз придётся снова
+// идти к сервису подписки.
+func (t *Tunnel) remember(servers []Server) {
+	t.mu.Lock()
+	c := t.cache
+	t.mu.Unlock()
+	if c == nil || len(servers) == 0 {
+		return
+	}
+	if err := c.Save(servers); err != nil {
+		t.log.Warn("не запомнил список серверов обхода", "ошибка", err)
+	}
+}
+
+// recall достаёт список, запомненный в прошлый раз.
+func (t *Tunnel) recall() ([]Server, bool) {
+	t.mu.Lock()
+	c := t.cache
+	t.mu.Unlock()
+	if c == nil {
+		return nil, false
+	}
+	servers, ok := c.Load()
+	return servers, ok && len(servers) > 0
+}
+
 // Status — что показывать в панели.
 type Status struct {
 	On     bool   `json:"on"`
 	Addr   string `json:"addr"`   // адрес посредника, без секретов
 	Server string `json:"server"` // подпись сервера из ключа
+	// FromCache — список серверов взят из памяти, а не от сервиса подписки.
+	FromCache bool `json:"from_cache"`
 }
 
 // Status отвечает, работает ли обход прямо сейчас.
 func (t *Tunnel) Status() Status {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return Status{On: t.addr != "", Addr: t.addr, Server: t.server}
+	return Status{On: t.addr != "", Addr: t.addr, Server: t.server, FromCache: t.fromCache}
 }
 
 // Addr — адрес посредника для internal/spotify. Пусто, если обход выключен.
@@ -156,7 +281,7 @@ func (t *Tunnel) Addr() string {
 //
 // Прошлый запущенный обход гасится: двух сразу быть не должно.
 func (t *Tunnel) Start(ctx context.Context, key, prefer, toolPath string) (Status, error) {
-	servers, err := t.resolve(ctx, key)
+	servers, cached, err := t.resolve(ctx, key)
 	if err != nil {
 		return Status{}, err
 	}
@@ -200,6 +325,7 @@ func (t *Tunnel) Start(ctx context.Context, key, prefer, toolPath string) (Statu
 
 		t.mu.Lock()
 		t.cmd, t.addr, t.server, t.says = cmd, addr, s.String(), says
+		t.fromCache = cached
 		t.mu.Unlock()
 
 		go t.watch(cmd, says, s.String())
@@ -219,6 +345,7 @@ func (t *Tunnel) Stop() {
 	t.mu.Lock()
 	cmd := t.cmd
 	t.cmd, t.addr, t.server, t.says = nil, "", "", nil
+	t.fromCache = false
 	t.mu.Unlock()
 
 	if cmd != nil {
@@ -250,71 +377,150 @@ var subscriptionAgents = []string{
 }
 
 // resolve превращает то, что вставил человек, в список серверов.
-func (t *Tunnel) resolve(ctx context.Context, key string) ([]Server, error) {
+// resolve превращает то, что вставил человек, в список серверов.
+//
+// Второе возвращаемое значение — «список взят из памяти». Это не ошибка, но
+// сказать об этом человеку надо: серверы могли устареть.
+//
+// Порядок такой: сначала ссылки на подписки по очереди (первая ответившая
+// выигрывает), потом ключи, вписанные прямо в поле, и только если не вышло
+// ничего — список, запомненный в прошлый раз.
+func (t *Tunnel) resolve(ctx context.Context, key string) ([]Server, bool, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return nil, errs.New(errs.TunnelNoKey, "Ключ обхода не вставлен.")
-	}
-	if !LooksLikeSubscription(key) {
-		return ParseKey(key)
+		return nil, false, errs.New(errs.TunnelNoKey, "Ключ обхода не вставлен.")
 	}
 
-	// Ссылка на подписку: сервис отдаёт список, который сам же и обновляет.
-	// Скачивать приходится напрямую, без обхода, — но эти ссылки обычно живут
-	// на обычных адресах, которые не блокируют.
-	t.log.Info("скачиваю список серверов по ссылке подписки")
+	links, rest := SplitKey(key)
 
 	var lastErr error
-	for _, agent := range subscriptionAgents {
-		body, err := t.fetchSubscription(ctx, key, agent)
+	for i, link := range links {
+		servers, err := t.fromSubscription(ctx, link, i+1, len(links))
 		if err != nil {
-			// Отказ может зависеть от имени: тот же сервис владельца на имя
-			// браузера отвечает «502». Поэтому пробуем следующее, а не сдаёмся.
+			// Зеркало не ответило — пробуем следующее. Ради этого список
+			// ссылок и заведён: сервисы подписок держат по два-три адреса
+			// именно потому, что один из них рано или поздно ложится.
 			lastErr = err
-			t.log.Warn("сервис подписки не отдал список", "клиент", agent, "ошибка", err)
 			continue
 		}
+		t.remember(servers)
+		return servers, false, nil
+	}
 
-		servers, err := ParseKey(string(body))
-		if err != nil {
-			lastErr = errs.New(errs.TunnelSubscription,
-				"Сервис подписки ответил не списком ключей. Попробуй взять в личном "+
-					"кабинете ссылку для v2rayN или Shadowrocket.")
-			t.log.Warn("в ответе сервиса подписки нет ключей",
-				"клиент", agent, "байт", len(body), "ошибка", err)
-			continue
+	// Ключи, вписанные прямо в поле. Их не надо ни у кого спрашивать, поэтому
+	// они и идут после ссылок: свежий список от сервиса лучше вписанного
+	// руками, а вписанный руками лучше, чем ничего.
+	if rest != "" {
+		servers, err := ParseKey(rest)
+		if err == nil {
+			t.remember(servers)
+			return servers, false, nil
+		}
+		if lastErr == nil {
+			lastErr = err
+		}
+	}
+
+	// Не ответил никто. Прошлый список — лучшее, что у нас есть: сервисы
+	// подписок падают, а серверы из вчерашнего списка обычно живы. Раньше в
+	// такой вечер обхода не было вовсе.
+	if servers, ok := t.recall(); ok {
+		t.log.Warn("сервис подписки не ответил — беру список, запомненный в прошлый раз",
+			"сколько", len(servers))
+		return servers, true, nil
+	}
+
+	if lastErr != nil {
+		return nil, false, lastErr
+	}
+	return nil, false, errs.New(errs.TunnelSubscription,
+		"Не понял, что вставлено в поле ключа: ни ссылки на подписку, ни ключа.")
+}
+
+// fromSubscription скачивает список по одной ссылке, с повторами.
+//
+// Повторяем только тогда, когда дело в связи. Если сервис ответил внятно, но
+// не тем (не та ссылка, кончилась подписка), повторять бесполезно — ответ
+// будет тот же, а человек лишнюю минуту смотрит на «включаю обход…».
+func (t *Tunnel) fromSubscription(ctx context.Context, link string, n, total int) ([]Server, error) {
+	if total > 1 {
+		t.log.Info("скачиваю список серверов по ссылке подписки", "ссылка", n, "всего", total)
+	} else {
+		t.log.Info("скачиваю список серверов по ссылке подписки")
+	}
+
+	var lastErr error
+	for attempt, pause := range subRetries {
+		if pause > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(pause):
+			}
+			t.log.Info("пробую сервис подписки ещё раз", "попытка", attempt+1)
 		}
 
-		t.log.Info("список серверов получен", "клиент", agent, "сколько", len(servers))
-		return servers, nil
+		trouble := false
+		for _, agent := range subscriptionAgents {
+			body, retry, err := t.fetchSubscription(ctx, link, agent)
+			if err != nil {
+				// Отказ может зависеть от имени: тот же сервис владельца на
+				// имя браузера отвечает «502». Поэтому пробуем следующее, а не
+				// сдаёмся.
+				lastErr = err
+				trouble = trouble || retry
+				t.log.Warn("сервис подписки не отдал список", "клиент", agent, "ошибка", err)
+				continue
+			}
+
+			servers, err := ParseKey(string(body))
+			if err != nil {
+				lastErr = errs.New(errs.TunnelSubscription,
+					"Сервис подписки ответил не списком ключей. Попробуй взять в личном "+
+						"кабинете ссылку для v2rayN или Shadowrocket.")
+				t.log.Warn("в ответе сервиса подписки нет ключей",
+					"клиент", agent, "байт", len(body), "ошибка", err)
+				continue
+			}
+
+			t.log.Info("список серверов получен", "клиент", agent, "сколько", len(servers))
+			return servers, nil
+		}
+
+		if !trouble {
+			break
+		}
 	}
 	return nil, lastErr
 }
 
 // fetchSubscription скачивает список серверов от имени одного клиента.
-func (t *Tunnel) fetchSubscription(ctx context.Context, url, agent string) ([]byte, error) {
+//
+// Второе возвращаемое значение — «стоит ли повторить»: да, если дело в связи
+// или в самом сервисе (пятисотка), и нет, если он ответил внятным отказом.
+func (t *Tunnel) fetchSubscription(ctx context.Context, url, agent string) ([]byte, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, errs.Wrap(errs.TunnelSubscription, "Ссылка на подписку записана непонятно.", err)
+		return nil, false, errs.Wrap(errs.TunnelSubscription, "Ссылка на подписку записана непонятно.", err)
 	}
 	req.Header.Set("User-Agent", agent)
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: subTimeout}).Do(req)
 	if err != nil {
-		return nil, errs.Wrap(errs.TunnelSubscription,
+		return nil, true, errs.Wrap(errs.TunnelSubscription,
 			"Не получилось скачать список серверов по ссылке. Проверь интернет и саму ссылку.", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, errs.New(errs.TunnelSubscription,
+		return nil, resp.StatusCode >= 500, errs.New(errs.TunnelSubscription,
 			fmt.Sprintf("Сервис подписки ответил %d. Проверь ссылку и не кончилась ли подписка.", resp.StatusCode))
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return nil, errs.Wrap(errs.TunnelSubscription, "Список серверов не дочитался.", err)
+		return nil, true, errs.Wrap(errs.TunnelSubscription, "Список серверов не дочитался.", err)
 	}
-	return body, nil
+	return body, false, nil
 }
 
 // launch запускает Xray с настройкой под один сервер и ждёт, пока поднимется
@@ -495,7 +701,7 @@ func CheckSpotify(ctx context.Context, addr string) error {
 	switch {
 	case resp.StatusCode == http.StatusForbidden ||
 		strings.Contains(string(body), "unavailable in this country"):
-		return errs.New(errs.TunnelCheck,
+		return errs.New(errs.TunnelCountry,
 			"Через этот сервер Spotify не работает: он считает страну сервера неподходящей.")
 	case resp.StatusCode >= 500:
 		return errs.New(errs.TunnelCheck,
