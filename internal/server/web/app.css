@@ -673,6 +673,9 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
   align-items: start;
 }
 .col { min-width: 0; }
+/* Блок во всю ширину сетки: для готового текста, где строки выровнены в
+   столбик и обрезаться посередине не должны. */
+.col.wide { grid-column: 1 / -1; }
 
 .field { display: block; margin-bottom: var(--s3); }
 .field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: var(--s1); }
@@ -691,6 +694,27 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 .field input[type="number"] { -moz-appearance: textfield; }
 .field input[type="number"]::-webkit-outer-spin-button,
 .field input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Готовый текст, который человек отправит как есть: справочник команд для
+   модераторов. Показываем ровно то, что уйдёт файлом, — стример должен видеть,
+   что именно он шлёт, а не верить кнопке на слово. Длинные строки не переносим
+   и не растягиваем блок: в файле они выровнены в столбик, и здесь должны
+   выглядеть так же, поэтому лишнее уезжает в прокрутку. */
+.sheet-text {
+  margin: var(--s3) 0 0;
+  padding: var(--s4);
+  max-height: 320px;
+  overflow: auto;
+  background: var(--raise);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--dim);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 4;
+}
 
 .hint { font-size: 12px; color: var(--dimmer); margin-top: var(--s2); line-height: 1.5; }
 .hint.warn { color: var(--bad); }
