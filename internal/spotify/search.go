@@ -46,8 +46,19 @@ const safeSearchLimit = 10
 // searchLimit — с каким limit идти в этот раз, с учётом уже выясненного
 // потолка.
 func (c *Client) searchLimit(limit int) int {
-	if limit <= 0 || limit > 50 {
-		limit = 20
+	// Больше десяти Spotify не отдаёт никому.
+	//
+	// В феврале 2026 он опустил предел поиска с пятидесяти до десяти, а
+	// значение по умолчанию — с двадцати до пяти. Приложение про это не знало
+	// и каждый раз после запуска сначала просило двадцать, получало «400
+	// Invalid limit», запоминало потолок и переспрашивало. То есть один
+	// заведомо пустой запрос на каждый запуск, да ещё и красная строка в логе
+	// на ровном месте.
+	//
+	// Потолок, выясненный живьём (searchLimitCap), оставлен: он умеет
+	// опуститься ещё ниже, если однажды Spotify урежет предел снова.
+	if limit <= 0 || limit > safeSearchLimit {
+		limit = safeSearchLimit
 	}
 	c.mu.RLock()
 	cap := c.searchLimitCap
@@ -113,11 +124,20 @@ func (c *Client) searchTracks(ctx context.Context, query string, limit int, mark
 		// «Invalid limit» на верное число означает, что этому аккаунту
 		// Spotify отдаёт меньше. Занижаем потолок и переспрашиваем сразу:
 		// иначе заказ отменится там, где всё нашлось бы с limit=10.
-		if limit > safeSearchLimit && isInvalidLimit(err) {
-			c.capSearchLimit(safeSearchLimit)
+		// Раньше здесь стоял прыжок к safeSearchLimit. Пока приложение просило
+		// двадцать, это работало; теперь оно и так просит десять, то есть
+		// ровно safeSearchLimit, и прыгать стало некуда — запасного пути не
+		// осталось бы вовсе. Делим пополам: так он есть всегда, сколько бы
+		// Spotify ни урезал предел в следующий раз.
+		if limit > 1 && isInvalidLimit(err) {
+			next := limit / 2
+			if next < 1 {
+				next = 1
+			}
+			c.capSearchLimit(next)
 			c.log.Warn("Spotify не принимает такой limit — дальше спрашиваем меньше",
-				"было", limit, "стало", safeSearchLimit)
-			return c.searchTracks(ctx, query, safeSearchLimit, market)
+				"было", limit, "стало", next)
+			return c.searchTracks(ctx, query, next, market)
 		}
 		return nil, err
 	}

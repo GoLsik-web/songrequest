@@ -36,6 +36,11 @@ const (
 	SpotifyProxy        Code = "SP-17" // прокси для Spotify настроен неверно
 	SpotifyForeignTrack Code = "SP-18" // трек не издан в стране аккаунта стримера
 	SpotifySearchLimit  Code = "SP-19" // Spotify отдаёт меньше результатов, чем просим
+	// SpotifyQuota — кончился дневной объём запросов на весь аккаунт
+	// разработчика. Отдельно от SP-08 нарочно: у той пауза меряется
+	// секундами и лечится темпом, у этой — часами, и лечится только
+	// ожиданием. Человеку это разные новости.
+	SpotifyQuota Code = "SP-20"
 
 	// Twitch
 	TwitchNoClientID   Code = "TW-01" // не заполнен client_id Twitch
