@@ -64,12 +64,24 @@ func (s *Server) handlePlayerPause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) holdPlayer(w http.ResponseWriter, r *http.Request, on bool) {
-	if s.player == nil {
-		s.fail(w, errs.New(errs.PlayerIdle, "Сейчас не играет ни один заказ."))
-		return
-	}
 	ctx, cancel := playerCtx(r)
 	defer cancel()
+
+	// Играет заказ — командуем очередью. Играет свой плейлист — Spotify
+	// напрямую. Раньше второй ветки не было вовсе, и в панели между заказами
+	// не показывалось ни одной кнопки: см. internal/server/owncontrol.go.
+	if s.player == nil || s.player.Now() == nil {
+		if !s.ownPlaying() {
+			s.fail(w, errs.New(errs.PlayerIdle, "Сейчас ничего не играет."))
+			return
+		}
+		if err := s.holdOwn(ctx, on); err != nil {
+			s.fail(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true, "paused": on})
+		return
+	}
 
 	if err := s.player.Hold(ctx, on); err != nil {
 		s.fail(w, err)
@@ -77,6 +89,31 @@ func (s *Server) holdPlayer(w http.ResponseWriter, r *http.Request, on bool) {
 	}
 	s.syncPlayback()
 	writeJSON(w, map[string]bool{"ok": true, "paused": on})
+}
+
+// handlePlayerNext — «следующий».
+//
+// У заказа это скип: заказ уходит с эфира, играет следующий из очереди, баллы
+// возвращаются заказчику. У своей музыки — команда Spotify переключить трек в
+// плейлисте стримера. Кнопка одна, потому что для человека это одно и то же
+// действие; развилка живёт здесь, а не у него в голове.
+func (s *Server) handlePlayerNext(w http.ResponseWriter, r *http.Request) {
+	if s.player != nil && (s.player.Now() != nil || s.player.Waiting()) {
+		s.handleSkip(w, r)
+		return
+	}
+	if !s.ownPlaying() {
+		s.fail(w, errs.New(errs.PlayerIdle, "Сейчас ничего не играет."))
+		return
+	}
+
+	ctx, cancel := playerCtx(r)
+	defer cancel()
+	if err := s.nextOwn(ctx); err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 // handlePlayerSeek перематывает заказ.
@@ -114,12 +151,23 @@ func (s *Server) handlePlayerSeek(w http.ResponseWriter, r *http.Request) {
 // сыгравшее из неё удаляется. Вернуться к отыгравшему можно кнопкой «повторить»
 // рядом с ним на главном экране — это другое действие, и путать их не надо.
 func (s *Server) handlePlayerPrev(w http.ResponseWriter, r *http.Request) {
-	if s.player == nil {
-		s.fail(w, errs.New(errs.PlayerIdle, "Сейчас не играет ни один заказ."))
-		return
-	}
 	ctx, cancel := playerCtx(r)
 	defer cancel()
+
+	// У своей музыки «назад» — это настоящий предыдущий трек плейлиста: там
+	// он есть, в отличие от очереди заказов.
+	if s.player == nil || s.player.Now() == nil {
+		if !s.ownPlaying() {
+			s.fail(w, errs.New(errs.PlayerIdle, "Сейчас ничего не играет."))
+			return
+		}
+		if err := s.prevOwn(ctx); err != nil {
+			s.fail(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+		return
+	}
 
 	if err := s.player.Seek(ctx, 0); err != nil {
 		s.fail(w, err)

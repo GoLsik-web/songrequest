@@ -68,19 +68,37 @@ func (s *Server) setupPlayer(cfg *config.File) {
 	// пишет ту, которая правда.
 	s.player.OnFinished = func(item queue.Item, natural bool) {
 		go func() {
+			who, wantRefund := s.takeSkip()
 			if natural {
 				s.history(item, "played", "")
 			} else {
-				s.history(item, "skipped", s.takeSkipActor())
+				s.history(item, "skipped", who)
 			}
 			if item.RedemptionID == "" {
 				return
 			}
-			// Отмечаем выполненным даже скипнутый заказ: иначе он навсегда
-			// останется висеть в очереди наград на Twitch. Вернуть за него
-			// баллы стример может кнопкой в панели.
+
 			ctx, cancel := context.WithTimeout(s.baseContext(), 20*time.Second)
 			defer cancel()
+
+			// Оборванный заказ возвращает баллы.
+			//
+			// Раньше скипнутый заказ отмечался выполненным — то есть баллы
+			// списывались за трек, который зритель почти не услышал. Это была
+			// самая частая жалоба в чат, и чинить её вручную стример мог
+			// только через награду на Twitch, помня, кому и сколько.
+			//
+			// Возврат тоже убирает заказ из очереди наград на Twitch (он
+			// становится отменённым), так что прежняя причина ставить отметку
+			// «выполнено» здесь больше не действует.
+			if !natural && wantRefund {
+				s.refund(ctx, item, "заказ скипнули")
+				return
+			}
+
+			// Отмечаем выполненным всё остальное: и отыгравшее до конца, и
+			// оборванное без возврата (музыку переключили в самом Spotify).
+			// Иначе заказ навсегда останется висеть в очереди наград.
 			if err := s.twitch.FulfillRedemption(ctx, item.RewardID, item.RedemptionID); err != nil {
 				s.log.Warn("не отметил заказ выполненным", "ошибка", err)
 				return
@@ -198,6 +216,15 @@ func (s *Server) syncPlayback() {
 		// Заказов сейчас нет — показываем то, что стример слушает сам.
 		// Может быть и пусто: тогда в кадре не будет ничего.
 		own := s.own()
+		if own != nil && s.ownPaused.Load() {
+			// Свою паузу приложение знает только по своему же нажатию:
+			// заголовок окна Spotify при паузе посреди трека не меняется, а
+			// спрашивать по сети — та самая частота, из-за которой заказы
+			// однажды встали на четыре часа. См. Server.ownPaused.
+			held := *own
+			held.Paused = true
+			own = &held
+		}
 		s.noteLastPlayed(fromOwn(own))
 		s.state.SetNow(own)
 	} else {
@@ -313,23 +340,91 @@ func (s *Server) refund(ctx context.Context, item queue.Item, reason string) boo
 // минутами, и скип — единственная кнопка, которой это ускоряют. Раньше здесь
 // стояло только `if now == nil { return }`, поэтому во время ожидания и
 // кнопка в панели, и !скип в чате молча ничего не делали.
+// skipResult — что именно случилось по команде «скип». Нужен для ответа в
+// чат: молчаливый скип — это жалоба «команда не работает» через минуту.
+type skipResult struct {
+	// Item — заказ, который убрали. Пусто у ожидания (см. Hurried).
+	Item queue.Item
+	// Refunded — вернулись ли баллы. false бывает и когда заказ пришёл не за
+	// баллы (донат, ручная постановка) — возвращать тогда нечего.
+	Refunded bool
+	// FromQueue — заказ убрали из очереди, а не с эфира.
+	FromQueue bool
+	// Hurried — не скип, а «не жди конца трека стримера, включай заказ».
+	Hurried bool
+}
+
 func (s *Server) skipCurrent(actor string) {
+	_, _ = s.skipPlaying(actor)
+}
+
+// skipPlaying обрывает текущий трек — или прекращает ожидание конца трека
+// стримера, если заказ ещё не заиграл.
+func (s *Server) skipPlaying(actor string) (skipResult, error) {
 	now := s.player.Now()
 	if now == nil {
 		if !s.player.Waiting() {
-			return
+			return skipResult{}, errs.New(errs.PlayerIdle, "Сейчас ничего не играет.")
 		}
 		s.state.Notify("info", actor+" не стал ждать конца трека — включаю заказ")
+		s.modLog(actor, "не стал ждать конца трека", "")
 		s.player.Skip()
-		return
+		return skipResult{Hurried: true}, nil
 	}
+
 	// Историю пишет плеер, когда трек действительно закончится: отсюда её
 	// писать нельзя, иначе на один заказ выходит две записи. Оставляем плееру
-	// только имя того, кто нажал.
-	s.setSkipActor("скипнул " + actor)
+	// имя того, кто нажал, и решение про баллы.
+	s.setSkip("скипнул "+actor, true)
+	s.rememberSkip(now.Item, actor)
+
 	s.modLog(actor, "скипнул", now.Item.Artist+" — "+now.Item.Title)
 	s.state.Notify("info", actor+" скипнул: "+now.Item.Artist+" — "+now.Item.Title)
 	s.player.Skip()
+
+	return skipResult{Item: now.Item, Refunded: now.Item.RedemptionID != ""}, nil
+}
+
+// rememberSkip запоминает оборванный заказ для команды «вернуть».
+//
+// Один заказ, а не список: «вернуть» отменяет последнюю ошибку, а не ведёт
+// корзину. Разбирать корзину посреди эфира никто не станет.
+func (s *Server) rememberSkip(item queue.Item, actor string) {
+	s.mu.Lock()
+	copyItem := item
+	s.lastSkip = &copyItem
+	s.lastSkipAt = time.Now()
+	s.lastSkipWho = actor
+	s.lastSkipBack = false
+	s.mu.Unlock()
+}
+
+// takeSkipBack забирает последний скипнутый заказ и помечает его возвращённым.
+//
+// Помечаем, а не забываем совсем: сам заказ пригодится в сообщении, а второй
+// раз вернуть один и тот же трек нельзя — в очереди оказались бы два.
+func (s *Server) takeSkipBack() (queue.Item, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.lastSkip == nil {
+		return queue.Item{}, "", errs.New(errs.PlayerNothingBack,
+			"За этот запуск ничего не скипали — возвращать нечего.")
+	}
+	if s.lastSkipBack {
+		return queue.Item{}, "", errs.New(errs.PlayerNothingBack,
+			"Этот заказ уже вернули в очередь.")
+	}
+	// Час — не придирка, а защита от неожиданности: «вернуть» через полстрима
+	// поставило бы в эфир трек, про который все давно забыли, и выглядело бы
+	// это как самовольная выходка приложения.
+	if time.Since(s.lastSkipAt) > time.Hour {
+		return queue.Item{}, "", errs.New(errs.PlayerNothingBack,
+			"Последний скип был слишком давно — возвращать уже нечего.")
+	}
+
+	s.lastSkipBack = true
+	return *s.lastSkip, s.lastSkipWho, nil
 }
 
 // removeFromQueue убирает заказ, при желании вернув за него баллы.
@@ -404,21 +499,26 @@ func (s *Server) clearQueue(ctx context.Context, refund bool, actor string) erro
 // панели, из чата от модератора или вовсе не прийти — стример переключил
 // музыку руками в самом Spotify. Имя кладём здесь, а забирает его тот, кто
 // пишет историю. Пусто — значит переключили в Spotify.
-func (s *Server) setSkipActor(who string) {
+func (s *Server) setSkip(who string, refund bool) {
 	s.mu.Lock()
 	s.skipActor = who
+	s.skipRefund = refund
 	s.mu.Unlock()
 }
 
-// takeSkipActor забирает имя и тут же его забывает: оно годится ровно на один
-// заказ, а следующий скип может и не случиться.
-func (s *Server) takeSkipActor() string {
+// takeSkip забирает имя и решение про баллы и тут же их забывает: они годятся
+// ровно на один заказ, а следующий скип может и не случиться.
+//
+// Пустое имя означает, что скипа не было вовсе: музыку переключили в самом
+// Spotify. Баллы в этом случае не возвращаются — заказ, скорее всего, отыграл
+// своё, а приложение просто увидело смену трека раньше конца.
+func (s *Server) takeSkip() (who string, refund bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	who := s.skipActor
-	s.skipActor = ""
+	who, refund = s.skipActor, s.skipRefund
+	s.skipActor, s.skipRefund = "", false
 	if who == "" {
-		return "музыку переключили в самом Spotify"
+		return "музыку переключили в самом Spotify", false
 	}
-	return who
+	return who, refund
 }

@@ -11,6 +11,34 @@
 
   const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 
+  // Обложка — через само приложение, а не прямой ссылкой на склад Spotify.
+  //
+  // ПОЧЕМУ. Панель живёт в окне приложения, а окно — это WebView2, то есть
+  // отдельный браузер. В интернет он ходит сам по себе и про обход блокировок,
+  // поднятый приложением, ничего не знает. Отсюда и жалоба «иногда не
+  // показывает картинку трека»: заголовок и артист на месте, а вместо обложки
+  // пустой квадрат — картинку было некому скачать. У виджета в OBS ровно та же
+  // беда решена ровно так же (см. internal/server/cover.go), только панель
+  // почему-то осталась на прямых ссылках.
+  //
+  // Приложение качает картинку своим путём — через обход, если он поднят, —
+  // складывает у себя и отдаёт с 127.0.0.1. Не смогло — переводит браузер на
+  // прежний прямой адрес: хуже, чем было, от этого не станет.
+  const coverSrc = (u) => "/cover?u=" + encodeURIComponent(u);
+
+  // art рисует обложку с запасным вариантом.
+  //
+  // onerror обязателен: адрес обложки может протухнуть, склад ответить
+  // отказом, а картинка — оказаться битой. Без него на месте обложки остаётся
+  // сломанный значок браузера, и это выглядит как поломка приложения. С ним
+  // остаётся честная нотка — то же самое, что при треке вовсе без обложки.
+  function art(url, cls) {
+    if (!url) return `<div class="${cls}">${icon("music")}</div>`;
+    return `<div class="${cls}"><img src="${esc(coverSrc(url))}" alt=""
+      onerror="this.parentNode.innerHTML='${
+        icon("music").replace(/"/g, "&quot;")}'"></div>`;
+  }
+
   // safeURL пропускает только http и https. Адрес приходит из ответа
   // Twitch, а клик по нему делает сам стример — в панели, где лежат все
   // его ключи и все кнопки управления. Экранирование закрывает выход из
@@ -313,7 +341,7 @@
 
     return `
       <div class="last">
-        <div class="last-art">${l.cover_url ? `<img src="${esc(l.cover_url)}" alt="">` : icon("music")}</div>
+        ${art(l.cover_url, "last-art")}
         <div class="last-text">
           <div class="last-kicker">Последним играло</div>
           <div class="last-title">${esc(l.title)}</div>
@@ -354,7 +382,7 @@
             now.uncertain ? " · неточное совпадение" : ""}</span>
         </div>
         <div class="stage-row">
-          <div class="art">${now.cover_url ? `<img src="${esc(now.cover_url)}" alt="">` : icon("music")}</div>
+          ${art(now.cover_url, "art")}
           <div class="stage-text">
             <h1 class="headline">${esc(now.title)}</h1>
             <div class="subhead">${esc(now.artist)}</div>
@@ -367,21 +395,24 @@
             </div>` : ""}
           </div>
         </div>
-        ${own ? "" : `
         <div class="player">
-          <button class="pbtn" data-play="prev" title="В начало трека">${icon("skip-back")}</button>
+          <button class="pbtn" data-play="prev"
+                  title="${own ? "Предыдущий трек" : "В начало трека"}">${icon("skip-back")}</button>
           <button class="pbtn key" data-play="${now.paused ? "play" : "pause"}"
                   title="${now.paused ? "Продолжить" : "Пауза"}">${icon(now.paused ? "play" : "pause")}</button>
-          <button class="pbtn" data-play="next" title="Следующий заказ">${icon("skip-forward")}</button>
+          <button class="pbtn" data-play="next"
+                  title="${own ? "Следующий трек" : "Следующий заказ"}">${icon("skip-forward")}</button>
+          ${own ? "" : `
           <span class="pvol">
             <button class="pbtn" data-play="mute" title="Заглушить">${icon("volume-2")}</button>
             <input type="range" id="vol" min="0" max="100" step="1" value="${now.volume ?? 100}">
             <b id="vol-val">${now.volume ?? 100}%</b>
-          </span>
-        </div>`}
+          </span>`}
+        </div>
         <div class="acts">${own ? `
-          <span class="hint" style="margin:0">Это твоя музыка, не заказ — скипать
-            приложению тут нечего.</span>` : `
+          <span class="hint" style="margin:0">Это твоя музыка, а не заказ.
+            Пауза и переключение работают, а громкость и перемотка живут
+            в самом Spotify — приложение туда не лезет.</span>` : `
           <button class="act key" data-do="skip">${icon("skip-forward")}Скипнуть</button>
           <button class="act" data-do="restore">${icon("rotate-cw")}Вернуть Spotify</button>`}
         </div>
@@ -543,6 +574,62 @@
   // Подтверждение только у того, что не отменить: очистка очереди и бан.
 
   let dragId = null;
+
+  // ── плейлисты, ждущие решения ──────────────────────────────────────
+  //
+  // Плейлист не идёт в эфир сам: за него платят одной наградой, а треков в
+  // очередь ложится сразу несколько, и полчаса чужой музыки подряд — решение
+  // хозяина эфира. Поэтому здесь ровно две кнопки и всё, что нужно для
+  // решения: кто заказал, что там играет и сколько это займёт времени.
+  //
+  // Главное число — не количество треков, а длительность. «Пять треков» никому
+  // ничего не говорит, «19 минут» говорит всё.
+
+  function renderPlaylists(s) {
+    const list = s.playlists || [];
+    const box = $("playlists");
+    box.hidden = list.length === 0;
+    if (list.length === 0) {
+      box.innerHTML = "";
+      return;
+    }
+
+    box.innerHTML = `
+      <div class="kicker">
+        Ждут решения <span class="cnt">${list.length}</span>
+      </div>
+      ${list.map((p) => {
+        const shown = p.tracks || [];
+        const more = p.total > shown.length
+          ? `<span class="pl-more">из ${p.total} в плейлисте</span>` : "";
+        return `
+        <div class="pl">
+          <div class="pl-head">
+            <div>
+              <div class="pl-title">${esc(p.title || "Плейлист")}</div>
+              <div class="pl-sub">
+                ${icon("user")}заказал <b>${esc(p.requester)}</b>
+                <span class="sep">/</span> ${esc(p.source)}
+                <span class="sep">/</span> ${shown.length} ${
+                  plural(shown.length, "трек", "трека", "треков")} ${more}
+              </div>
+            </div>
+            <div class="pl-time">${minutesLeft(p.length_ms)}</div>
+          </div>
+          <ol class="pl-tracks">
+            ${shown.map((t) => `<li>${esc(t)}</li>`).join("")}
+          </ol>
+          <div class="acts">
+            <button class="act key small" data-pl="approve" data-id="${esc(p.id)}">
+              ${icon("circle-check")}Одобрить
+            </button>
+            <button class="act small" data-pl="reject" data-id="${esc(p.id)}">
+              ${icon("x")}Отклонить, вернуть баллы
+            </button>
+          </div>
+        </div>`;
+      }).join("")}`;
+  }
 
   function renderOrders(s) {
     const list = s.queue;
@@ -1271,6 +1358,7 @@
       $("reward-title").value = config.reward_title || "";
       $("reward-cost").value = config.reward_cost ?? "";
       $("auto-reward").checked = !!config.auto_create_reward;
+      fillPlaylistReward();
       // Внутри секунды, но человеку понятнее в минутах.
       $("max-minutes").value = Math.round((config.max_track_seconds || 0) / 60) || "";
       $("max-per-user").value = config.max_per_user ?? "";
@@ -1337,6 +1425,10 @@
       if (!r.ok) throw new Error();
       config = await r.json();
       refreshModeHints();
+      // Цена плейлиста считается от цены трека и числа треков, то есть от
+      // соседних полей. Без пересчёта здесь стример менял цену трека и видел
+      // под ползунком старую арифметику — а на канал уезжала уже новая.
+      if ($("pl-sum")) drawPlaylistSum();
       return true;
     } catch {
       say("Не смог сохранить настройки", true);
@@ -1546,6 +1638,16 @@
       return;
     }
 
+    // Плейлисты, ждущие решения. Одобрение может занять секунды: у плейлиста
+    // Яндекса каждый трек ещё надо найти в Spotify. Поэтому кнопка гаснет на
+    // время запроса — post() делает это сам.
+    const pl = e.target.closest("[data-pl]");
+    if (pl) {
+      const path = `/api/playlists/${encodeURIComponent(pl.dataset.id)}/${pl.dataset.pl}`;
+      post(path, pl);
+      return;
+    }
+
     const unban = e.target.closest("[data-unban]");
     if (unban) {
       post(`/api/bans?login=${encodeURIComponent(unban.dataset.unban)}&undo=1`, unban);
@@ -1618,7 +1720,7 @@
         <li>
           <button class="pick" data-pick="${esc(t.id)}">
             <span class="pick-art">${t.cover_url
-              ? `<img src="${esc(t.cover_url)}" alt="" loading="lazy">` : ""}</span>
+              ? `<img src="${esc(coverSrc(t.cover_url))}" alt="" loading="lazy">` : ""}</span>
             <span class="pick-text">
               <span class="pick-title">${esc(t.title)}</span>
               <span class="pick-sub">${esc(t.artist)}${t.album ? " · " + esc(t.album) : ""}</span>
@@ -1908,6 +2010,108 @@
     };
   }
 
+  // ── награда за плейлист ────────────────────────────────────────────
+  //
+  // Цена не вписывается руками, а считается: цена трека × число треков −
+  // скидка. Так она сама едет следом за настройками — поднял цену трека,
+  // плейлист подорожал. Вписанная руками через неделю правок разошлась бы с
+  // поштучной и стала бы либо подарком, либо грабежом, а заметил бы это
+  // стример не сразу. Своя цена всё-таки возможна: круглое число красивее.
+  //
+  // Тот же расчёт живёт в internal/config/playlist.go. Здесь он повторён
+  // ради подписи «во сколько это выходит за трек»: считать её на сервере и
+  // гонять по сокету ради строчки под ползунком незачем.
+  function playlistPrice() {
+    if (config.playlist_cost > 0) return config.playlist_cost;
+    const track = config.reward_cost || 0;
+    const count = playlistCount();
+    const off = Math.min(90, Math.max(0, config.playlist_discount ?? 20));
+    return Math.max(track, Math.floor(track * count * (100 - off) / 100)) || 1;
+  }
+
+  function playlistCount() {
+    return Math.min(20, Math.max(1, config.playlist_max_tracks || 5));
+  }
+
+  function fillPlaylistReward() {
+    const on = !!config.playlist_reward;
+    $("pl-on").checked = on;
+    $("pl-fields").hidden = !on;
+
+    $("pl-title").value = config.playlist_reward_title || "";
+    $("pl-max").value = playlistCount();
+    const off = config.playlist_discount ?? 20;
+    $("pl-off").value = off;
+    $("pl-off-val").textContent = off + "%";
+
+    const own = (config.playlist_cost || 0) > 0;
+    $("pl-own-cost").checked = own;
+    $("pl-cost-field").hidden = !own;
+    $("pl-cost").value = config.playlist_cost || playlistPrice();
+    $("pl-off").disabled = own;
+
+    drawPlaylistSum();
+  }
+
+  // Подпись под ползунком. Стример должен видеть, что он предлагает зрителю,
+  // а не верить слову «скидка»: сравнение с поштучной ценой и есть весь смысл
+  // этой награды.
+  function drawPlaylistSum() {
+    const count = playlistCount();
+    const price = playlistPrice();
+    const full = (config.reward_cost || 0) * count;
+    const each = Math.floor(price / count);
+    const save = full > 0 ? Math.round((1 - price / full) * 100) : 0;
+
+    $("pl-sum").innerHTML = `
+      <div class="sum-row"><span>Плейлист целиком</span><b>${price} ${
+        plural(price, "балл", "балла", "баллов")}</b></div>
+      <div class="sum-row"><span>Это за трек</span><b>${each}</b></div>
+      <div class="sum-row"><span>Те же ${count} ${
+        plural(count, "трек", "трека", "треков")} поштучно</span><b>${full}</b></div>
+      <div class="sum-row ${save > 0 ? "good" : "bad"}">
+        <span>${save > 0 ? "Зрителю выгоднее на" : "Выгоды нет"}</span>
+        <b>${save > 0 ? save + "%" : "—"}</b>
+      </div>`;
+  }
+
+  $("pl-on").onchange = (e) =>
+    saveConfig({ playlist_reward: e.target.checked }).then(() => {
+      $("pl-fields").hidden = !e.target.checked;
+      markSaved(e.target);
+    });
+
+  $("pl-title").onchange = async (e) => {
+    const title = e.target.value.trim();
+    if (!title) {
+      e.target.value = config.playlist_reward_title || "";
+      return;
+    }
+    if (await saveConfig({ playlist_reward_title: title })) markSaved(e.target);
+  };
+
+  $("pl-own-cost").onchange = (e) => {
+    const on = e.target.checked;
+    $("pl-cost-field").hidden = !on;
+    $("pl-off").disabled = on;
+    // Снимая галочку, обнуляем свою цену — тогда считалка снова берёт своё.
+    saveConfig({ playlist_cost: on ? (parseInt($("pl-cost").value, 10) || playlistPrice()) : 0 })
+      .then(() => { fillPlaylistReward(); markSaved(e.target); });
+  };
+
+  // Ползунок скидки ведём у себя, а пишем по отпусканию: каждая правка цены
+  // уезжает на Twitch, и слать её на каждое движение мыши нельзя.
+  live($("pl-off"), (v) => {
+    $("pl-off-val").textContent = v + "%";
+    const was = config.playlist_discount;
+    config.playlist_discount = v;
+    drawPlaylistSum();
+    config.playlist_discount = was;
+  }, (v) => saveConfig({ playlist_discount: v }).then(() => drawPlaylistSum()));
+
+  numberField("pl-max", "playlist_max_tracks", { min: 1, max: 20 });
+  numberField("pl-cost", "playlist_cost", { min: 1, max: 1000000 });
+
   numberField("reward-cost", "reward_cost", { min: 1, max: 1000000 });
   numberField("max-minutes", "max_track_seconds", { min: 1, max: 60, scale: 60 });
   numberField("max-per-user", "max_per_user", { min: 1, max: 20 });
@@ -1980,19 +2184,92 @@
     return family;
   }
 
+  // wxPlace ставит образец ровно туда же, куда виджет ставит плашку в кадре.
+  //
+  // Тот же расчёт, что в widget.html: девять точек привязки, раздельные
+  // отступы, обёртка держит место. Держать это двумя разными расчётами
+  // значило бы однажды показать в панели одно, а в OBS другое — и человек
+  // узнал бы об этом на стриме.
+  function wxPlace(w, family) {
+    const slot = $("wx-slot");
+    const card = $("wx-card");
+    const pos = w.position || "left-bottom";
+    const parts = pos.split("-");
+    const h = parts[0] || "left";
+    const v = parts[1] || "bottom";
+    const ticker = family.id === "ticker";
+
+    slot.dataset.family = family.id;
+    slot.dataset.h = ticker ? "wide" : h;
+    slot.dataset.v = v;
+    slot.style.left = slot.style.right = slot.style.top = slot.style.bottom = "";
+
+    if (ticker) {
+      slot.style.left = "0px";
+      slot.style.right = "0px";
+      slot.style[v === "top" ? "top" : "bottom"] = "0px";
+      card.dataset.pos = v === "top" ? "left-top" : "left-bottom";
+      return;
+    }
+
+    // Отступы в образце уменьшены во столько же раз, во сколько кадр меньше
+    // настоящего. Иначе отступ в 300 пикселей на образце шириной 600 увёл бы
+    // плашку за середину, а в кадре 1920 он всего лишь отодвинул бы её от
+    // края — и человек настроил бы не то, что увидел.
+    const k = wxRatio();
+    if (h === "center") slot.style.left = "50%";
+    else slot.style[h] = Math.round(wxGapX(w) * k) + "px";
+
+    if (v === "middle") slot.style.top = "50%";
+    else slot.style[v] = Math.round(wxGapY(w) * k) + "px";
+
+    card.dataset.pos = (h === "center" ? "left" : h) + "-" + (v === "middle" ? "bottom" : v);
+  }
+
+  // wxRatio — во сколько раз образец меньше настоящего кадра.
+  //
+  // Считаем от 1920: это ширина кадра у подавляющего большинства, а точное
+  // разрешение сцены OBS приложению неоткуда узнать. Ошибка здесь не страшна
+  // (отступ на стриме окажется чуть другим), а вот отсутствие пересчёта
+  // страшно: без него ползунок отступа в образце уезжал бы вчетверо дальше.
+  function wxRatio() {
+    const box = $("wx-stage").getBoundingClientRect();
+    return box.width > 0 ? box.width / 1920 : 1;
+  }
+
+  const wxGapX = (w) => (Number.isFinite(w.gap_x) && w.gap_x > 0 ? w.gap_x : (Number.isFinite(w.gap) ? w.gap : 40));
+  const wxGapY = (w) => (Number.isFinite(w.gap_y) && w.gap_y > 0 ? w.gap_y : (Number.isFinite(w.gap) ? w.gap : 40));
+
+  // posName — место в кадре по-человечески. Внутри оно записано словами
+  // «left-bottom»: так его понимают и виджет, и настройки. Показывать это
+  // человеку нельзя — он читает подсказку, а не исходник.
+  function posName(pos) {
+    const [h, v] = String(pos || "left-bottom").split("-");
+    const across = { left: "слева", center: "по центру", right: "справа" }[h] || "слева";
+    const down = { top: "сверху", middle: "посередине", bottom: "снизу" }[v] || "снизу";
+    if (h === "center" && v === "middle") return "ровно посередине";
+    return across + " " + down;
+  }
+
+  // wxAlign — тот же расчёт прижима текста, что и в виджете.
+  function wxAlign(w) {
+    let a = w.align || "auto";
+    if (a === "auto") {
+      const h = (w.position || "left-bottom").split("-")[0];
+      a = h === "right" ? "right" : h === "center" ? "center" : "left";
+    }
+    $("wx-card").dataset.align = a;
+  }
+
   function drawWidget() {
     const w = widget();
     const card = $("wx-card");
     const family = dressCard(card, w);
 
     card.style.setProperty("--scale", w.scale || 1);
-
-    const gap = (Number.isFinite(w.gap) ? w.gap : 40) + "px";
-    const pos = w.position || "left-bottom";
-    card.style.left = card.style.right = card.style.top = card.style.bottom = "";
-    if (family.id !== "ticker") card.style[pos.includes("left") ? "left" : "right"] = gap;
-    card.style[pos.includes("top") ? "top" : "bottom"] = family.id === "ticker" ? "0px" : gap;
-    card.dataset.pos = pos;
+    wxPlace(w, family);
+    wxAlign(w);
+    $("wx-slot").style.opacity = (Number.isFinite(w.opacity) ? w.opacity : 100) / 100;
     // Образец стоит на середине трека: так видно и полосу, и положение
     // тонарма у винила.
     card.style.setProperty("--progress", ".46");
@@ -2012,27 +2289,63 @@
     // Тикер занимает всю ширину — выбор угла для него ничего не значит,
     // и делать вид, что значит, нечестно.
     const ticker = family.id === "ticker";
-    $("wx-pos").disabled = ticker;
-    $("wx-gap").disabled = ticker;
+    $("wx-anchors").classList.toggle("narrow", ticker);
+    $("wx-gapx").disabled = ticker;
+    $("wx-gapy").disabled = ticker;
     $("wx-pos-hint").textContent = ticker
-      ? "Тикер занимает всю ширину: остаётся только выбрать верх или низ."
-      : "";
+      ? "Тикер занимает всю ширину кадра: остаётся только выбрать верх или низ."
+      : "Плашку можно просто перетащить мышью прямо по кадру — точка привязки и отступы подставятся сами.";
 
     const percent = Math.round((w.scale || 1) * 100);
     $("wx-scale").value = percent;
     $("wx-scale-val").textContent = percent + "%";
-    const gapPx = Number.isFinite(w.gap) ? w.gap : 40;
-    $("wx-gap").value = gapPx;
-    $("wx-gap-val").textContent = gapPx + " px";
-    $("wx-pos").value = pos;
+
+    const gx = wxGapX(w), gy = wxGapY(w);
+    $("wx-gapx").value = gx;
+    $("wx-gapx-val").textContent = gx + " px";
+    $("wx-gapy").value = gy;
+    $("wx-gapy-val").textContent = gy + " px";
+
+    const op = Number.isFinite(w.opacity) ? w.opacity : 100;
+    $("wx-op").value = op;
+    $("wx-op-val").textContent = op + "%";
+
+    $("wx-align").value = w.align || "auto";
+    const chosenPos = w.position || "left-bottom";
+    $("wx-anchors").querySelectorAll("button").forEach((b) => {
+      b.classList.toggle("on", b.dataset.pos === chosenPos);
+    });
+
     $("wx-art-on").checked = w.show_art !== false;
     $("wx-by-on").checked = w.show_requester !== false;
     $("wx-bar-on").checked = w.show_bar !== false;
     $("wx-motion-on").checked = w.motion !== false;
     $("wx-own-on").checked = w.show_own !== false;
     $("wx-by").textContent = wxByLine(w);
-    $("wx-hold").value = w.hold_seconds || 0;
-    $("wx-hold-val").textContent = w.hold_seconds ? w.hold_seconds + " с" : "не убирать";
+
+    // Как плашка держится в кадре: висит всегда или всплывает.
+    //
+    // Раньше это был один ползунок «убирать через N секунд» с нулём в
+    // значении «не убирать». Ноль-как-выключатель посреди шкалы человек не
+    // читает: он видит ползунок в крайнем положении и не понимает, что тот
+    // сейчас означает совсем другой режим работы.
+    const hold = w.hold_seconds || 0;
+    const flash = hold > 0;
+    $("wx-mode").value = flash ? "flash" : "always";
+    $("wx-flash").hidden = !flash;
+    $("wx-mode-hint").textContent = flash
+      ? "Плашка появляется, висит сколько сказано и уходит."
+      : "Плашка стоит в кадре, пока играет музыка.";
+
+    $("wx-hold").value = flash ? hold : 15;
+    $("wx-hold-val").textContent = (flash ? hold : 15) + " с";
+    $("wx-onchange").checked = w.show_on_change !== false;
+
+    const everyMin = Math.round((w.show_every || 0) / 60);
+    $("wx-every").value = everyMin;
+    $("wx-every-val").textContent = everyMin
+      ? "каждые " + everyMin + " " + plural(everyMin, "минуту", "минуты", "минут")
+      : "не напоминать";
 
     const url = location.origin + "/widget";
     $("wx-url").value = url;
@@ -2149,16 +2462,120 @@
     input.onchange = () => onDone(parseInt(input.value, 10));
   }
 
-  function drawGap(px) {
-    if (widgetPreset(widget().preset).family.id === "ticker") return;
-    const card = $("wx-card");
-    const pos = widget().position || "left-bottom";
-    card.style[pos.includes("left") ? "left" : "right"] = px + "px";
-    card.style[pos.includes("top") ? "top" : "bottom"] = px + "px";
+  // drawGap двигает образец, пока ведут ползунок отступа. На диск пишем по
+  // отпусканию — см. live().
+  function drawGap(axis, px) {
+    const w = widget();
+    const family = widgetPreset(w.preset).family;
+    if (family.id === "ticker") return;
+    wxPlace(Object.assign({}, w, axis === "x" ? { gap_x: px } : { gap_y: px }), family);
   }
 
   $("widget-toggle").onclick = () => toggleWidget();
-  $("wx-pos").onchange = (e) => saveWidget({ position: e.target.value });
+
+  // ── место в кадре ──────────────────────────────────────────────────
+
+  $("wx-anchors").onclick = (e) => {
+    const btn = e.target.closest("[data-pos]");
+    if (btn) saveWidget({ position: btn.dataset.pos });
+  };
+
+  // Перетаскивание плашки прямо по кадру.
+  //
+  // Зачем оно вдобавок к девяти точкам. Точки отвечают на вопрос «к чему
+  // прижать», а отступы — «на сколько отодвинуть», и человек, который просто
+  // хочет поставить плашку вот сюда, вынужден переводить своё «вот сюда» в
+  // две цифры. Здесь он ставит её мышью, а цифры подставляются сами — и
+  // остаются видимыми, чтобы их можно было поправить с точностью до пикселя.
+  //
+  // Привязка при этом сохраняется: плашка прилипает к ближайшей стороне, а не
+  // повисает в кадре координатами. Это не придирка — кадр у OBS может быть
+  // другого размера, и координаты уехали бы, а привязка нет.
+  (() => {
+    const stage = $("wx-stage");
+    const slot = $("wx-slot");
+    let drag = null;
+
+    slot.addEventListener("pointerdown", (e) => {
+      if (widgetPreset(widget().preset).family.id === "ticker") return;
+      const box = stage.getBoundingClientRect();
+      const card = slot.getBoundingClientRect();
+      drag = {
+        id: e.pointerId,
+        // Держим плашку за ту же точку, за которую взяли: иначе она прыгает
+        // серединой под курсор, и человек промахивается мимо задуманного.
+        dx: e.clientX - card.left,
+        dy: e.clientY - card.top,
+        w: card.width, h: card.height, box,
+      };
+      slot.setPointerCapture(e.pointerId);
+      stage.classList.add("dragging");
+      e.preventDefault();
+    });
+
+    slot.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const p = dragPlace(e, drag);
+      // Ведём образец у себя, без записи на диск: писать файл на каждое
+      // движение мыши значило бы рассылать настройки в OBS сотнями.
+      wxPlace(Object.assign({}, widget(), p), widgetPreset(widget().preset).family);
+      wxAlign(Object.assign({}, widget(), p));
+      hintDrag(p);
+    });
+
+    const finish = (e) => {
+      if (!drag) return;
+      const p = dragPlace(e, drag);
+      drag = null;
+      stage.classList.remove("dragging");
+      saveWidget(p);
+    };
+    slot.addEventListener("pointerup", finish);
+    slot.addEventListener("pointercancel", () => {
+      drag = null;
+      stage.classList.remove("dragging");
+      drawWidget();
+    });
+
+    // dragPlace переводит место под курсором в «к чему прижать и на сколько».
+    function dragPlace(e, d) {
+      const k = wxRatio();
+      let x = e.clientX - d.box.left - d.dx;
+      let y = e.clientY - d.box.top - d.dy;
+      // Не выпускаем плашку за кадр: за краем её всё равно не будет видно, а
+      // вернуть обратно человек уже не сможет — тащить будет не за что.
+      x = Math.min(Math.max(0, x), Math.max(0, d.box.width - d.w));
+      y = Math.min(Math.max(0, y), Math.max(0, d.box.height - d.h));
+
+      // Ближайшая сторона по каждой оси. Середина берётся, только когда
+      // плашка и правда стоит посередине: иначе «почти по центру» щёлкало бы
+      // туда-сюда между центром и краем.
+      const cx = (x + d.w / 2) / d.box.width;
+      const cy = (y + d.h / 2) / d.box.height;
+      const h = cx < 0.36 ? "left" : cx > 0.64 ? "right" : "center";
+      const v = cy < 0.36 ? "top" : cy > 0.64 ? "bottom" : "middle";
+
+      const out = { position: h + "-" + v };
+      if (h !== "center") {
+        out.gap_x = Math.round((h === "left" ? x : d.box.width - x - d.w) / k);
+      }
+      if (v !== "middle") {
+        out.gap_y = Math.round((v === "top" ? y : d.box.height - y - d.h) / k);
+      }
+      return out;
+    }
+
+    // Пока тащат — говорим словами, куда попали и на сколько отступили.
+    // Человек должен видеть, что он настраивает, а не только куда ткнул.
+    function hintDrag(p) {
+      const parts = [posName(p.position)];
+      if (p.gap_x !== undefined) parts.push("отступ сбоку " + p.gap_x + " px");
+      if (p.gap_y !== undefined) parts.push("сверху-снизу " + p.gap_y + " px");
+      $("wx-pos-hint").textContent = parts.join(", ");
+    }
+  })();
+
+  $("wx-align").onchange = (e) => saveWidget({ align: e.target.value });
   $("wx-art-on").onchange = (e) => saveWidget({ show_art: e.target.checked });
   $("wx-by-on").onchange = (e) => saveWidget({ show_requester: e.target.checked });
   $("wx-bar-on").onchange = (e) => saveWidget({ show_bar: e.target.checked });
@@ -2188,14 +2605,63 @@
     $("wx-card").style.setProperty("--scale", v / 100);
   }, (v) => saveWidget({ scale: v / 100 }));
 
-  live($("wx-gap"), (v) => {
-    $("wx-gap-val").textContent = v + " px";
-    drawGap(v);
-  }, (v) => saveWidget({ gap: v }));
+  live($("wx-gapx"), (v) => {
+    $("wx-gapx-val").textContent = v + " px";
+    drawGap("x", v);
+  }, (v) => saveWidget({ gap_x: v, gap: v }));
+
+  live($("wx-gapy"), (v) => {
+    $("wx-gapy-val").textContent = v + " px";
+    drawGap("y", v);
+  }, (v) => saveWidget({ gap_y: v }));
+
+  live($("wx-op"), (v) => {
+    $("wx-op-val").textContent = v + "%";
+    $("wx-slot").style.opacity = v / 100;
+  }, (v) => saveWidget({ opacity: v }));
+
+  // Режим показа. «Висит всё время» — это ноль секунд удержания; так это и
+  // хранится в настройках, а человеку показывается словами.
+  $("wx-mode").onchange = (e) => {
+    const flash = e.target.value === "flash";
+    $("wx-flash").hidden = !flash;
+    saveWidget(flash
+      ? { hold_seconds: parseInt($("wx-hold").value, 10) || 15, show_on_change: true }
+      : { hold_seconds: 0, show_every: 0 });
+  };
+
+  $("wx-onchange").onchange = (e) => saveWidget({ show_on_change: e.target.checked });
 
   live($("wx-hold"), (v) => {
-    $("wx-hold-val").textContent = v ? v + " с" : "не убирать";
+    $("wx-hold-val").textContent = v + " с";
   }, (v) => saveWidget({ hold_seconds: v }));
+
+  live($("wx-every"), (v) => {
+    $("wx-every-val").textContent = v
+      ? "каждые " + v + " " + plural(v, "минуту", "минуты", "минут")
+      : "не напоминать";
+  }, (v) => saveWidget({ show_every: v * 60 }));
+
+  // «Показать, как это выглядит» — появление, ожидание, уход, всё подряд.
+  //
+  // Без этой кнопки настройку «всплывать на 15 секунд» проверить можно было
+  // бы только на живом стриме: в образце плашка висит всегда, иначе её не
+  // видно во время настройки.
+  let tryTimer = null;
+  $("wx-flash-try").onclick = () => {
+    const hold = parseInt($("wx-hold").value, 10) || 15;
+    clearTimeout(tryTimer);
+    wxPlay("enter");
+    // Ждём столько же, сколько будет ждать виджет, но не дольше десяти
+    // секунд: смотреть на неподвижную плашку минуту незачем, а увидеть надо
+    // именно уход.
+    tryTimer = setTimeout(() => {
+      wxPlay("leave");
+      // Возвращаем образец на место: он нужен для настройки всего
+      // остального, и оставлять пустой кадр после показа нельзя.
+      tryTimer = setTimeout(() => wxPlay("enter"), 1400);
+    }, Math.min(hold, 10) * 1000);
+  };
 
   $("wx-tweaks").oninput = (e) => {
     const key = e.target.dataset.tweak;
@@ -2298,6 +2764,7 @@
     syncMeter(s.now);
     draw("orders", sig([s.queue, s.paused, s.twitch.reward_title,
                         s.twitch.reward_cost, s.twitch.reward_ready]), () => renderOrders(s));
+    draw("playlists", sig(s.playlists), () => renderPlaylists(s));
     draw("bans", sig(s.bans), () => renderBans(s.bans));
     draw("yt", sig(s.youtube), () => renderYouTube(s.youtube));
     draw("feed", sig(s.notices), () => renderFeed(s));

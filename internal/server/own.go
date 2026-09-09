@@ -214,11 +214,23 @@ func (s *Server) pollOwnLocal(ctx context.Context, w *ownWatch, track spotifyapp
 		// Трек сменился — всё, что мы знали про прошлый, больше не годится.
 		w.forget()
 		w.track = track
+		// Заодно снимаем свою же отметку о паузе: музыка едет дальше, значит
+		// на паузе она не стоит. Без этого кнопка в панели навсегда осталась
+		// бы «продолжить» — стример снял бы паузу в самом Spotify, а панель
+		// продолжала обещать обратное.
+		s.ownPaused.Store(false)
 	}
 
 	if fresh || time.Since(w.asked) > s.ownRefresh() {
 		w.asked = time.Now()
 		s.fetchOwnDetails(ctx, w, track)
+	}
+
+	// Пока музыка стоит на паузе, точку отсчёта двигаем вместе с часами —
+	// тогда положение остаётся там, где остановились. Иначе полоса в панели
+	// продолжала бы ехать по стоящему треку и добралась бы до конца.
+	if s.ownPaused.Load() && !w.at.IsZero() {
+		w.at = time.Now()
 	}
 
 	s.setOwn(w.playing(track))

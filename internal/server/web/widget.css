@@ -14,6 +14,26 @@
    токены поверх набора, поэтому «свой цвет» работает в любом семействе и
    ничего не ломает. */
 
+/* Обёртка держит место в кадре, плашка внутри живёт своей жизнью.
+   ─────────────────────────────────────────────────────────────────────────
+   Зачем разделять. У плашки transform занят анимациями: въезд, уход,
+   покачивание винила, дрожь терминала, поворот тонарма. Прижать её к
+   середине кадра можно только через translate(-50%) — и он затирался бы
+   первой же анимацией, а плашка уезжала бы из центра. Поэтому середину
+   держит обёртка, у которой своих анимаций нет и не будет.
+
+   Прозрачность тоже здесь: у плашки opacity занята появлением и уходом. */
+
+.slot { position: absolute; }
+
+.slot[data-h="center"][data-v="middle"]            { transform: translate(-50%, -50%); }
+.slot[data-h="center"]:not([data-v="middle"])      { transform: translateX(-50%); }
+.slot[data-v="middle"]:not([data-h="center"])      { transform: translateY(-50%); }
+
+/* Тикер занимает всю ширину кадра: обёртка растянута от края до края, а
+   плашка внутри занимает её целиком. */
+.slot[data-h="wide"] { left: 0; right: 0; }
+
 .card {
   /* Значения по умолчанию — они же то, что видит ручная настройка, пока
      стример ничего не трогал. */
@@ -40,7 +60,8 @@
   --w-glow:       none;
   --w-stroke:     0 transparent;
 
-  position: absolute;
+  /* Не absolute: место в кадре держит обёртка .slot, см. выше. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: calc(var(--w-gap) * var(--scale, 1));
@@ -83,6 +104,19 @@
 .card[data-art="off"] .art { display: none; }
 
 .text { display: block; min-width: 0; flex: 1; }
+
+/* Прижим текста к стороне плашки.
+   ─────────────────────────────────────────────────────────────────────────
+   Просьба владельца: «если слева — текст от левой стороны, если справа —
+   текст упирается в правую». Это выключка строк, а не переворот плашки:
+   обложка остаётся ровно там, где её поставил набор. Переворот пришлось бы
+   рисовать в каждом из десяти семейств заново, а смысл был бы тот же.
+
+   Отдельным правилом, а не text-align на .card: у тикера строка устроена
+   флексбоксом, и там выключка задаётся иначе — см. ниже. */
+.card[data-align="left"]   .text { text-align: left; }
+.card[data-align="center"] .text { text-align: center; }
+.card[data-align="right"]  .text { text-align: right; }
 
 /* Запасной отступ для старых сборок OBS: gap во флексбоксе появился только
    в Chrome 84, а без него обложка приклеивается к тексту вплотную во всех
@@ -205,7 +239,6 @@
   --w-track: .04em;
   --w-blur: 4px;
 
-  left: 0 !important; right: 0 !important;
   max-width: none;
   align-items: center;
 }
@@ -220,6 +253,13 @@
 /* Ник прижат к правому краю и не сжимается: он короткий, а вот название с
    артистом длинные — сжиматься должны они. */
 .card[data-family="ticker"] .by { margin-top: 0; margin-left: auto; flex: none; padding-left: 16px; }
+/* У тикера строка — флексбокс, и text-align в ней ничего не двигает.
+   Прижимаем саму строку, а ник при этом перестаёт отлетать вправо: иначе
+   выключка «по центру» выглядела бы как «всё слева, ник справа». */
+.card[data-family="ticker"][data-align="center"] .text { justify-content: center; }
+.card[data-family="ticker"][data-align="right"]  .text { justify-content: flex-end; }
+.card[data-family="ticker"][data-align="center"] .by,
+.card[data-family="ticker"][data-align="right"]  .by { margin-left: 0; }
 /* Полоса времени становится подчёркиванием всей строки. */
 .card[data-family="ticker"] .bar {
   position: absolute; left: 0; right: 0; bottom: 0; margin: 0; border-radius: 0;

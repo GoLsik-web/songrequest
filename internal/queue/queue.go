@@ -16,6 +16,10 @@ const (
 	SourcePoints   = "points"
 	SourceDonation = "donation"
 	SourceManual   = "manual"
+	// SourcePlaylist — трек приехал из плейлиста, одобренного стримером.
+	// Отдельно от «за баллы» нарочно: за плейлист платят один раз, а треков
+	// в очередь ложится сразу несколько, и в хронике это должно быть видно.
+	SourcePlaylist = "playlist"
 )
 
 // Item — заказ в очереди.
