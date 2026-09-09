@@ -29,12 +29,59 @@ type Reward struct {
 const rewardPrompt = "Напиши артиста и название, ссылку на Spotify, YouTube, " +
 	"Яндекс.Музыку или VK. Если трек не найдётся — баллы вернутся."
 
+// playlistPrompt — подсказка у награды за плейлист.
+//
+// Число треков подставляется прямо в текст: без него зритель кидает плейлист
+// на сорок песен и ждёт, что сыграют все сорок. Про одобрение тоже сказано —
+// иначе «оплатил и ничего не происходит» читается как поломка.
+func playlistPrompt(tracks int) string {
+	return fmt.Sprintf(
+		"Кинь ссылку на плейлист или альбом Spotify либо Яндекс.Музыки. "+
+			"Сыграют первые %d треков, и только после того, как заказ одобрит "+
+			"стример или модератор. Не одобрят — баллы вернутся.", tracks)
+}
+
+// RewardSpec — какую награду мы хотим видеть на канале.
+//
+// Наград теперь две: за трек и за плейлист. Раньше всё, что нужно знать о
+// награде, бралось прямо из настроек внутри EnsureReward, и второй награде там
+// места не было вовсе. Теперь название, цену и подсказку приносит вызывающий,
+// а здесь остаётся только работа с Twitch.
+type RewardSpec struct {
+	Title  string
+	Cost   int
+	Prompt string
+}
+
 // EnsureReward создаёт награду «Заказ трека» или находит уже созданную.
 //
 // Награду обязано создавать само приложение, и это не прихоть: вернуть баллы
 // Twitch разрешает только за награду, созданную тем же client_id. Награда,
 // сделанная стримером руками, для возвратов бесполезна.
 func (c *Client) EnsureReward(ctx context.Context, knownID string) (*Reward, error) {
+	cfg := c.cfg.Get()
+	return c.EnsureRewardSpec(ctx, knownID, RewardSpec{
+		Title: cfg.RewardTitle, Cost: cfg.RewardCost, Prompt: rewardPrompt,
+	})
+}
+
+// EnsurePlaylistReward — то же самое для награды за плейлист.
+//
+// Цена не берётся из отдельного поля, а считается: цена трека, умноженная на
+// число треков в плейлисте, минус скидка. Так плейлист остаётся выгоднее
+// поштучного заказа при любых правках цены трека, и стримеру не надо каждый раз
+// пересчитывать это в уме. См. internal/config/playlist.go.
+func (c *Client) EnsurePlaylistReward(ctx context.Context, knownID string) (*Reward, error) {
+	cfg := c.cfg.Get()
+	return c.EnsureRewardSpec(ctx, knownID, RewardSpec{
+		Title:  cfg.PlaylistRewardTitle,
+		Cost:   cfg.PlaylistPrice(),
+		Prompt: playlistPrompt(cfg.PlaylistTrackCount()),
+	})
+}
+
+// EnsureRewardSpec создаёт награду по описанию или подгоняет уже созданную.
+func (c *Client) EnsureRewardSpec(ctx context.Context, knownID string, spec RewardSpec) (*Reward, error) {
 	user := c.Account()
 	if user == nil {
 		return nil, errs.New(errs.TwitchAuthExpired, "Сначала подключи Twitch.")
@@ -54,7 +101,7 @@ func (c *Client) EnsureReward(ctx context.Context, knownID string) (*Reward, err
 			return nil, err
 		}
 		if existing != nil {
-			return c.updateReward(ctx, user.ID, existing, cfg.RewardTitle, cfg.RewardCost)
+			return c.updateReward(ctx, user.ID, existing, spec.Title, spec.Cost)
 		}
 		c.log.Info("прежней награды на канале нет, создаю заново", "прежний_id", knownID)
 	}
@@ -68,9 +115,9 @@ func (c *Client) EnsureReward(ctx context.Context, knownID string) (*Reward, err
 	}
 
 	body := map[string]any{
-		"title":                                 cfg.RewardTitle,
-		"cost":                                  cfg.RewardCost,
-		"prompt":                                rewardPrompt,
+		"title":                                 spec.Title,
+		"cost":                                  spec.Cost,
+		"prompt":                                spec.Prompt,
 		"is_user_input_required":                true,
 		"should_redemptions_skip_request_queue": false,
 		"background_color":                      "#C8F751",
@@ -87,7 +134,7 @@ func (c *Client) EnsureReward(ctx context.Context, knownID string) (*Reward, err
 		if isDuplicateTitle(err) {
 			return nil, errs.New(errs.TwitchForeignAward, fmt.Sprintf(
 				"На канале уже есть награда «%s», созданная не этим приложением. Баллы за неё вернуть невозможно — переименуй её в настройках Twitch или задай другое название в настройках приложения.",
-				cfg.RewardTitle))
+				spec.Title))
 		}
 		// 403 на этой ручке практически всегда означает одно: у канала нет
 		// баллов. Полагаться на текст сообщения Twitch нельзя — формулировку

@@ -1165,6 +1165,65 @@ footer.online { color: var(--dimmer); }
 
 .wx-right .kicker { display: flex; align-items: baseline; }
 
+/* Девять точек привязки.
+   ─────────────────────────────────────────────────────────────────────────
+   Сама сетка и есть картинка кадра: где кнопка, там и встанет плашка.
+   Подписи тут не нужны — они были бы длиннее самого выбора. */
+.wx-anchors {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  margin-top: var(--s2);
+  padding: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.wx-anchors button {
+  position: relative;
+  border: 0; background: none; padding: 0; cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+/* Точка внутри клетки — то самое место, куда прижмётся плашка. */
+.wx-anchors button::after {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 4px; height: 4px; margin: -2px 0 0 -2px;
+  background: var(--dimmer); border-radius: 50%;
+  transition: background var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+.wx-anchors button:hover::after { background: var(--text); }
+.wx-anchors button.on::after { background: var(--lime); transform: scale(1.9); }
+.wx-anchors button:focus-visible { outline: 2px solid var(--lime); outline-offset: 1px; }
+/* У тикера бок не выбирается — он во всю ширину. Гасим средний столбец
+   и левый с правым, оставляя видимым только смысл «верх или низ». */
+.wx-anchors.narrow button:nth-child(3n+1)::after,
+.wx-anchors.narrow button:nth-child(3n)::after { opacity: .25; }
+
+/* Плашку в образце можно таскать мышью. */
+.wx-stage .slot { cursor: grab; touch-action: none; }
+.wx-stage.dragging .slot { cursor: grabbing; }
+.wx-stage.dragging { user-select: none; }
+
+/* Разметка кадра — видна только пока тащат. Постоянная сетка поверх кадра
+   мешала бы смотреть на сам виджет, ради которого сюда и приходят. */
+.wx-grid {
+  position: absolute; inset: 0; pointer-events: none;
+  opacity: 0; transition: opacity var(--fast) var(--ease);
+  background:
+    linear-gradient(to right,
+      transparent calc(100% / 3 - 1px), rgba(200, 247, 81, .28) calc(100% / 3 - 1px),
+      rgba(200, 247, 81, .28) calc(100% / 3), transparent calc(100% / 3),
+      transparent calc(200% / 3 - 1px), rgba(200, 247, 81, .28) calc(200% / 3 - 1px),
+      rgba(200, 247, 81, .28) calc(200% / 3), transparent calc(200% / 3)),
+    linear-gradient(to bottom,
+      transparent calc(100% / 3 - 1px), rgba(200, 247, 81, .28) calc(100% / 3 - 1px),
+      rgba(200, 247, 81, .28) calc(100% / 3), transparent calc(100% / 3),
+      transparent calc(200% / 3 - 1px), rgba(200, 247, 81, .28) calc(200% / 3 - 1px),
+      rgba(200, 247, 81, .28) calc(200% / 3), transparent calc(200% / 3));
+}
+.wx-stage.dragging .wx-grid { opacity: 1; }
+
 /* Ползунки. Родной вид у них разный в каждом браузере, поэтому дорожку
    и бегунок задаём сами — иначе панель в Chrome и Firefox выглядит
    по-разному именно там, где настраивают внешний вид. */
@@ -1531,3 +1590,72 @@ body.menu-open { overflow: hidden; }
   .menu-sheet { transform: none; }
   .tab-pane, .panel { animation: none; }
 }
+
+/* ── плейлисты, ждущие решения ─────────────────────────────────────────
+   Блок стоит между эфиром и очередью: это то, что требует действия
+   человека, а очередь идёт сама. Пусто — блока нет вовсе. */
+
+/* В этой панели у многих блоков задан display, и атрибут hidden сам по себе
+   их не прячет: правило display в классе сильнее. Поэтому каждый прячущийся
+   блок гасится явно — так же, как .panel, .tab-pane и остальные выше. */
+.pls[hidden], #pl-fields[hidden], #pl-cost-field[hidden] { display: none; }
+
+.pls {
+  margin: 0 0 var(--s7);
+  padding: var(--s5) var(--s6) var(--s6);
+  border: 1px solid var(--lime-lo);
+  background: var(--raise);
+}
+.pls .kicker { display: flex; align-items: center; gap: var(--s3); }
+
+.pl + .pl { margin-top: var(--s5); padding-top: var(--s5); border-top: 1px solid var(--line); }
+.pl { margin-top: var(--s4); }
+
+.pl-head { display: flex; align-items: flex-start; gap: var(--s4); }
+.pl-title {
+  font-family: Unbounded, Manrope, sans-serif;
+  font-size: 17px; font-weight: 600; line-height: 1.2;
+}
+.pl-sub {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin-top: 4px; font-size: 13px; color: var(--dimmer);
+}
+.pl-sub svg { width: 14px; height: 14px; }
+.pl-sub b { color: var(--text); font-weight: 600; }
+.pl-more { color: var(--dim); }
+
+/* Главное число для решения — не количество треков, а сколько это займёт
+   эфира. «Пять треков» не говорит ничего, «19 минут» говорит всё. */
+.pl-time {
+  margin-left: auto; flex: none;
+  font-family: Unbounded, Manrope, sans-serif;
+  font-size: 15px; color: var(--lime);
+  white-space: nowrap;
+}
+
+.pl-tracks {
+  margin: var(--s4) 0 var(--s4);
+  padding-left: 22px;
+  font-size: 13px; color: var(--dimmer);
+  line-height: 1.7;
+}
+.pl-tracks li::marker { color: var(--dim); }
+
+/* ── сводка цены плейлиста в настройках ───────────────────────────────
+   Стример должен видеть, что он предлагает зрителю, а не верить слову
+   «скидка»: сравнение с поштучной ценой и есть весь смысл этой награды. */
+.sum {
+  margin-top: var(--s4);
+  border: 1px solid var(--line);
+  background: var(--raise);
+}
+.sum-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--s4);
+  padding: 7px 12px;
+  font-size: 13px; color: var(--dimmer);
+}
+.sum-row + .sum-row { border-top: 1px solid var(--line); }
+.sum-row b { color: var(--text); font-weight: 600; }
+.sum-row.good b { color: var(--lime); }
+.sum-row.bad b { color: var(--dim); }

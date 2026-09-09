@@ -17,13 +17,20 @@ body { -webkit-font-smoothing: antialiased; }
 </head>
 <body>
 
-<div class="card" id="card">
-  <div class="art" id="art"></div>
-  <div class="text">
-    <div class="title" id="title"></div>
-    <div class="artist" id="artist"></div>
-    <div class="by" id="by"></div>
-    <div class="bar"><i id="bar"></i></div>
+<!-- Место плашки в кадре задаёт обёртка, а не сама плашка.
+     Причина простая: у плашки transform занят анимациями — въездом, уходом,
+     покачиванием винила, дрожью терминала. Прижать её к середине кадра можно
+     только через translate(-50%), и он затирался бы первой же анимацией.
+     Обёртка держит место, плашка внутри живёт своей жизнью. -->
+<div class="slot" id="slot">
+  <div class="card" id="card">
+    <div class="art" id="art"></div>
+    <div class="text">
+      <div class="title" id="title"></div>
+      <div class="artist" id="artist"></div>
+      <div class="by" id="by"></div>
+      <div class="bar"><i id="bar"></i></div>
+    </div>
   </div>
 </div>
 
@@ -38,6 +45,7 @@ body { -webkit-font-smoothing: antialiased; }
   const $ = (id) => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const card = $("card");
+  const slot = $("slot");
 
   // Без `??`: OBS возит с собой свой браузер, и в старых сборках это не
   // «не поддерживается», а ошибка разбора — тогда не выполняется весь
@@ -66,6 +74,9 @@ body { -webkit-font-smoothing: antialiased; }
   // отвечает на вопрос «это заказали или стример сам поставил», и без неё
   // зритель решит, что заказы заняты на полчаса вперёд.
   let showNick = true;
+  // Настройки показа, которыми пользуется расписание. Держим отдельно, чтобы
+  // не разбирать их заново на каждый тик.
+  let plan = { hold: 0, every: 0, onChange: true };
 
   function dress(w) {
     if (!w) return;
@@ -74,13 +85,8 @@ body { -webkit-font-smoothing: antialiased; }
     // состояния нельзя — сбросится анимация и дрогнет картинка в кадре.
     const signature = JSON.stringify(w);
     if (signature === applied) return;
+    const first = applied === "";
     applied = signature;
-
-    // Настройки поменяли — забываем, что этот трек уже отвисел своё.
-    // Иначе стример ставит «убирать через 15 секунд», плашка прячется, он
-    // передумывает и ставит «не убирать» — а на текущем треке ничего не
-    // происходит, и выглядит это как «настройка не работает».
-    heldTrack = null;
 
     const { family, variant } = widgetPreset(w.preset);
     card.dataset.family = family.id;
@@ -94,18 +100,14 @@ body { -webkit-font-smoothing: antialiased; }
 
     card.style.setProperty("--scale", Number(w.scale) || 1);
 
-    // Угол и отступ. У тикера своя геометрия: он занимает всю ширину, и
-    // боковые отступы ему только мешают.
-    const gap = (Number.isFinite(w.gap) ? w.gap : 40) + "px";
-    const pos = w.position || "left-bottom";
-    card.style.left = card.style.right = card.style.top = card.style.bottom = "";
-    if (family.id !== "ticker") {
-      card.style[pos.includes("left") ? "left" : "right"] = gap;
-    }
-    card.style[pos.includes("top") ? "top" : "bottom"] = family.id === "ticker" ? "0px" : gap;
-    // Вход и уход идут от ближайшего края кадра, а не всегда слева: иначе
-    // плашка пересекает весь кадр, чтобы встать в свой угол.
-    card.dataset.pos = pos;
+    // Прозрачность всей плашки. Отдельным слоем на обёртке, а не через
+    // opacity самой плашки: у той opacity занята появлением и уходом, и
+    // полупрозрачная плашка больше не смогла бы доехать до конца анимации.
+    const op = Number.isFinite(w.opacity) ? w.opacity : 100;
+    slot.style.opacity = Math.min(100, Math.max(10, op)) / 100;
+
+    place(w, family);
+    align(w);
 
     // Ручная настройка поверх набора. Значения уже проверены приложением,
     // но список ключей сверяем и здесь: страница не должна зависеть от того,
@@ -115,6 +117,74 @@ body { -webkit-font-smoothing: antialiased; }
     for (const [key, value] of Object.entries(w.tweaks || {})) {
       if (allowed.has(key)) card.style.setProperty(key, value);
     }
+
+    // Расписание показа. Пересобираем его на каждой правке настроек, иначе
+    // стример ставит «убирать через 15 секунд», плашка прячется, он
+    // передумывает и ставит «не убирать» — а на текущем треке ничего не
+    // происходит, и выглядит это как «настройка не работает».
+    plan = {
+      hold: Math.max(0, Number(w.hold_seconds) || 0),
+      every: Math.max(0, Number(w.show_every) || 0),
+      onChange: w.show_on_change !== false,
+    };
+    if (!first && shownTrack) schedule(true);
+  }
+
+  // place ставит обёртку в нужное место кадра.
+  //
+  // Девять точек вместо четырёх углов: «сверху по центру» и «слева
+  // посередине» изображались раньше огромным отступом от угла — и на другом
+  // разрешении кадра плашка уезжала не туда.
+  function place(w, family) {
+    const pos = w.position || "left-bottom";
+    const parts = pos.split("-");
+    const h = parts[0] || "left";     // left | center | right
+    const v = parts[1] || "bottom";   // top | middle | bottom
+    const gx = (Number.isFinite(w.gap_x) ? w.gap_x : 40) + "px";
+    const gy = (Number.isFinite(w.gap_y) ? w.gap_y : 40) + "px";
+    const ticker = family.id === "ticker";
+
+    slot.dataset.family = family.id;
+    slot.dataset.h = ticker ? "wide" : h;
+    slot.dataset.v = v;
+
+    slot.style.left = slot.style.right = slot.style.top = slot.style.bottom = "";
+
+    if (ticker) {
+      // Тикер занимает всю ширину кадра: боковые отступы ему только мешают,
+      // а к краю он прижимается вплотную — так он и читается как строка
+      // новостей, а не как плашка во всю ширину.
+      slot.style.left = "0px";
+      slot.style.right = "0px";
+      slot.style[v === "top" ? "top" : "bottom"] = "0px";
+      card.dataset.pos = (v === "top" ? "left-top" : "left-bottom");
+      return;
+    }
+
+    if (h === "center") slot.style.left = "50%";
+    else slot.style[h] = gx;
+
+    if (v === "middle") slot.style.top = "50%";
+    else slot.style[v] = gy;
+
+    // Оформление наборов смотрит на data-pos, чтобы въезжать с ближайшего
+    // края кадра. Про середину оно не знает, поэтому середину показываем ему
+    // как ближайший понятный угол: анимация от этого только выигрывает.
+    card.dataset.pos = (h === "center" ? "left" : h) + "-" + (v === "middle" ? "bottom" : v);
+  }
+
+  // align прижимает текст внутри плашки к стороне.
+  //
+  // Просьба владельца: «если слева — текст от левой стороны, если справа —
+  // текст упирается в правую». Это выключка строк, а не переворот плашки:
+  // обложка остаётся там же, где была в наборе.
+  function align(w) {
+    let a = w.align || "auto";
+    if (a === "auto") {
+      const h = (w.position || "left-bottom").split("-")[0];
+      a = h === "right" ? "right" : h === "center" ? "center" : "left";
+    }
+    card.dataset.align = a;
   }
 
   // ── трек ───────────────────────────────────────────────────────────
@@ -123,9 +193,8 @@ body { -webkit-font-smoothing: antialiased; }
   let progressTimer = null;
   let hideTimer = null;
   let holdTimer = null;
+  let everyTimer = null;
   let leaveTimer = null;
-  // heldTrack — трек, который уже отвисел свои секунды и больше не всплывает.
-  let heldTrack = null;
   let stateTimer = null;
   let swapTimer = null;
 
@@ -163,13 +232,71 @@ body { -webkit-font-smoothing: antialiased; }
     }, out);
   }
 
-  function show(now, hold) {
+  const visible = () => card.classList.contains("show");
+
+  // appear показывает плашку. Уже висит — ничего не делаем: повторный въезд
+  // посреди стрима выглядел бы дёрганьем.
+  function appear() {
+    if (visible()) return;
+    play("enter");
+  }
+
+  // schedule — всё расписание показа в одном месте.
+  //
+  // Три случая, и они разные по смыслу:
+  //
+  //   держать всегда   (hold = 0) — плашка висит весь трек, как раньше;
+  //   показать и убрать (hold > 0) — короткое объявление в начале трека;
+  //   напоминать       (every > 0) — то же объявление время от времени,
+  //                                  чтобы зашедший в середине трека тоже
+  //                                  узнал, что играет.
+  //
+  // fresh=true означает «трек только что сменился»: только тогда показ
+  // заводится заново от нуля. Иначе (правка настроек) расписание просто
+  // пересобирается, не дёргая плашку.
+  function schedule(settingsChanged) {
+    clearTimeout(holdTimer);
+    clearInterval(everyTimer);
+
+    if (plan.hold <= 0) {
+      appear();
+      return;
+    }
+
+    // Напоминание идёт своим чередом независимо от того, показали ли плашку
+    // сейчас: интервал ровный, и от смены настроек он не сбивается.
+    if (plan.every > 0) {
+      everyTimer = setInterval(() => {
+        appear();
+        armHide();
+      }, plan.every * 1000);
+    }
+
+    if (settingsChanged) {
+      // Настройки правили на живом треке. Показывать плашку заново незачем,
+      // а вот убрать её по новому сроку надо — иначе она осталась бы висеть
+      // после того, как человек включил «убирать через 15 секунд».
+      if (visible()) armHide();
+      return;
+    }
+
+    if (plan.onChange) {
+      appear();
+      armHide();
+    } else {
+      hide();
+    }
+  }
+
+  function armHide() {
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(hide, plan.hold * 1000);
+  }
+
+  function show(now) {
     const key = now.title + "|" + now.artist + "|" + now.requester;
-    // Уже показали и спрятали этот трек по таймеру — не показываем снова.
-    // Иначе «убирать через 15 секунд» превращалось в мигающую плашку: любое
-    // следующее состояние заводило показ заново.
-    if (key === heldTrack) return;
     if (key !== shownTrack) {
+      const firstTime = shownTrack === null;
       shownTrack = key;
 
       const fill = () => {
@@ -182,21 +309,14 @@ body { -webkit-font-smoothing: antialiased; }
 
       // Плашка уже висела — значит трек просто сменился, заново выезжать
       // ей неоткуда: меняется содержимое, а не сама вещь.
-      if (card.classList.contains("show")) {
+      if (visible() && !firstTime) {
         swapTrack(fill);
+        clearTimeout(holdTimer);
+        if (plan.hold > 0) armHide();
+        if (plan.every > 0) schedule(true);
       } else {
         fill();
-        play("enter");
-      }
-
-      // Показ на несколько секунд вместо постоянной плашки — отдельная
-      // настройка: кому-то виджет нужен как объявление, а не как табло.
-      clearTimeout(holdTimer);
-      if (hold > 0) {
-        holdTimer = setTimeout(() => {
-          heldTrack = key;
-          hide();
-        }, hold * 1000);
+        schedule(false);
       }
     }
 
@@ -232,11 +352,9 @@ body { -webkit-font-smoothing: antialiased; }
   }
 
   function hide() {
-    clearInterval(progressTimer);
     clearTimeout(holdTimer);
     clearTimeout(swapTimer);
-    shownTrack = null;
-    if (!card.classList.contains("show")) return;
+    if (!visible()) return;
 
     // Уход тоже анимирован, поэтому прячем не сразу, а когда доиграет.
     play("leave");
@@ -246,20 +364,21 @@ body { -webkit-font-smoothing: antialiased; }
     }, 340);
   }
 
+  // stop — музыка кончилась совсем: убираем плашку и забываем расписание.
+  function stop() {
+    clearInterval(progressTimer);
+    clearInterval(everyTimer);
+    shownTrack = null;
+    hide();
+  }
+
   function render(state) {
     dress(state.widget);
     if (state.now) {
-      show(state.now, state.widget ? state.widget.hold_seconds : 0);
+      show(state.now);
       return;
     }
-    // Музыка кончилась — забываем, что уже показывали.
-    //
-    // Без этого при включённом «убирать через N секунд» повторный заказ
-    // того же трека тем же зрителем не показывался вовсе: ключ совпадал с
-    // heldTrack, и show() выходил на первой же строке. Трек играет, виджет
-    // молчит, и стример этого не замечает — у него в панели всё нормально.
-    heldTrack = null;
-    hide();
+    stop();
   }
 
   // ── демо ───────────────────────────────────────────────────────────
@@ -271,10 +390,14 @@ body { -webkit-font-smoothing: antialiased; }
 
   function demoTrack(widget) {
     dress(widget);
+    // В образце плашка висит всегда: человек в этот момент двигает ползунки
+    // и должен видеть, что двигает. Прятать её по расписанию здесь значило
+    // бы отвечать на правку исчезновением.
+    plan = { hold: 0, every: 0, onChange: true };
     show({
       title: "Bohemian Rhapsody", artist: "Queen", requester: "zritel",
       source: "order", cover_url: "", duration_ms: 354000, position_ms: 149000,
-    }, 0);
+    });
   }
 
   // ── связь ──────────────────────────────────────────────────────────
@@ -304,7 +427,7 @@ body { -webkit-font-smoothing: antialiased; }
       // поэтому ждём: не вернулись за пять секунд — тогда прячем.
       if (!demo) {
         clearTimeout(hideTimer);
-        hideTimer = setTimeout(hide, 5000);
+        hideTimer = setTimeout(stop, 5000);
       }
       // Виджет висит в OBS сутками: долбиться каждую секунду нельзя.
       setTimeout(connect, delay);

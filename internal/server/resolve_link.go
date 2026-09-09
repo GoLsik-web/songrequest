@@ -53,16 +53,25 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 		return linkResult{Track: &track}, true
 
 	case links.Yandex:
-		// Официального API у Яндекс.Музыки нет: читаем мета-теги страницы.
-		// Не вышло — не беда, поищем по остальному тексту заказа.
-		meta, err := s.yandex.Read(ctx, link.URL)
+		// Спрашиваем сам Яндекс о треке по его номеру из ссылки. Ключ этой
+		// точке не нужен, см. internal/links/yandex.go.
+		//
+		// Не вышло — отказываем, а не гадаем. Раньше здесь читались мета-теги
+		// страницы, и когда Яндекс их убрал, разбор стал выдавать «Яндекс
+		// Музыка — собираем музыку для вас»: заказ уходил в поиск с этими
+		// словами, зритель получал в эфир случайный ролик вместо своей песни,
+		// а баллы не возвращались, потому что заказ считался удавшимся.
+		meta, err := s.yandex.Lookup(ctx, link)
 		if err != nil {
-			s.log.Info("не прочитал страницу Яндекс.Музыки", "ссылка", link.URL, "ошибка", err)
-			return linkResult{Note: "страница Яндекс.Музыки не открылась"}, false
+			s.log.Info("не узнал трек Яндекс.Музыки", "ссылка", link.URL, "ошибка", err)
+			return linkResult{Note: "не удалось узнать трек по ссылке на Яндекс.Музыку"}, false
 		}
-		s.log.Info("трек со страницы Яндекс.Музыки",
-			"артист", meta.Artist, "название", meta.Title)
-		return linkResult{Query: meta.Query()}, true
+		s.log.Info("трек по ссылке на Яндекс.Музыку",
+			"артист", meta.Artist, "название", meta.Title, "длительность_мс", meta.DurationMs)
+		// Длительность — самый сильный признак против каверов, ускоренных
+		// версий и часовых лупов. Со страницы её взять было негде, и заказы по
+		// ссылке на Яндекс подбирались хуже, чем по ссылке на YouTube.
+		return linkResult{Query: meta.Query(), WantMs: meta.DurationMs}, true
 
 	case links.YouTube, links.VK:
 		if s.youtube == nil || !s.ytTools.Ready() {

@@ -91,3 +91,96 @@ func TestYandexQueryFormat(t *testing.T) {
 		}
 	}
 }
+
+// ── ответ Яндекса о треке ────────────────────────────────────────────
+//
+// Это главный путь с 0.43.1: артиста, название и длительность отдаёт сам
+// Яндекс по открытой точке, которой не нужен ключ. Образец ответа взят с
+// живого запроса (трек «Группа крови»), лишние поля из него выброшены.
+
+const yandexTrackReplyExample = `{"result":[{
+  "title":"Группа крови",
+  "durationMs":235100,
+  "coverUri":"avatars.yandex.net/get-music-content/95061/4f3808a0.a.5307396-3/%%",
+  "available":true,
+  "version":"",
+  "artists":[{"name":"Кино"}],
+  "albums":[{"id":5307396,"coverUri":"avatars.yandex.net/get-music-content/95061/4f3808a0.a.5307396-3/%%"}]
+}]}`
+
+func TestYandexTrackReplyIsRead(t *testing.T) {
+	meta, ok := ParseYandexTrack([]byte(yandexTrackReplyExample))
+	if !ok {
+		t.Fatal("ответ Яндекса не разобрался")
+	}
+	if meta.Artist != "Кино" || meta.Title != "Группа крови" {
+		t.Fatalf("артист=%q название=%q", meta.Artist, meta.Title)
+	}
+	// Длительность — то, ради чего это в первую очередь и затевалось: она
+	// отсеивает каверы и часовые лупы при подборе в Spotify.
+	if meta.DurationMs != 235100 {
+		t.Fatalf("длительность %d", meta.DurationMs)
+	}
+	if meta.CoverURL != "https://avatars.yandex.net/get-music-content/95061/4f3808a0.a.5307396-3/400x400" {
+		t.Fatalf("обложка %q", meta.CoverURL)
+	}
+	if meta.Query() != "Кино - Группа крови" {
+		t.Fatalf("запрос %q", meta.Query())
+	}
+}
+
+// Приписка к названию («feat», «remix», «live») обязана доехать: без неё
+// ремикс и оригинал выглядят одинаково, и в Spotify найдётся не тот.
+func TestYandexTrackKeepsVersion(t *testing.T) {
+	body := `{"result":[{"title":"Плот","version":"live","artists":[{"name":"Юрий Лоза"}],"durationMs":100}]}`
+	meta, ok := ParseYandexTrack([]byte(body))
+	if !ok || meta.Title != "Плот live" {
+		t.Fatalf("название %q (ok=%v)", meta.Title, ok)
+	}
+}
+
+// Мусор и пустой ответ — это отказ, а не «трек без названия».
+func TestYandexTrackRefusesJunk(t *testing.T) {
+	for _, body := range []string{
+		``, `{}`, `{"result":[]}`, `не json вовсе`,
+		`{"result":[{"title":"   "}]}`,
+	} {
+		if _, ok := ParseYandexTrack([]byte(body)); ok {
+			t.Errorf("мусор принят за трек: %q", body)
+		}
+	}
+}
+
+// Обложка с чужого хоста не принимается: адрес уходит в браузер стримера.
+func TestYandexCoverHostIsChecked(t *testing.T) {
+	body := `{"result":[{"title":"т","artists":[{"name":"а"}],"coverUri":"злой.example.com/x/%%"}]}`
+	meta, ok := ParseYandexTrack([]byte(body))
+	if !ok {
+		t.Fatal("трек не разобрался")
+	}
+	if meta.CoverURL != "" {
+		t.Fatalf("принята чужая обложка: %q", meta.CoverURL)
+	}
+}
+
+// ── общая страница Яндекса ───────────────────────────────────────────
+//
+// 09.09 Яндекс стал отдавать страницу трека с одним общим заголовком на все
+// треки. Разбор честно делил его по тире и выдавал артиста «Яндекс Музыка» с
+// названием «собираем музыку для вас» — а приложение искало эти слова и
+// ставило в эфир случайный ролик, найденный по ним. Зритель платил баллы за
+// свою песню и получал чужую.
+func TestGenericYandexPageIsRefused(t *testing.T) {
+	pages := []string{
+		`<html><head><title>Яндекс Музыка — собираем музыку для вас</title></head></html>`,
+		`<html><head><title>Яндекс Музыка</title></head></html>`,
+		`<html><head><title>  собираем музыку для вас  </title></head></html>`,
+		`<html><head><title>Яндекс Музыка · Страница не найдена</title></head></html>`,
+	}
+	for _, html := range pages {
+		if meta := ParseYandexPage(html); meta.Title != "" || meta.Artist != "" {
+			t.Errorf("общая страница принята за трек: артист=%q название=%q",
+				meta.Artist, meta.Title)
+		}
+	}
+}

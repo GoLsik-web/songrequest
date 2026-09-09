@@ -82,6 +82,25 @@ type Config struct {
 	CommandPrefix    string `json:"command_prefix"`
 	AutoCreateReward bool   `json:"auto_create_reward"`
 
+	// Заказ плейлиста — вторая награда на канале.
+	//
+	// Отдельная, а не «кинь плейлист в ту же награду», по двум причинам.
+	// Первая: цена. За плейлист платят один раз и заметно меньше, чем за те
+	// же треки поштучно, — иначе смысла в нём нет. Вторая: плейлист не идёт
+	// в эфир сам. Он ждёт, пока стример или модератор его одобрит: сорок
+	// минут чужой музыки подряд — это решение хозяина эфира, а не зрителя.
+	PlaylistReward      bool   `json:"playlist_reward"`
+	PlaylistRewardTitle string `json:"playlist_reward_title"`
+	// PlaylistMaxTracks — сколько треков берём из плейлиста. Остальные не
+	// попадают в очередь вовсе, и зрителю об этом говорится в чате.
+	PlaylistMaxTracks int `json:"playlist_max_tracks"`
+	// PlaylistDiscount — насколько плейлист выгоднее поштучного заказа, в
+	// процентах. Цена считается сама: цена трека × число треков − скидка.
+	PlaylistDiscount int `json:"playlist_discount"`
+	// PlaylistCost — своя цена вместо посчитанной. Ноль означает «считай
+	// сам»; так оно и стоит, пока стример не захочет иначе.
+	PlaylistCost int `json:"playlist_cost"`
+
 	// Донаты
 	DonationAlertsClientID string  `json:"donationalerts_client_id"`
 	DonatePayKey           string  `json:"donatepay_key"`
@@ -143,21 +162,24 @@ type MatchWeights struct {
 // Defaults возвращает конфиг со значениями по умолчанию.
 func Defaults() Config {
 	return Config{
-		Port:               8977,
-		RewardTitle:        "Заказ трека",
-		RewardCost:         1000,
-		CommandPrefix:      "!",
-		AutoCreateReward:   true,
-		MaxTrackSeconds:    8 * 60,
-		MaxPerUser:         3,
-		DonationPriority:   true,
-		DonationMin:        100,
-		ResumeFail:         ResumeFallbackPlaylist,
-		ResumeDelaySeconds: 1,
-		WaitForCurrent:     true,
-		YouTubeVolume:      100,
-		MatchAccept:        0.80,
-		MatchMaybe:         0.55,
+		Port:                8977,
+		RewardTitle:         "Заказ трека",
+		RewardCost:          1000,
+		CommandPrefix:       "!",
+		AutoCreateReward:    true,
+		PlaylistRewardTitle: "Заказ плейлиста",
+		PlaylistMaxTracks:   5,
+		PlaylistDiscount:    20,
+		MaxTrackSeconds:     8 * 60,
+		MaxPerUser:          3,
+		DonationPriority:    true,
+		DonationMin:         100,
+		ResumeFail:          ResumeFallbackPlaylist,
+		ResumeDelaySeconds:  1,
+		WaitForCurrent:      true,
+		YouTubeVolume:       100,
+		MatchAccept:         0.80,
+		MatchMaybe:          0.55,
 		MatchWeight: MatchWeights{
 			Title:      1.0,
 			Artist:     0.8,

@@ -561,6 +561,26 @@ func (c *Client) Resume(ctx context.Context, deviceID string) error {
 	return c.play(ctx, nil, deviceID)
 }
 
+// Next переключает Spotify на следующий трек.
+//
+// Нужно только для музыки самого стримера: у заказа «следующий» — это скип,
+// его делает очередь, а не Spotify. Раньше этой команды не было вовсе, потому
+// что своей музыкой приложение принципиально не управляло; владелец попросил
+// обратное — из панели он хочет переключать и свой плейлист тоже.
+//
+// Ответ Spotify не разбираем: команда либо принята, либо отказ приедет из do.
+func (c *Client) Next(ctx context.Context, deviceID string) error {
+	return c.do(ctx, http.MethodPost, "/me/player/next"+deviceQuery(deviceID), nil, nil)
+}
+
+// Previous возвращает Spotify на предыдущий трек плейлиста стримера.
+//
+// Опять же только про его музыку: у очереди заказов предыдущего нет — то, что
+// сыграло, из неё удаляется, и «назад» там означает перемотку в начало.
+func (c *Client) Previous(ctx context.Context, deviceID string) error {
+	return c.do(ctx, http.MethodPost, "/me/player/previous"+deviceQuery(deviceID), nil, nil)
+}
+
 // Seek перематывает играющий трек.
 //
 // Это команда, а не чтение: без запроса к Spotify перемотка невозможна в

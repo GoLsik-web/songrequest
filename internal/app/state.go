@@ -190,6 +190,12 @@ type TwitchInfo struct {
 	RewardCost  int    `json:"reward_cost"`
 	RewardReady bool   `json:"reward_ready"`
 
+	// Вторая награда — за плейлист. Пустая и не готовая, если стример её не
+	// включал: это отдельная галочка в настройках.
+	PlaylistTitle string `json:"playlist_title"`
+	PlaylistCost  int    `json:"playlist_cost"`
+	PlaylistReady bool   `json:"playlist_ready"`
+
 	// Код для входа: стример открывает адрес на любом устройстве и вводит код.
 	PendingCode    string     `json:"pending_code"`
 	PendingURL     string     `json:"pending_url"`
@@ -283,8 +289,10 @@ type Snapshot struct {
 	Now         *NowPlaying `json:"now"`
 	// LastPlayed — что играло перед этим. Показывается в тишине, когда
 	// показывать больше нечего, и переживает перезапуск приложения.
-	LastPlayed  *LastPlayed      `json:"last_played"`
-	Queue       []QueueItem      `json:"queue"`
+	LastPlayed *LastPlayed `json:"last_played"`
+	Queue      []QueueItem `json:"queue"`
+	// Playlists — заказанные плейлисты, ждущие решения стримера.
+	Playlists   []PlaylistView   `json:"playlists"`
 	Notices     []Notice         `json:"notices"`
 	Paused      bool             `json:"paused"` // приём заказов остановлен
 	Version     string           `json:"version"`
@@ -301,6 +309,30 @@ type Snapshot struct {
 	// Widget — оформление виджета. Едет вместе с состоянием, чтобы правка в
 	// панели доезжала до OBS сразу: перезагружать источник не нужно.
 	Widget any `json:"widget"`
+}
+
+// PlaylistView — заказанный плейлист, который ждёт решения стримера.
+//
+// Плейлист не попадает в очередь сам: сорок минут чужой музыки подряд решает
+// хозяин эфира. Пока решения нет, он живёт здесь и виден в панели, а стример
+// или модератор говорит «да» кнопкой или командой в чате.
+type PlaylistView struct {
+	// ID — номер для кнопок и для команды «одобрить 2».
+	ID        string `json:"id"`
+	Requester string `json:"requester"`
+	// Source — откуда плейлист, словами: «Spotify» или «Яндекс.Музыка».
+	Source string `json:"source"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
+	// Tracks — что сыграет, строками «артист — название», по порядку.
+	Tracks []string `json:"tracks"`
+	// Total — сколько треков было в плейлисте всего. Больше длины Tracks,
+	// когда плейлист длиннее разрешённого настройкой.
+	Total int `json:"total"`
+	// LengthMs — сколько всё это будет играть. Главное число для решения:
+	// стример смотрит не на список, а на «сколько это займёт эфира».
+	LengthMs int       `json:"length_ms"`
+	At       time.Time `json:"at"`
 }
 
 // Состояние обхода одним словом — для панели и для лампочки в верхней полосе.
@@ -360,6 +392,7 @@ type State struct {
 	now         *NowPlaying
 	lastPlayed  *LastPlayed
 	queue       []QueueItem
+	playlists   []PlaylistView
 	notices     []Notice
 	paused      bool
 	version     string
@@ -480,6 +513,14 @@ func (s *State) SetQueue(q []QueueItem) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.queue = q
+	s.notify()
+}
+
+// SetPlaylists обновляет список плейлистов, ждущих решения.
+func (s *State) SetPlaylists(list []PlaylistView) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.playlists = list
 	s.notify()
 }
 
@@ -655,6 +696,7 @@ func (s *State) Snapshot() Snapshot {
 	snap := Snapshot{
 		App:         Marker,
 		Queue:       append(make([]QueueItem, 0, len(s.queue)), s.queue...),
+		Playlists:   append(make([]PlaylistView, 0, len(s.playlists)), s.playlists...),
 		Notices:     append(make([]Notice, 0, len(s.notices)), s.notices...),
 		Paused:      s.paused,
 		Version:     s.version,

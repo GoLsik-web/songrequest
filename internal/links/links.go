@@ -21,10 +21,31 @@ const (
 	Spotify Kind = "spotify"
 	// YouTube — метаданные достанет yt-dlp.
 	YouTube Kind = "youtube"
-	// Yandex — официального API нет, придётся читать саму страницу.
+	// Yandex — трек на Яндекс.Музыке. Что за трек, спрашиваем у самого
+	// Яндекса по открытой точке, см. yandex.go.
 	Yandex Kind = "yandex"
 	// VK — метаданные достанет yt-dlp, он умеет и VK.
 	VK Kind = "vk"
+
+	// Дальше — не один трек, а сразу пачка.
+	//
+	// Заказывают их отдельной наградой и по отдельным правилам: цена своя,
+	// число треков ограничено, и в эфир пачка идёт только после того, как её
+	// одобрил стример или модератор. Поэтому и вид ссылки отдельный: обычная
+	// награда за трек такие ссылки не принимает вовсе, иначе зритель отдал бы
+	// баллы за один трек и ждал бы сорок.
+
+	// SpotifyPlaylist — плейлист Spotify. Треки приезжают готовыми: искать
+	// ничего не надо, они уже там, где играют.
+	SpotifyPlaylist Kind = "spotify_playlist"
+	// SpotifyAlbum — альбом Spotify, тоже готовые треки.
+	SpotifyAlbum Kind = "spotify_album"
+	// YandexPlaylist — плейлист Яндекс.Музыки. Оттуда приезжают имена
+	// артистов и названия; играть каждый трек всё равно придётся из Spotify
+	// или с YouTube.
+	YandexPlaylist Kind = "yandex_playlist"
+	// YandexAlbum — альбом Яндекс.Музыки, то же самое.
+	YandexAlbum Kind = "yandex_album"
 )
 
 // Link — разобранная ссылка.
@@ -33,8 +54,22 @@ type Link struct {
 	// URL — очищенный адрес: без меток рекламных кампаний и прочего мусора,
 	// который ломает и сравнение, и запросы.
 	URL string
-	// ID — идентификатор трека, если он есть в самой ссылке.
+	// ID — идентификатор трека, если он есть в самой ссылке. У плейлиста
+	// Яндекса здесь его номер у владельца («kind» в терминах Яндекса).
 	ID string
+	// Owner — чей плейлист. Заполняется только у плейлистов Яндекса: там
+	// адрес состоит из логина владельца и номера, и без логина плейлист не
+	// запросить.
+	Owner string
+}
+
+// IsCollection сообщает, что по ссылке лежит не один трек, а пачка.
+func (l Link) IsCollection() bool {
+	switch l.Kind {
+	case SpotifyPlaylist, SpotifyAlbum, YandexPlaylist, YandexAlbum:
+		return true
+	}
+	return false
 }
 
 // Найденное — не ссылка, а адрес внутри текста: зрители пишут
@@ -46,6 +81,17 @@ var (
 	youtubeID    = regexp.MustCompile(`(?i)(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/)|youtu\.be/|music\.youtube\.com/watch\?(?:.*&)?v=)([a-zA-Z0-9_\-]{11})`)
 	yandexTrack  = regexp.MustCompile(`(?i)music\.yandex\.[a-z]+/(?:album/(\d+)/track/(\d+)|track/(\d+))`)
 	vkAny        = regexp.MustCompile(`(?i)(?:vk\.com|vk\.ru|vkvideo\.ru)/`)
+
+	// Пачки треков.
+	//
+	// Порядок проверки важен: ссылка на трек внутри альбома выглядит как
+	// «album/N/track/M», и если сначала искать альбом, трек потеряется — а
+	// зритель заказывал именно его.
+	spotifyList  = regexp.MustCompile(`(?i)(?:open\.spotify\.com/(?:intl-[a-z]{2}/)?playlist/|spotify:playlist:)([a-zA-Z0-9]{22})`)
+	spotifyAlbum = regexp.MustCompile(`(?i)(?:open\.spotify\.com/(?:intl-[a-z]{2}/)?album/|spotify:album:)([a-zA-Z0-9]{22})`)
+	// Логин владельца у Яндекса бывает с точками, дефисами и подчёркиваниями.
+	yandexList  = regexp.MustCompile(`(?i)music\.yandex\.[a-z]+/users/([a-zA-Z0-9._\-]{1,64})/playlists/(\d+)`)
+	yandexAlbum = regexp.MustCompile(`(?i)music\.yandex\.[a-z]+/album/(\d+)`)
 )
 
 // Find ищет в тексте ссылку и определяет, что это.
@@ -53,8 +99,19 @@ var (
 // Возвращает false, если ссылки нет или она не из тех, что мы умеем.
 func Find(text string) (Link, bool) {
 	// Спотифаевский uri пишется без http, поэтому его ищем прямо в тексте.
+	//
+	// Трек первым: ссылка на трек внутри альбома содержит и то и другое, а
+	// заказывал зритель именно трек.
 	if m := spotifyTrack.FindStringSubmatch(text); m != nil {
 		return Link{Kind: Spotify, ID: m[1], URL: "https://open.spotify.com/track/" + m[1]}, true
+	}
+	if m := spotifyList.FindStringSubmatch(text); m != nil {
+		return Link{Kind: SpotifyPlaylist, ID: m[1],
+			URL: "https://open.spotify.com/playlist/" + m[1]}, true
+	}
+	if m := spotifyAlbum.FindStringSubmatch(text); m != nil {
+		return Link{Kind: SpotifyAlbum, ID: m[1],
+			URL: "https://open.spotify.com/album/" + m[1]}, true
 	}
 
 	raw := urlPattern.FindString(text)
@@ -91,12 +148,18 @@ func Find(text string) (Link, bool) {
 
 	case host == "music.yandex.ru" || host == "music.yandex.com" ||
 		host == "music.yandex.by" || host == "music.yandex.kz" || host == "music.yandex.uz":
-		m := yandexTrack.FindStringSubmatch(raw)
-		if m == nil {
-			return Link{}, false
+		// Опять же трек первым: «album/N/track/M» — это трек, а не альбом.
+		if m := yandexTrack.FindStringSubmatch(raw); m != nil {
+			id := firstFilled(m[2], m[3])
+			return Link{Kind: Yandex, ID: id, URL: clean(raw)}, true
 		}
-		id := firstFilled(m[2], m[3])
-		return Link{Kind: Yandex, ID: id, URL: clean(raw)}, true
+		if m := yandexList.FindStringSubmatch(raw); m != nil {
+			return Link{Kind: YandexPlaylist, Owner: m[1], ID: m[2], URL: clean(raw)}, true
+		}
+		if m := yandexAlbum.FindStringSubmatch(raw); m != nil {
+			return Link{Kind: YandexAlbum, ID: m[1], URL: clean(raw)}, true
+		}
+		return Link{}, false
 
 	case hostIn(host, "vk.com", "vk.ru", "vkvideo.ru"):
 		return Link{Kind: VK, URL: clean(raw)}, true

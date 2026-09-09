@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -194,4 +195,45 @@ func (s *Server) handleModLog(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBans(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.musicBans())
+}
+
+// ── плейлисты, ждущие решения ────────────────────────────────────────
+//
+// Те же два действия, что и в чате, только кнопками. Одно и то же решение
+// принимают в двух местах нарочно: стример сидит перед панелью, а модератор —
+// в чате, и заставлять кого-то из них ходить в чужое место незачем.
+
+func (s *Server) handlePlaylistApprove(w http.ResponseWriter, r *http.Request) {
+	// Срок больше обычного: у плейлиста Яндекса каждый трек ещё надо найти в
+	// Spotify, а это запрос на трек. Пять треков — пять запросов подряд.
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+
+	p, added, err := s.approvePlaylist(ctx, r.PathValue("id"), panelActor)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+
+	tail := ""
+	if added < len(p.Tracks) {
+		tail = fmt.Sprintf(" (из %d — остальные не нашлись или слишком длинные)", len(p.Tracks))
+	}
+	s.say(ctx, fmt.Sprintf("Плейлист «%s» от %s одобрен: %d %s в очереди%s",
+		p.Title, p.Requester, added, plural(added, "трек", "трека", "треков"), tail))
+
+	writeJSON(w, map[string]any{"ok": true, "added": added})
+}
+
+func (s *Server) handlePlaylistReject(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	p, err := s.rejectPlaylist(ctx, r.PathValue("id"), panelActor)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.say(ctx, fmt.Sprintf("@%s, плейлист «%s» не одобрили. Баллы вернул.", p.Requester, p.Title))
+	writeJSON(w, map[string]bool{"ok": true})
 }

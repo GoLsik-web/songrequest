@@ -30,6 +30,25 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
 
+	// Плейлист в награде за трек — отдельный разговор.
+	//
+	// Раньше такой ссылки просто не существовало для приложения: она не
+	// опознавалась вовсе, текст после вырезания адреса оказывался пустым, и
+	// зритель получал «ты не написал, что заказываешь». Теперь плейлисты
+	// приложение читает, но за них платят другой наградой и по другой цене —
+	// и сказать об этом надо прямо, иначе человек будет кидать плейлист в ту
+	// же награду, пока не кончатся баллы.
+	if l, ok := links.Find(r.UserInput); ok && l.IsCollection() {
+		s.log.Info("плейлист заказан не той наградой",
+			"зритель", r.UserLogin, "ссылка", l.URL)
+		s.state.SetOrderMatch(r.ID, app.OrderMatch{
+			State: app.MatchFailed,
+			Note:  "Это плейлист, а не трек — нужна награда за плейлист",
+		})
+		s.rejectRedemption(s.afterSearch(base), r, s.playlistRewardHint())
+		return
+	}
+
 	// Ссылка важнее текста: зритель уже указал конкретный трек, и гадать
 	// по названию незачем.
 	link, hasLink := s.fromLink(ctx, r.UserInput)

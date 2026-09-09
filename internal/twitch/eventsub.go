@@ -62,12 +62,12 @@ func NewEventSub(c *Client) *EventSub {
 // Соединение рвётся по десятку причин — от перезагрузки роутера до плановой
 // переброски на другой сервер Twitch. Стример об этом знать не должен:
 // переподключаемся сами, с растущей паузой, и заново оформляем подписку.
-func (e *EventSub) Run(ctx context.Context, rewardID string) {
+func (e *EventSub) Run(ctx context.Context, rewardIDs []string) {
 	attempt := 0
 
 	for ctx.Err() == nil {
 		startedAt := time.Now()
-		err := e.session(ctx, rewardID)
+		err := e.session(ctx, rewardIDs)
 		if ctx.Err() != nil {
 			return
 		}
@@ -104,7 +104,7 @@ func (e *EventSub) Run(ctx context.Context, rewardID string) {
 }
 
 // session проживает одно соединение от приветствия до разрыва.
-func (e *EventSub) session(ctx context.Context, rewardID string) error {
+func (e *EventSub) session(ctx context.Context, rewardIDs []string) error {
 	conn, _, err := websocket.Dial(ctx, e.wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("не подключился к событиям Twitch: %w", err)
@@ -118,7 +118,7 @@ func (e *EventSub) session(ctx context.Context, rewardID string) error {
 	// Twitch может попросить переехать на другой адрес прямо посреди работы;
 	// подписки при этом переносятся сами, оформлять их заново не нужно.
 	for {
-		next, err := e.pump(ctx, conn, subscribe, rewardID, keepalive)
+		next, err := e.pump(ctx, conn, subscribe, rewardIDs, keepalive)
 		if err != nil || next == "" {
 			conn.CloseNow()
 			return err
@@ -236,7 +236,7 @@ var errRevoked = errs.New(errs.TwitchEventSub,
 // pump читает сообщения одного соединения. Возвращает адрес для переезда,
 // если Twitch попросил переподключиться.
 func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe bool,
-	rewardID string, keepalive time.Duration) (string, error) {
+	rewardIDs []string, keepalive time.Duration) (string, error) {
 
 	for {
 		readCtx, cancel := context.WithTimeout(ctx, keepalive+15*time.Second)
@@ -277,7 +277,7 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 			if subscribe {
 				// Подписку надо оформить быстро: Twitch рвёт неиспользуемое
 				// соединение через десять секунд после приветствия.
-				if err := e.subscribe(ctx, p.Session.ID, rewardID); err != nil {
+				if err := e.subscribe(ctx, p.Session.ID, rewardIDs); err != nil {
 					return "", err
 				}
 				if e.OnChat != nil {
@@ -290,18 +290,19 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 			// вход в Twitch выдан до того, как приложение стало просить право
 			// на чтение чата: заказы за баллы при этом идут как ни в чём не
 			// бывало, а !скип молчит.
+			points := len(rewardIDs) > 0
 			switch {
-			case !chatOK && rewardID == "":
+			case !chatOK && !points:
 				e.status(true, "команды в чате не работают — подключи Twitch заново")
 			case !chatOK:
 				e.status(true, "заказы принимаются, но команды в чате не работают")
-			case rewardID == "":
+			case !points:
 				e.status(true, "чат подключён, баллов на канале нет")
 			default:
 				e.status(true, "заказы принимаются")
 			}
 			e.client.log.Info("подписка на события Twitch активна",
-				"заказы_за_баллы", rewardID != "", "чат", chatOK,
+				"наград", len(rewardIDs), "чат", chatOK,
 				"молчание_до", keepalive.String())
 
 		case "session_keepalive":
@@ -406,43 +407,48 @@ func cleanInput(s string) string {
 }
 
 // subscribe оформляет подписку на заказы за баллы.
-func (e *EventSub) subscribe(ctx context.Context, sessionID, rewardID string) error {
+//
+// Наград может быть две — за трек и за плейлист, — и подписка у Twitch своя на
+// каждую: в условии подписки лежит номер одной награды. Без фильтра по награде
+// посыпались бы события от всех наград канала, включая чужие, за которые мы
+// даже баллы вернуть не можем.
+func (e *EventSub) subscribe(ctx context.Context, sessionID string, rewardIDs []string) error {
 	user := e.client.Account()
 	if user == nil {
 		return errs.New(errs.TwitchAuthExpired, "Сначала подключи Twitch.")
 	}
 
-	// Пустой номер награды означает «баллов на канале нет».
+	// Наград нет вовсе — значит нет и баллов на канале.
 	//
 	// Подписываться на заказы за баллы там бессмысленно — Twitch откажет, а
 	// отказ уронит всё соединение. Но само соединение нужно: только через
 	// него работает чат, то есть команды `!очередь`, `!скип` и любые ответы
 	// зрителям. Раньше на таком канале молчала вся вторая половина
 	// приложения, и выглядело это как «половина мертва».
-	if rewardID == "" {
+	if len(rewardIDs) == 0 {
 		e.client.log.Info("баллов на канале нет — подписываюсь только на чат")
 		return nil
 	}
 
-	condition := map[string]any{
-		"broadcaster_user_id": user.ID,
-		// Фильтр по награде: без него посыплются события от всех наград
-		// канала, включая чужие, за которые мы даже баллы вернуть не можем.
-		"reward_id": rewardID,
-	}
-
-	body := map[string]any{
-		"type":      "channel.channel_points_custom_reward_redemption.add",
-		"version":   "1",
-		"condition": condition,
-		"transport": map[string]any{
-			"method":     "websocket",
-			"session_id": sessionID,
-		},
-	}
-
-	if err := e.client.do(ctx, http.MethodPost, "/eventsub/subscriptions", body, nil); err != nil {
-		return errs.Wrap(errs.TwitchEventSub, "Не получилось подписаться на заказы.", err)
+	for _, rewardID := range rewardIDs {
+		if rewardID == "" {
+			continue
+		}
+		body := map[string]any{
+			"type":    "channel.channel_points_custom_reward_redemption.add",
+			"version": "1",
+			"condition": map[string]any{
+				"broadcaster_user_id": user.ID,
+				"reward_id":           rewardID,
+			},
+			"transport": map[string]any{
+				"method":     "websocket",
+				"session_id": sessionID,
+			},
+		}
+		if err := e.client.do(ctx, http.MethodPost, "/eventsub/subscriptions", body, nil); err != nil {
+			return errs.Wrap(errs.TwitchEventSub, "Не получилось подписаться на заказы.", err)
+		}
 	}
 	return nil
 }

@@ -79,6 +79,11 @@
 <main>
   <section class="stage" id="stage"></section>
 
+  <!-- Плейлисты, ждущие решения. Стоят выше очереди нарочно: это то, что
+       требует действия человека, а очередь идёт сама. Пусто — блока нет
+       вовсе, чтобы он не занимал место в обычный вечер. -->
+  <section class="pls" id="playlists" hidden></section>
+
   <div class="lower">
     <section class="orders">
       <div class="kicker">
@@ -280,6 +285,46 @@
         вернёт своё.
         <br>Сними галочку, если хочешь завести награду сам: тогда приложение
         не будет её создавать.</div>
+
+      <div class="kicker" style="margin-top:24px">Заказ плейлиста</div>
+      <label class="check">
+        <input type="checkbox" id="pl-on">
+        Вторая награда — за плейлист
+      </label>
+      <div class="hint">Отдельная награда на канале: зритель кидает ссылку на
+        плейлист или альбом Spotify либо Яндекс.Музыки. Сама в эфир она не
+        идёт — ждёт, пока ты или модератор её одобрит.</div>
+
+      <div id="pl-fields" hidden>
+        <label class="field" style="margin-top:12px">
+          <span>Название награды на Twitch</span>
+          <input type="text" id="pl-title" spellcheck="false" autocomplete="off"
+                 placeholder="Заказ плейлиста">
+        </label>
+
+        <label class="field">
+          <span>Сколько треков берём из плейлиста</span>
+          <input type="number" id="pl-max" min="1" max="20" step="1" inputmode="numeric">
+        </label>
+        <div class="hint">Остальные не попадут в очередь вовсе. Зрителю в чате
+          пишется, сколько взяли и из скольких.</div>
+
+        <label class="field" style="margin-top:12px">
+          <span>Выгоднее поштучного заказа, на <b id="pl-off-val">20%</b></span>
+          <input type="range" id="pl-off" min="0" max="90" step="5">
+        </label>
+
+        <div class="sum" id="pl-sum"></div>
+
+        <label class="check" style="margin-top:12px">
+          <input type="checkbox" id="pl-own-cost">
+          Своя цена вместо посчитанной
+        </label>
+        <label class="field" id="pl-cost-field" hidden>
+          <span>Сколько стоит плейлист, баллов</span>
+          <input type="number" id="pl-cost" min="1" step="1" inputmode="numeric">
+        </label>
+      </div>
 
       <label class="field" style="margin-top:16px">
         <span>Не длиннее, минут</span>
@@ -525,13 +570,18 @@
     <div class="wx-left">
       <div class="wx-stage" id="wx-stage" data-scene="dark">
         <div class="wx-scene"></div>
-        <div class="card show" id="wx-card">
-          <div class="art" id="wx-art"></div>
-          <div class="text">
-            <div class="title" id="wx-title">Bohemian Rhapsody</div>
-            <div class="artist" id="wx-artist">Queen</div>
-            <div class="by" id="wx-by">заказал zritel</div>
-            <div class="bar"><i id="wx-bar"></i></div>
+        <!-- Сетка точек привязки. Видна только пока плашку тащат: постоянная
+             разметка поверх кадра мешала бы смотреть на сам виджет. -->
+        <div class="wx-grid" id="wx-grid" aria-hidden="true"></div>
+        <div class="slot" id="wx-slot">
+          <div class="card show" id="wx-card">
+            <div class="art" id="wx-art"></div>
+            <div class="text">
+              <div class="title" id="wx-title">Bohemian Rhapsody</div>
+              <div class="artist" id="wx-artist">Queen</div>
+              <div class="by" id="wx-by">заказал zritel</div>
+              <div class="bar"><i id="wx-bar"></i></div>
+            </div>
           </div>
         </div>
       </div>
@@ -567,15 +617,36 @@
     <div class="wx-right">
       <div class="kicker">Как поставить</div>
 
+      <div class="field">
+        <span>Место в кадре</span>
+        <!-- Девять точек вместо четырёх углов: «сверху по центру» и «слева
+             посередине» раньше приходилось изображать огромным отступом от
+             угла, и на другом разрешении кадра плашка уезжала не туда. -->
+        <div class="wx-anchors" id="wx-anchors">
+          <button data-pos="left-top"      title="Слева сверху"></button>
+          <button data-pos="center-top"    title="Сверху по центру"></button>
+          <button data-pos="right-top"     title="Справа сверху"></button>
+          <button data-pos="left-middle"   title="Слева посередине"></button>
+          <button data-pos="center-middle" title="Ровно посередине"></button>
+          <button data-pos="right-middle"  title="Справа посередине"></button>
+          <button data-pos="left-bottom"   title="Слева снизу"></button>
+          <button data-pos="center-bottom" title="Снизу по центру"></button>
+          <button data-pos="right-bottom"  title="Справа снизу"></button>
+        </div>
+        <span class="hint" id="wx-pos-hint">Плашку можно просто перетащить
+          мышью прямо по кадру — точка привязки и отступы подставятся сами.</span>
+      </div>
+
       <label class="field">
-        <span>Угол кадра</span>
-        <select id="wx-pos">
-          <option value="left-bottom">Слева снизу</option>
-          <option value="right-bottom">Справа снизу</option>
-          <option value="left-top">Слева сверху</option>
-          <option value="right-top">Справа сверху</option>
+        <span>Текст внутри плашки</span>
+        <select id="wx-align">
+          <option value="auto">Как встанет — по стороне кадра</option>
+          <option value="left">Прижать влево</option>
+          <option value="center">По центру</option>
+          <option value="right">Прижать вправо</option>
         </select>
-        <span class="hint" id="wx-pos-hint"></span>
+        <span class="hint">Плашка стоит справа — текст упирается в правый край,
+          слева — в левый. Обложка при этом остаётся на своём месте.</span>
       </label>
 
       <label class="field">
@@ -584,8 +655,19 @@
       </label>
 
       <label class="field">
-        <span>Отступ от края <b id="wx-gap-val">40</b></span>
-        <input type="range" id="wx-gap" min="0" max="160" step="4">
+        <span>Отступ слева-справа <b id="wx-gapx-val">40 px</b></span>
+        <input type="range" id="wx-gapx" min="0" max="320" step="2">
+      </label>
+
+      <label class="field">
+        <span>Отступ сверху-снизу <b id="wx-gapy-val">40 px</b></span>
+        <input type="range" id="wx-gapy" min="0" max="320" step="2">
+      </label>
+
+      <label class="field">
+        <span>Прозрачность <b id="wx-op-val">100%</b></span>
+        <input type="range" id="wx-op" min="10" max="100" step="5">
+        <span class="hint">Вся плашка целиком, вместе с текстом и обложкой.</span>
       </label>
 
       <div class="kicker" style="margin-top:24px">Что показывать</div>
@@ -602,12 +684,36 @@
         «музыка канала». Сними галочку, если свой плейлист светить не хочешь —
         тогда и в панели «В эфире» будет только во время заказов.</div>
 
-      <label class="field" style="margin-top:16px">
-        <span>Убирать через <b id="wx-hold-val">не убирать</b></span>
-        <input type="range" id="wx-hold" min="0" max="60" step="5">
-        <span class="hint">Ноль — плашка висит весь трек. Иначе исчезнет через
-          столько секунд после его начала.</span>
+      <div class="kicker" style="margin-top:24px">Когда показывать</div>
+
+      <label class="field">
+        <span>Как держится в кадре</span>
+        <select id="wx-mode">
+          <option value="always">Висит всё время</option>
+          <option value="flash">Всплывает и уходит</option>
+        </select>
+        <span class="hint" id="wx-mode-hint"></span>
       </label>
+
+      <div id="wx-flash" hidden>
+        <label class="check"><input type="checkbox" id="wx-onchange"> Всплывать при смене трека</label>
+        <div class="hint">Главный повод показать плашку: заиграло что-то новое.</div>
+
+        <label class="field" style="margin-top:12px">
+          <span>Держать на экране <b id="wx-hold-val">15 с</b></span>
+          <input type="range" id="wx-hold" min="3" max="60" step="1">
+        </label>
+
+        <label class="field">
+          <span>Напоминать <b id="wx-every-val">не напоминать</b></span>
+          <input type="range" id="wx-every" min="0" max="30" step="1">
+          <span class="hint">Плашка всплывает снова через этот срок — чтобы
+            зашедший в середине трека тоже узнал, что играет. Появление и уход
+            с той же анимацией, что и обычно.</span>
+        </label>
+
+        <button class="act small" id="wx-flash-try">Показать, как это выглядит</button>
+      </div>
 
       <div class="kicker" style="margin-top:24px">
         Своими руками

@@ -168,9 +168,12 @@ type Server struct {
 	snap   *spotify.Snapshot
 
 	// mu защищает то, что заполняется по ходу подключения Twitch.
-	mu            sync.Mutex
-	rewardID      string
-	eventsRunning bool
+	mu       sync.Mutex
+	rewardID string
+	// playlistRewardID — вторая награда, за плейлист. Пусто, если она
+	// выключена в настройках или создать её не вышло.
+	playlistRewardID string
+	eventsRunning    bool
 	// eventsReward — награда, на которую подписана живая подписка. Если она
 	// разошлась с текущей, подписку надо поднимать заново.
 	eventsReward string
@@ -181,6 +184,33 @@ type Server struct {
 	// историю пишет плеер, а имя человека знает только панель.
 	skipActor string
 
+	// skipRefund — вернуть ли баллы за оборванный заказ.
+	//
+	// Раньше скип баллы не возвращал вовсе, и это была самая частая жалоба
+	// зрителей: заказ оборвали на десятой секунде, а баллы списаны целиком.
+	// Теперь возвращаются всегда, но признак всё равно нужен: заказ уходит с
+	// эфира и по другим причинам (перескочили в самом Spotify, заказ бросили
+	// на середине), и решение «возвращать или нет» принимает то место,
+	// которое эту причину знает.
+	skipRefund bool
+
+	// lastSkip — заказ, оборванный последним, и когда это случилось.
+	// Нужен команде «!вернуть»: скипнули не то, и трек надо поставить обратно.
+	// Живёт до следующего скипа.
+	lastSkip     *queue.Item
+	lastSkipAt   time.Time
+	lastSkipWho  string
+	lastSkipBack bool
+
+	// ownPaused — стоит ли на паузе музыка самого стримера.
+	//
+	// Спросить об этом Spotify нельзя: программа Spotify заголовок окна на
+	// паузе посреди трека не меняет, а лишний запрос по сети — та самая
+	// частота, из-за которой заказы однажды встали на четыре часа. Поэтому
+	// помним своё же нажатие: приложение само эту паузу и поставило.
+	// Сбрасывается, когда трек сменился, — значит музыка снова идёт.
+	ownPaused atomic.Bool
+
 	// playing — что сейчас в эфире, в виде «последнего трека». Нужно только
 	// затем, чтобы заметить момент, когда трек ушёл: см. noteLastPlayed.
 	playing *app.LastPlayed
@@ -188,6 +218,15 @@ type Server struct {
 	// ownNow — то, что стример слушает сам между заказами. Показывается в
 	// виджете, когда очередь пуста.
 	ownNow *app.NowPlaying
+
+	// playlists — заказанные плейлисты, которые ждут решения стримера или
+	// модератора. См. internal/server/playlists.go: сам собой плейлист в
+	// эфир не идёт никогда.
+	playlists []pendingPlaylist
+	// playlistNo — счётчик номеров для этих плейлистов. Номер нужен командам
+	// в чате: «одобрить 2». В номера очереди он не превращается — очередь
+	// двигается, а этот номер обязан пережить любое движение.
+	playlistNo int64
 }
 
 // New поднимает слушатель на 127.0.0.1. Если желаемый порт занят, берём любой
@@ -227,6 +266,11 @@ func New(d Deps) (*Server, error) {
 		// Что играло в прошлый раз — читается сразу: панель на пустом месте
 		// должна сказать что-то осмысленное ещё до первого заказа.
 		s.loadLastPlayed()
+		// Плейлисты, оставшиеся без решения. Забыть их при перезапуске
+		// значило бы молча съесть чужие баллы: заказ оплачен, а решать по
+		// нему уже нечего.
+		s.loadPlaylists()
+		s.syncPlaylists()
 	}
 	s.setupDonations()
 	s.yandex = links.NewYandexReader()
@@ -279,8 +323,8 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /api/player/seek", s.handlePlayerSeek)
 	mux.HandleFunc("POST /api/player/volume", s.handlePlayerVolume)
 	mux.HandleFunc("POST /api/player/prev", s.handlePlayerPrev)
-	// «Дальше» — тот же скип: заказ уходит с эфира, играет следующий.
-	mux.HandleFunc("POST /api/player/next", s.handleSkip)
+	// «Дальше»: у заказа это скип, у своей музыки — следующий трек плейлиста.
+	mux.HandleFunc("POST /api/player/next", s.handlePlayerNext)
 	mux.HandleFunc("POST /api/player/repeat", s.handlePlayerRepeat)
 	mux.HandleFunc("POST /api/queue/{id}/remove", s.handleQueueRemove)
 	mux.HandleFunc("POST /api/queue/{id}/top", s.handleQueueTop)
@@ -288,6 +332,10 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("POST /api/queue/reorder", s.handleQueueReorder)
 	mux.HandleFunc("POST /api/queue/clear", s.handleQueueClear)
+
+	// Плейлисты, ждущие решения. См. internal/server/playlists.go.
+	mux.HandleFunc("POST /api/playlists/{id}/approve", s.handlePlaylistApprove)
+	mux.HandleFunc("POST /api/playlists/{id}/reject", s.handlePlaylistReject)
 	mux.HandleFunc("POST /api/queue/pause", s.handlePause)
 	mux.HandleFunc("POST /api/bans", s.handleBan)
 	mux.HandleFunc("GET /api/bans", s.handleBans)

@@ -18,6 +18,12 @@ import (
 // чтобы приложение не плодило по новой награде на каждый старт.
 const kvRewardID = "twitch_reward_id"
 
+// kvPlaylistRewardID — то же самое для второй награды, за плейлист.
+// Отдельным ключом, а не полем рядом: наградами приложение управляет
+// поодиночке, и путать их номера нельзя — за чужую награду Twitch не даст
+// вернуть баллы.
+const kvPlaylistRewardID = "twitch_playlist_reward_id"
+
 func (s *Server) handleTwitchLogin(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -105,7 +111,7 @@ func (s *Server) startTwitch(ctx context.Context) {
 		// Соединение с Twitch всё равно поднимаем: через него работает чат,
 		// то есть команды и все ответы зрителям. Без него на канале без
 		// баллов молчала половина приложения.
-		s.startEventSub(ctx, "")
+		s.startEventSub(ctx, nil)
 		return
 	}
 
@@ -142,6 +148,13 @@ func (s *Server) startTwitch(ctx context.Context) {
 	})
 	s.state.Notify("info", "Награда «"+reward.Title+"» готова, стоит "+strconv.Itoa(reward.Cost)+" баллов")
 
+	// Вторая награда — за плейлист. Её может не быть вовсе: это отдельная
+	// галочка в настройках, и включают её не все.
+	//
+	// Отказ здесь не роняет первую награду: заказы поштучно должны работать,
+	// даже если со второй наградой что-то не заладилось.
+	playlistID := s.ensurePlaylistReward(checkCtx)
+
 	// Предупреждаем заранее: доступ к Twitch у публичных приложений живёт
 	// тридцать дней, и «заказы перестали приходить» посреди стрима — худший
 	// момент, чтобы это выяснить.
@@ -152,7 +165,7 @@ func (s *Server) startTwitch(ctx context.Context) {
 			days, plural(days, "день", "дня", "дней")))
 	}
 
-	s.startEventSub(ctx, reward.ID)
+	s.startEventSub(ctx, []string{reward.ID, playlistID})
 }
 
 // warnAboutScopes говорит, если вход в Twitch выдан без нужных прав.
@@ -185,8 +198,15 @@ func (s *Server) warnAboutScopes() {
 }
 
 // startEventSub поднимает подписку на заказы, если она ещё не поднята.
-func (s *Server) startEventSub(ctx context.Context, rewardID string) {
+func (s *Server) startEventSub(ctx context.Context, rewardIDs []string) {
 	s.warnAboutScopes()
+
+	// Пустые номера выбрасываем: наград бывает одна, две или ни одной, а
+	// подписываться на пустоту нельзя — Twitch откажет и уронит соединение
+	// вместе с чатом.
+	rewardIDs = notEmpty(rewardIDs)
+	// Подпись всего набора одной строкой: по ней видно, изменился ли он.
+	rewardID := strings.Join(rewardIDs, ",")
 
 	s.mu.Lock()
 	if s.eventsRunning {
@@ -225,7 +245,7 @@ func (s *Server) startEventSub(ctx context.Context, rewardID string) {
 	}
 
 	go func() {
-		events.Run(ctx, rewardID)
+		events.Run(ctx, rewardIDs)
 		s.mu.Lock()
 		// Гасим флаг, только если это всё ещё наша подписка: более свежая
 		// могла подняться, пока эта доживала.
@@ -253,8 +273,16 @@ func (s *Server) onRedemption(r twitch.Redemption) {
 	})
 	s.state.Notify("info", "Заказ от "+r.UserName+": "+r.UserInput)
 
+	// Наград две, и заказы у них разные: за трек ищем один трек, за плейлист
+	// читаем пачку и кладём её ждать одобрения. Разбираемся здесь, по номеру
+	// награды: дальше по коду это уже две разные дороги.
+	//
 	// Подбор идёт в фоне: EventSub ждать нельзя, иначе следующие заказы
 	// встанут в очередь за этим.
+	if playlist := s.playlistReward(); playlist != "" && r.RewardID == playlist {
+		go s.resolvePlaylist(s.baseContext(), r)
+		return
+	}
 	go s.resolveOrder(s.baseContext(), r)
 }
 
@@ -422,10 +450,16 @@ func (s *Server) pushReward() {
 	s.rewardID = reward.ID
 	s.mu.Unlock()
 
+	// Награду за плейлист правки тоже касаются: её цена считается от цены
+	// трека, и после смены цены она обязана поехать следом. Заодно это
+	// создаёт награду, если галочку только что поставили, и убирает, если
+	// сняли.
+	playlistID := s.ensurePlaylistReward(ctx)
+
 	// Награду могли пересоздать — тогда подписка ждёт события по старому
 	// номеру, и заказы просто не придут.
-	if changed {
-		s.startEventSub(s.baseContext(), reward.ID)
+	if changed || playlistID != "" {
+		s.startEventSub(s.baseContext(), []string{reward.ID, playlistID})
 	}
 
 	s.syncTwitchInfo()
@@ -465,4 +499,82 @@ func (s *Server) dropFromQueue(redemptionID string) {
 		s.syncPlayback()
 		return
 	}
+}
+
+// notEmpty выбрасывает пустые номера наград.
+func notEmpty(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// ensurePlaylistReward приводит награду за плейлист в согласие с настройками.
+//
+// Возвращает её номер или пустую строку, если награды быть не должно либо
+// создать её не вышло. Отказ здесь нарочно не считается бедой: заказы
+// поштучно — главное, что делает приложение, и ронять их из-за второй награды
+// нельзя. О неудаче человек узнаёт из панели, а не из молчания.
+func (s *Server) ensurePlaylistReward(ctx context.Context) string {
+	known, _, err := s.db.GetKV(kvPlaylistRewardID)
+	if err != nil {
+		s.log.Warn("не прочитал прежнюю награду за плейлист", "ошибка", err)
+	}
+
+	if !s.cfg.Get().PlaylistReward {
+		// Галочку сняли — гасим награду на канале, чтобы зрители её не
+		// нажимали. Именно гасим, а не удаляем: удалённая награда уносит с
+		// собой историю, а вернуть её обратно одним нажатием уже нельзя.
+		if known != "" {
+			if err := s.twitch.SetRewardPaused(ctx, known, true); err != nil {
+				s.log.Warn("не выключил награду за плейлист", "ошибка", err)
+			}
+		}
+		s.state.UpdateTwitch(func(t *app.TwitchInfo) {
+			t.PlaylistReady = false
+			t.PlaylistTitle = ""
+			t.PlaylistCost = 0
+		})
+		return ""
+	}
+
+	reward, err := s.twitch.EnsurePlaylistReward(ctx, known)
+	if err != nil {
+		code, text := errs.Describe(err)
+		s.log.Warn("не создал награду за плейлист", "код", code, "ошибка", err)
+		s.state.NotifyWarn(code, "Награда за плейлист: "+text)
+		s.state.UpdateTwitch(func(t *app.TwitchInfo) { t.PlaylistReady = false })
+		return ""
+	}
+
+	if err := s.db.SetKV(kvPlaylistRewardID, reward.ID); err != nil {
+		s.log.Warn("не запомнил награду за плейлист", "ошибка", err)
+	}
+
+	s.mu.Lock()
+	changed := s.playlistRewardID != reward.ID
+	s.playlistRewardID = reward.ID
+	s.mu.Unlock()
+
+	s.state.UpdateTwitch(func(t *app.TwitchInfo) {
+		t.PlaylistReady = true
+		t.PlaylistTitle = reward.Title
+		t.PlaylistCost = reward.Cost
+	})
+	if changed {
+		s.state.Notify("info", "Награда «"+reward.Title+"» готова, стоит "+
+			strconv.Itoa(reward.Cost)+" баллов за "+
+			strconv.Itoa(s.cfg.Get().PlaylistTrackCount())+" треков")
+	}
+	return reward.ID
+}
+
+// playlistReward — номер награды за плейлист прямо сейчас.
+func (s *Server) playlistReward() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.playlistRewardID
 }

@@ -152,3 +152,74 @@ func TestRealHostsStillParse(t *testing.T) {
 		}
 	}
 }
+
+// ── ссылки на пачки треков ───────────────────────────────────────────
+//
+// Плейлисты и альбомы заказывают отдельной наградой, поэтому отличать их от
+// одного трека надо надёжно. Самое опасное место — ссылка на трек внутри
+// альбома: она выглядит и как трек, и как альбом, а зритель заказывал трек.
+
+func TestFindCollections(t *testing.T) {
+	cases := []struct {
+		text  string
+		kind  Kind
+		id    string
+		owner string
+	}{
+		{"https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M", SpotifyPlaylist, "37i9dQZF1DXcBWIGoYBM5M", ""},
+		{"spotify:playlist:37i9dQZF1DXcBWIGoYBM5M", SpotifyPlaylist, "37i9dQZF1DXcBWIGoYBM5M", ""},
+		{"https://open.spotify.com/intl-ru/album/1ATL5GLyefJaxhQzSPVrLX", SpotifyAlbum, "1ATL5GLyefJaxhQzSPVrLX", ""},
+		{"кинь вот это https://music.yandex.ru/users/music-blog/playlists/2137 пж", YandexPlaylist, "2137", "music-blog"},
+		{"https://music.yandex.ru/album/5307396", YandexAlbum, "5307396", ""},
+	}
+	for _, c := range cases {
+		link, ok := Find(c.text)
+		if !ok {
+			t.Errorf("%q не опознана вовсе", c.text)
+			continue
+		}
+		if link.Kind != c.kind || link.ID != c.id || link.Owner != c.owner {
+			t.Errorf("%q → вид %q id %q владелец %q; ждали %q %q %q",
+				c.text, link.Kind, link.ID, link.Owner, c.kind, c.id, c.owner)
+		}
+		if !link.IsCollection() {
+			t.Errorf("%q не считается пачкой треков", c.text)
+		}
+	}
+}
+
+// Ссылка на трек внутри альбома — это трек. Если спутать, зритель заказал одну
+// песню, а приложение поставило бы весь альбом.
+func TestTrackInsideAlbumStaysTrack(t *testing.T) {
+	for _, text := range []string{
+		"https://music.yandex.ru/album/5307396/track/38633712",
+		"https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
+		"spotify:track:4cOdK2wGLETKBW3PvgPWqT",
+	} {
+		link, ok := Find(text)
+		if !ok {
+			t.Fatalf("%q не опознана", text)
+		}
+		if link.IsCollection() {
+			t.Errorf("%q принята за плейлист (вид %q)", text, link.Kind)
+		}
+	}
+}
+
+// Один трек пачкой не считается — иначе обычный заказ уходил бы не в ту
+// награду и зритель получал бы отказ на ровном месте.
+func TestSingleTracksAreNotCollections(t *testing.T) {
+	for _, text := range []string{
+		"https://youtu.be/dQw4w9WgXcQ",
+		"https://music.yandex.ru/track/38633712",
+		"https://vk.com/video-1_1",
+	} {
+		link, ok := Find(text)
+		if !ok {
+			t.Fatalf("%q не опознана", text)
+		}
+		if link.IsCollection() {
+			t.Errorf("%q принята за пачку", text)
+		}
+	}
+}
