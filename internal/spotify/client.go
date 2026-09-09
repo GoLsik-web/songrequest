@@ -293,6 +293,29 @@ func (c *Client) CheckAccount(ctx context.Context) (*Me, error) {
 
 // rememberCheck запоминает неудачу, чтобы панель назвала код, а не разводила
 // руками.
+// isQuotaExceeded распознаёт «кончился дневной запас» в ответе Spotify.
+//
+// С июля 2026 Spotify кладёт в тело отказа 429 поле reason. Значение
+// QUOTA_EXCEEDED означает, что исчерпан объём на весь аккаунт разработчика, а
+// не что мы стучимся слишком часто. Разбираем мягко: не разобралось — просто
+// считаем обычным ограничением по темпу, как считали раньше.
+func isQuotaExceeded(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	var out struct {
+		Reason string `json:"reason"`
+		Error  struct {
+			Reason string `json:"reason"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return false
+	}
+	return strings.EqualFold(out.Reason, "QUOTA_EXCEEDED") ||
+		strings.EqualFold(out.Error.Reason, "QUOTA_EXCEEDED")
+}
+
 func (c *Client) rememberCheck(err error) {
 	c.mu.Lock()
 	c.checked = true
@@ -404,12 +427,26 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			// стриме просто вставала на часы без единого слова в панели.
 			wait := retryAfter(resp, attempt)
 			c.noteRateHit()
+			// Spotify научился различать две разные беды, и они лечатся
+			// по-разному. «Слишком часто» — это темп: сбавил и работаешь
+			// дальше. «Кончился запас» (QUOTA_EXCEEDED) — это дневной объём на
+			// весь аккаунт разработчика, и сбавлять темп поздно, надо ждать.
+			// Без этого различия человек видел одно и то же слово и не понимал,
+			// почему пауза то двадцать секунд, то двадцать один час.
+			quota := isQuotaExceeded(data)
 			if wait > maxRateWait {
 				// Запоминаем срок и до него молчим: иначе следующий же опрос
 				// плеера (через секунду) постучится снова.
 				if c.setRateUntil(rateGroup(path), time.Now().Add(wait)) {
 					c.log.Error("Spotify просит слишком долгую паузу, ждать не будем",
-						"путь", path, "пауза", wait.String())
+						"путь", path, "пауза", wait.String(), "кончился_запас", quota)
+				}
+				if quota {
+					return errs.New(errs.SpotifyQuota,
+						"У приложения кончился дневной запас запросов к Spotify. "+
+							"Он вернётся сам через "+wait.Round(time.Minute).String()+
+							". Заказы до тех пор играть не будут; нажимать «Проверить связь» "+
+							"бесполезно — это только продлевает срок.")
 				}
 				return errs.New(errs.SpotifyRateLimit,
 					"Spotify временно ограничил приложение и просит долгую паузу ("+
