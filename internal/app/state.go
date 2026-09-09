@@ -306,9 +306,47 @@ type Snapshot struct {
 	YouTube YouTubeInfo `json:"youtube"`
 	// Tunnel — обход блокировок: включён ли и через какой сервер.
 	Tunnel TunnelInfo `json:"tunnel"`
+	// Update — что известно про обновление приложения.
+	Update UpdateInfo `json:"update"`
 	// Widget — оформление виджета. Едет вместе с состоянием, чтобы правка в
 	// панели доезжала до OBS сразу: перезагружать источник не нужно.
 	Widget any `json:"widget"`
+}
+
+// UpdateInfo — что известно про обновление приложения.
+//
+// Приложение само в интернет за обновлениями не ходит: проверка только по
+// кнопке. Поэтому здесь почти всегда пусто, и кнопка «Обновить» появляется
+// ровно тогда, когда человек нажал «Проверить» и обновление правда есть.
+type UpdateInfo struct {
+	// Repo — откуда берём выпуски, «имя/репозиторий» на GitHub. Пусто —
+	// обновляться неоткуда, и панель говорит об этом словами.
+	Repo string `json:"repo"`
+	// Current — версия, которая работает прямо сейчас.
+	Current string `json:"current"`
+
+	// Checking и Installing — идёт ли прямо сейчас проверка или установка.
+	// Панель по ним гасит кнопки: обе работы долгие, и второе нажатие
+	// посреди первой ничего хорошего не даст.
+	Checking   bool `json:"checking"`
+	Installing bool `json:"installing"`
+
+	// Available — есть что ставить. Только по этому признаку панель
+	// показывает кнопку «Обновить».
+	Available bool   `json:"available"`
+	Version   string `json:"version"`
+	// Notes — что изменилось, как написано в выпуске.
+	Notes string `json:"notes"`
+	Size  int64  `json:"size"`
+
+	CheckedAt *time.Time `json:"checked_at"`
+
+	// Note и NoteCode — чем кончилась последняя попытка, словами и кодом.
+	Note     string `json:"note"`
+	NoteCode string `json:"note_code"`
+	// Page — страница выпусков, куда отправить человека, если обновиться
+	// само не вышло.
+	Page string `json:"page"`
 }
 
 // PlaylistView — заказанный плейлист, который ждёт решения стримера.
@@ -393,6 +431,7 @@ type State struct {
 	lastPlayed  *LastPlayed
 	queue       []QueueItem
 	playlists   []PlaylistView
+	update      UpdateInfo
 	notices     []Notice
 	paused      bool
 	version     string
@@ -557,6 +596,14 @@ func (s *State) SetTwitch(info TwitchInfo) {
 }
 
 // UpdateTwitch меняет часть сведений о Twitch, не трогая остальные.
+func (s *State) UpdateSelf(fn func(*UpdateInfo)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn(&s.update)
+	s.notify()
+}
+
+// UpdateTwitch меняет карточку Twitch.
 func (s *State) UpdateTwitch(fn func(*TwitchInfo)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -697,6 +744,7 @@ func (s *State) Snapshot() Snapshot {
 		App:         Marker,
 		Queue:       append(make([]QueueItem, 0, len(s.queue)), s.queue...),
 		Playlists:   append(make([]PlaylistView, 0, len(s.playlists)), s.playlists...),
+		Update:      s.update,
 		Notices:     append(make([]Notice, 0, len(s.notices)), s.notices...),
 		Paused:      s.paused,
 		Version:     s.version,

@@ -785,6 +785,9 @@ footer {
 }
 footer.offline { color: var(--bad); }
 footer.online { color: var(--dimmer); }
+/* Сказать нечего — полосы нет. У неё своя подложка и рамка, и пустая она
+   выглядит как «что-то тут было, да пропало». */
+footer[hidden] { display: none; }
 
 /* Кому анимации мешают — их не будет. Прогресс-полоса и так показывает
    время, а остальное здесь помогает заметить изменение, не более. */
@@ -1590,6 +1593,23 @@ body.menu-open { overflow: hidden; }
   .menu-sheet { transform: none; }
   .tab-pane, .panel { animation: none; }
 }
+
+/* Кнопка обновления в верхней полосе. Лаймовая, потому что это единственное
+   место, где приложение само просит что-то сделать. */
+.tail-btn.go { color: var(--ink); background: var(--lime); border-color: var(--lime); }
+.tail-btn.go:hover { filter: brightness(1.06); }
+.tail-btn.go:disabled { opacity: .6; cursor: default; filter: none; }
+.tail-btn[hidden] { display: none; }
+
+/* Что изменилось в новой версии. Моноширинным нарочно: это список правок,
+   а не проза, и в нём бывают номера версий и имена файлов. */
+.upd-notes {
+  margin-top: var(--s3);
+  max-height: 180px; overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px; line-height: 1.5;
+}
+.upd-notes[hidden] { display: none; }
 
 /* ── плейлисты, ждущие решения ─────────────────────────────────────────
    Блок стоит между эфиром и очередью: это то, что требует действия

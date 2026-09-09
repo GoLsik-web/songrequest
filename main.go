@@ -24,6 +24,7 @@ import (
 	"songrequest/internal/store"
 	"songrequest/internal/tunnel"
 	"songrequest/internal/twitch"
+	"songrequest/internal/update"
 )
 
 // version подставляется при сборке релиза через -ldflags.
@@ -58,6 +59,11 @@ func run() error {
 	// на чужой Windows со своей полосой что-то не заладится — окно без
 	// заголовка и без возможности его вернуть было бы ловушкой.
 	sysFrame := flag.Bool("рамка-windows", false, "оставить обычную полосу заголовка Windows")
+	// Этот флаг ставит себе само приложение, когда обновляется: новая копия
+	// запускается раньше, чем старая успела закрыться, и должна её дождаться.
+	// Без ожидания она увидела бы работающее приложение, решила бы, что
+	// запущена второй раз, показала бы чужое окно и вышла.
+	afterUpdate := flag.Bool("после-обновления", false, "подождать, пока закроется прежняя копия")
 	flag.Parse()
 
 	dir, err := dataDir()
@@ -83,6 +89,17 @@ func run() error {
 		// понимать, почему его настройки вдруг стали другими.
 		log.Warn("настройки были повреждены, начал с значений по умолчанию",
 			"испорченный_файл", cfg.Broken)
+	}
+
+	// Отставленный файл прошлой версии больше не нужен: мы уже работаем из
+	// нового. Раньше его удалить было нельзя — он был запущен.
+	if exe, err := os.Executable(); err == nil {
+		update.CleanOld(exe)
+	}
+
+	// Обновились — ждём, пока прежняя копия освободит порт.
+	if *afterUpdate {
+		waitForPrevious(log, cfg.Get().Port)
 	}
 
 	// Вторая копия ничего не запускает, а показывает окно первой.
@@ -180,7 +197,7 @@ func run() error {
 	// остаться висеть после выхода.
 	defer srv.StopTunnel()
 
-	showPanel, wait := setupUI(uiDeps{
+	showPanel, quit, wait := setupUI(uiDeps{
 		log:       log,
 		state:     state,
 		cfg:       cfg,
@@ -193,6 +210,7 @@ func run() error {
 		sysFrame:  *sysFrame,
 	})
 	srv.OnShowWindow(showPanel)
+	srv.OnQuit(quit)
 	srv.OnOpenAuth(authOpener(log, srv, dir))
 
 	wait()
@@ -264,7 +282,7 @@ type uiDeps struct {
 //   - запасной: если в системе нет WebView2 (движка Edge) — панель в браузере,
 //     как было до этого шага. Отказываться работать из-за этого нельзя;
 //   - отладочные флаги: панель в браузере или вообще ничего.
-func setupUI(d uiDeps) (showPanel func(), wait func()) {
+func setupUI(d uiDeps) (showPanel, quit, wait func()) {
 	icon, err := desktop.IconFile(d.dir)
 	if err != nil {
 		d.log.Warn("не выложил значок приложения", "ошибка", err)
@@ -278,7 +296,7 @@ func setupUI(d uiDeps) (showPanel func(), wait func()) {
 
 	if d.silent {
 		d.log.Info("запуск без окна и браузера (флаг -без-браузера)")
-		return func() {}, waitCtx
+		return func() {}, func() { d.shutdown() }, waitCtx
 	}
 
 	win, err := openWindow(d, icon)
@@ -292,7 +310,7 @@ func setupUI(d uiDeps) (showPanel func(), wait func()) {
 		}
 		openPanel()
 		go desktop.RunTray(trayMenu(d, icon, openPanel, func() { d.shutdown() }))
-		return openPanel, waitCtx
+		return openPanel, func() { d.shutdown() }, waitCtx
 	}
 
 	go desktop.RunTray(trayMenu(d, icon, win.Show, win.Quit))
@@ -304,7 +322,7 @@ func setupUI(d uiDeps) (showPanel func(), wait func()) {
 		win.Quit()
 	}()
 
-	return win.Show, win.Run
+	return win.Show, win.Quit, win.Run
 }
 
 // openWindow открывает окно программы. Возвращает ошибку, если открывать его
@@ -433,4 +451,28 @@ func openBrowser(url string, log *logx.Logger) {
 		return
 	}
 	go cmd.Wait() // не оставляем зомби-процесс
+}
+
+// waitForPrevious ждёт, пока прежняя копия приложения закроется.
+//
+// Нужно ровно при обновлении: новая копия запускается той, которую она
+// заменяет, и стартовать ей можно только после того, как старая отпустила
+// порт, базу и звуковое устройство. Ждём с запасом, но не бесконечно: если
+// старая почему-то зависла, лучше честно попробовать и получить понятное
+// «уже запущено», чем висеть молча.
+func waitForPrevious(log *logx.Logger, port int) {
+	const (
+		limit = 30 * time.Second
+		step  = 300 * time.Millisecond
+	)
+	log.Info("обновился, жду, пока закроется прежняя копия")
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if running, _ := desktop.RaiseRunning(port); !running {
+			log.Info("прежняя копия закрылась, продолжаю запуск")
+			return
+		}
+		time.Sleep(step)
+	}
+	log.Warn("прежняя копия не закрылась вовремя, запускаюсь как есть")
 }

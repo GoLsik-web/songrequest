@@ -114,19 +114,20 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 		actor = msg.Login
 	}
 
+	ctx, cancel := context.WithTimeout(s.baseContext(), 30*time.Second)
+	defer cancel()
+
 	// В чате отказ молчаливый — спорить со зрителем при всех незачем. А вот в
 	// логе он обязан быть: жалоба «пишу !скип, ничего не происходит» иначе
 	// неразбираема. Без этой строки одинаково выглядят «сообщение не дошло
 	// вовсе» и «дошло, но у человека нет прав», а чинить это надо по-разному.
-	if !msg.CanCommand() {
+	if !s.canCommand(ctx, msg) {
 		s.log.Debug("команда от того, кому нельзя",
 			"кто", msg.Login, "команда", cmd,
-			"стример", msg.IsBroadcaster, "модератор", msg.IsModerator)
+			"стример", msg.IsBroadcaster, "модератор", msg.IsModerator,
+			"значки", msg.Badges)
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(s.baseContext(), 30*time.Second)
-	defer cancel()
 
 	s.log.Debug("команда из чата", "кто", actor, "команда", cmd, "аргументы", args)
 
@@ -790,4 +791,34 @@ func (s *Server) cmdRejectPlaylist(ctx context.Context, actor string, args []str
 		return
 	}
 	s.say(ctx, fmt.Sprintf("@%s, плейлист «%s» не одобрили. Баллы вернул.", p.Requester, p.Title))
+}
+
+// canCommand решает, слушать ли команду от этого человека.
+//
+// Два пути, и порядок важен.
+//
+// Первый — значки сообщения. Они приходят вместе с текстом, бесплатно, и в
+// девяноста девяти случаях из ста вопрос закрывают.
+//
+// Второй — список модераторов у самого Twitch. Он нужен потому, что значков
+// может не оказаться и у настоящего модератора: 09.09 владелец написал «!скип»
+// с аккаунта, который на канале модератор, и получил отказ со строкой
+// «стример=false модератор=false». Значки в чате — украшение, а не документ;
+// кто модератор, знает Twitch, и спрашивать надо его. Запрос идёт только тогда,
+// когда значков не хватило, и не чаще раза в минуту, см. Client.IsModerator.
+func (s *Server) canCommand(ctx context.Context, msg twitch.ChatMessage) bool {
+	if msg.CanCommand() {
+		return true
+	}
+	if s.twitch == nil || !s.twitch.Connected() {
+		return false
+	}
+	if !s.twitch.IsModerator(ctx, msg.Login) {
+		return false
+	}
+	// Раз уж выяснили — скажем об этом в лог: иначе разбор следующей жалобы
+	// снова упрётся в вопрос «а по чему приложение решило, что можно».
+	s.log.Info("команда принята по списку модераторов канала, значков в сообщении не было",
+		"кто", msg.Login, "значки", msg.Badges)
+	return true
 }

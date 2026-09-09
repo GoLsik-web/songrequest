@@ -146,6 +146,14 @@ type Config struct {
 	// Фильтр «это не музыка»
 	RejectKeywords []string `json:"reject_keywords"`
 
+	// UpdateRepo — откуда брать обновления: «имя/репозиторий» на GitHub.
+	//
+	// Хранится в настройках, а не вшито намертво, по простой причине:
+	// репозиторий может переехать, а сборка у людей на руках останется старой
+	// — и обновиться она уже не сможет никогда. Значение по умолчанию всё же
+	// есть, чтобы кнопка работала сразу после установки.
+	UpdateRepo string `json:"update_repo"`
+
 	// Виджет для OBS
 	Widget Widget `json:"widget"`
 }
@@ -166,6 +174,7 @@ func Defaults() Config {
 		RewardTitle:         "Заказ трека",
 		RewardCost:          1000,
 		CommandPrefix:       "!",
+		UpdateRepo:          "GoLsik-web/songrequest",
 		AutoCreateReward:    true,
 		PlaylistRewardTitle: "Заказ плейлиста",
 		PlaylistMaxTracks:   5,

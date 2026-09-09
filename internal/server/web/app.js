@@ -94,7 +94,11 @@
 
     socket.onopen = () => {
       retryDelay = 1000;
-      say(`Подключено · ${location.host}`);
+      // Молча. Раньше здесь висело «Подключено · 127.0.0.1:8977» — адрес,
+      // который стример и так знает, занимал полосу внизу весь стрим и
+      // мозолил глаза под окном заказов. Строка нужна для того, что случилось,
+      // а «всё в порядке» — это не событие.
+      hush();
     };
     socket.onmessage = (e) => render(JSON.parse(e.data));
     socket.onclose = () => {
@@ -113,15 +117,25 @@
   function say(text, bad) {
     status.textContent = text;
     status.className = bad ? "offline" : "online";
+    status.hidden = false;
     // Ошибка висит, пока её не сменят. Сообщение об удаче гаснет само: строка
     // внизу не должна навсегда застревать на «Client ID сохранён».
     clearTimeout(sayTimer);
     if (!bad) {
-      sayTimer = setTimeout(() => {
-        if (document.body.classList.contains("stale")) return;
-        status.textContent = `Подключено · ${location.host}`;
-      }, 6000);
+      sayTimer = setTimeout(hush, 6000);
     }
+  }
+
+  // hush убирает строку внизу целиком, вместе с полосой.
+  //
+  // Пустой текст мало: у полосы своя подложка и рамка, и пустая она читается
+  // как «что-то тут было, да пропало». Когда сказать нечего, её быть не
+  // должно вовсе.
+  function hush() {
+    clearTimeout(sayTimer);
+    if (document.body.classList.contains("stale")) return;
+    status.textContent = "";
+    status.hidden = true;
   }
 
   // body — необязательный: почти все ручки панели ничего не принимают, а
@@ -574,6 +588,92 @@
   // Подтверждение только у того, что не отменить: очистка очереди и бан.
 
   let dragId = null;
+
+  // ── обновление приложения ──────────────────────────────────────────
+  //
+  // Приложение само в интернет не ходит: проверка только по кнопке — так
+  // решил владелец. Поэтому кнопка «Обновить» в верхней полосе появляется не
+  // сама по себе, а после того, как человек нажал «Проверить обновления» и
+  // новая версия правда нашлась.
+  //
+  // Кнопка стоит в верхней полосе, а не только в настройках, по простой
+  // причине: настройки открывают раз в месяц, а увидеть «вышла новая версия»
+  // надо тогда, когда её выпустили.
+
+  function renderUpdate(u) {
+    const top = $("update-now");
+    const busy = !!u.installing;
+
+    // Верхняя полоса.
+    top.hidden = !u.available;
+    if (u.available) {
+      top.innerHTML = `${icon("download")}${busy ? "обновляю…" : "обновить до " + esc(u.version)}`;
+      top.disabled = busy;
+    }
+
+    // Настройки.
+    const repo = $("upd-repo");
+    if (repo && document.activeElement !== repo) repo.value = u.repo || "";
+
+    $("upd-check").disabled = !!u.checking || busy;
+    $("upd-check").textContent = u.checking ? "Проверяю…" : "Проверить обновления";
+
+    const install = $("upd-install");
+    install.hidden = !u.available;
+    install.disabled = busy;
+    install.textContent = busy ? "Обновляю…" : "Обновить до " + (u.version || "");
+
+    const page = $("upd-page");
+    page.hidden = !u.page;
+    if (u.page) page.href = u.page;
+
+    const rows = [
+      `<div class="sum-row"><span>Сейчас работает</span><b>${esc(u.current || "—")}</b></div>`,
+    ];
+    if (u.available) {
+      rows.push(`<div class="sum-row good"><span>Вышла версия</span><b>${esc(u.version)}</b></div>`);
+      if (u.size > 0) {
+        rows.push(`<div class="sum-row"><span>Размер</span><b>${Math.round(u.size / (1 << 20))} МБ</b></div>`);
+      }
+    }
+    if (u.note) {
+      rows.push(`<div class="sum-row ${u.note_code ? "bad" : ""}">
+        <span>${u.note_code ? esc(u.note_code) : "Последняя проверка"}</span>
+        <b>${esc(u.note)}</b></div>`);
+    }
+    $("upd-sum").innerHTML = rows.join("");
+
+    // Что изменилось — отдельным текстом под сводкой: в строку сводки это не
+    // влезает, а читать его человек будет ровно один раз перед нажатием.
+    const notes = u.available && u.notes ? u.notes.trim() : "";
+    let box = $("upd-notes");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "upd-notes";
+      box.className = "hint upd-notes";
+      $("upd-sum").after(box);
+    }
+    box.hidden = !notes;
+    box.textContent = notes.length > 600 ? notes.slice(0, 600) + "…" : notes;
+  }
+
+  // Обновление — единственное место, где панель просит подтверждения у
+  // необратимого действия: программа заменит себя и закроется. Посреди стрима
+  // это надо делать осознанно.
+  async function installUpdate(btn) {
+    const u = (lastState && lastState.update) || {};
+    if (!confirm(`Обновить до версии ${u.version}?\n\n` +
+        "Программа скачает новую сборку, заменит себя и запустится заново. " +
+        "Музыка на это время прервётся. Настройки, очередь и входы останутся на месте.")) {
+      return;
+    }
+    const d = await post("/api/update/install", btn);
+    if (d && d.ok) {
+      say("Обновился до " + d.version + ", перезапускаюсь…");
+      // Дальше приложение закроется само, и сокет оборвётся. Панель это уже
+      // умеет: покажет «приложение не отвечает» и будет ждать возвращения.
+    }
+  }
 
   // ── плейлисты, ждущие решения ──────────────────────────────────────
   //
@@ -1560,14 +1660,32 @@
       }
       return d;
     }),
-    check: (btn) => post("/api/spotify/check", btn).then((d) => {
-      // Связь починили — список плейлистов имеет смысл собрать заново.
-      if (playlistsFailed) {
-        playlistsLoaded = false;
-        loadPlaylists();
+    check: (btn) => {
+      // Spotify объявил паузу — стучаться сейчас можно, но не бесплатно.
+      //
+      // Кнопка нарочно сбрасывает объявленную паузу: человек её видел и решил
+      // попробовать. Беда в том, что каждый такой стук ограничение продлевает,
+      // а выглядит кнопка безобидно. В ночь на 10.09 их набралось тринадцать
+      // за час, пока Spotify просил подождать двадцать один час. Теперь она
+      // спрашивает.
+      const until = lastState && lastState.spotify && lastState.spotify.paused_until;
+      if (until && new Date(until) > new Date()) {
+        const at = new Date(until).toLocaleString("ru-RU",
+          { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+        const ask = "Spotify ограничил приложение и просит подождать до " + at + ".\n\n" +
+          "Каждая проверка сейчас может продлить ограничение. " +
+          "Само оно снимется, ничего делать не надо.\n\nВсё равно проверить?";
+        if (!confirm(ask)) return Promise.resolve(null);
       }
-      return d;
-    }),
+      return post("/api/spotify/check", btn).then((d) => {
+        // Связь починили — список плейлистов имеет смысл собрать заново.
+        if (playlistsFailed) {
+          playlistsLoaded = false;
+          loadPlaylists();
+        }
+        return d;
+      });
+    },
     // Пробник поиска: жмут его по моей просьбе, когда поиск отказывает без
     // видимой причины. Главное здесь — не картинка в панели, а строки «проба
     // поиска» в логе; на экране просто видно, что проверка дошла до конца.
@@ -2471,6 +2589,24 @@
     wxPlace(Object.assign({}, w, axis === "x" ? { gap_x: px } : { gap_y: px }), family);
   }
 
+  // ── кнопки обновления ──────────────────────────────────────────────
+
+  $("update-now").onclick = (e) => installUpdate(e.currentTarget);
+  $("upd-install").onclick = (e) => installUpdate(e.currentTarget);
+
+  $("upd-check").onclick = async (e) => {
+    const d = await post("/api/update/check", e.currentTarget);
+    if (!d) return;
+    say(d.available
+      ? "Вышла версия " + d.version + " — кнопка «Обновить» рядом"
+      : "У тебя последняя версия: " + d.current);
+  };
+
+  $("upd-repo").onchange = async (e) => {
+    const repo = e.target.value.trim();
+    if (await saveConfig({ update_repo: repo })) markSaved(e.target);
+  };
+
   $("widget-toggle").onclick = () => toggleWidget();
 
   // ── место в кадре ──────────────────────────────────────────────────
@@ -2764,6 +2900,7 @@
     syncMeter(s.now);
     draw("orders", sig([s.queue, s.paused, s.twitch.reward_title,
                         s.twitch.reward_cost, s.twitch.reward_ready]), () => renderOrders(s));
+    draw("update", sig(s.update), () => renderUpdate(s.update || {}));
     draw("playlists", sig(s.playlists), () => renderPlaylists(s));
     draw("bans", sig(s.bans), () => renderBans(s.bans));
     draw("yt", sig(s.youtube), () => renderYouTube(s.youtube));

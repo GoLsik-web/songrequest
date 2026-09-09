@@ -53,6 +53,11 @@ type Client struct {
 	checked  bool
 	checkErr error
 
+	// mods — кто на канале модератор. Со своим замком: список спрашивается у
+	// Twitch и живёт своей жизнью, а под общим замком висели бы сетевые
+	// запросы. См. moderators.go.
+	mods mods
+
 	refreshMu sync.Mutex
 }
 
