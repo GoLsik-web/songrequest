@@ -104,6 +104,20 @@ const (
 	// трек не нашёлся ни в Spotify, ни на YouTube.
 	PlaylistEmpty Code = "PLS-02"
 
+	// Обновление приложения
+	//
+	// UpdateNoRepo — не сказано, откуда брать обновления, или репозитория нет.
+	UpdateNoRepo Code = "UPD-01"
+	// UpdateCheck — не удалось спросить GitHub про выпуски.
+	UpdateCheck Code = "UPD-02"
+	// UpdateNoFile — выпуск есть, а файла программы в нём нет.
+	UpdateNoFile Code = "UPD-03"
+	// UpdateDownload — не удалось скачать или распаковать сборку.
+	UpdateDownload Code = "UPD-04"
+	// UpdateApply — скачали, а подменить программу не вышло: чаще всего нет
+	// прав на папку, где она лежит.
+	UpdateApply Code = "UPD-05"
+
 	// Яндекс.Музыка
 	YandexRead Code = "YM-01" // не удалось прочитать страницу трека
 

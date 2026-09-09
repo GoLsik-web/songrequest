@@ -157,6 +157,10 @@ type Server struct {
 	// нечего, и запрос честно отвечает отказом.
 	showWindow atomic.Pointer[func()]
 
+	// quit — как закрыть программу. Кладёт сюда main. Нужно обновлению: оно
+	// подменяет .exe и должно запустить новую копию вместо себя.
+	quit atomic.Pointer[func()]
+
 	// openAuth — как открыть страницу входа в Spotify внутри приложения,
 	// через поднятый обход. Кладёт сюда main, когда окно есть. Пусто — вход
 	// открывается в браузере, как раньше.
@@ -274,6 +278,9 @@ func New(d Deps) (*Server, error) {
 	}
 	s.setupDonations()
 	s.yandex = links.NewYandexReader()
+	// Своя версия и адрес выпусков известны сразу, без всякой сети: панель
+	// показывает их ещё до того, как человек нажмёт «Проверить обновления».
+	s.syncUpdateInfo()
 
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -331,6 +338,9 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /api/queue/{id}/fix", s.handleQueueFix)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("POST /api/queue/reorder", s.handleQueueReorder)
+	mux.HandleFunc("POST /api/update/check", s.handleUpdateCheck)
+	mux.HandleFunc("POST /api/update/install", s.handleUpdateInstall)
+
 	mux.HandleFunc("POST /api/queue/clear", s.handleQueueClear)
 
 	// Плейлисты, ждущие решения. См. internal/server/playlists.go.
@@ -574,6 +584,8 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	// Подпись в панели обещала, что они применятся к следующему заказу, —
 	// теперь это правда.
 	s.applyPlayerSettings()
+	// Адрес обновлений мог поменяться — панель должна показать новый.
+	s.syncUpdateInfo()
 	s.applyYouTubeSettings()
 	s.syncSpotifyInfo()
 	s.syncTwitchInfo()

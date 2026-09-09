@@ -440,6 +440,10 @@ func (c *Client) forgetTokens() {
 	c.tokens = tokens{}
 	c.user = nil
 	c.mu.Unlock()
+	// Список модераторов принадлежал прежнему каналу. У нового канала
+	// модераторы другие, и отвечать по чужому списку — верный способ пустить
+	// к командам не того человека.
+	c.ForgetModerators()
 	c.secrets.Delete(keyringName)
 }
 

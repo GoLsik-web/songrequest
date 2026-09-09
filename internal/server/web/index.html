@@ -57,6 +57,10 @@
   <div class="bar-gap"></div>
 
   <div class="bar-tail">
+    <!-- Кнопка обновления. Её здесь нет почти всегда: она появляется только
+         после того, как человек нажал «Проверить обновления» и новая версия
+         правда нашлась. См. renderUpdate в app.js. -->
+    <button class="tail-btn go" id="update-now" hidden></button>
     <button class="tail-btn" id="widget-toggle" aria-expanded="false">
       <svg aria-hidden="true"><use href="#i-monitor"></use></svg>
       виджет
@@ -542,6 +546,30 @@
       </div>
       <div class="acts">
         <button class="act small key" id="setup-again">Пройти настройку заново</button>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Обновления</div>
+      <div class="hint">
+        Приложение само в интернет не ходит — проверяет только по этой кнопке.
+        Найдётся новая версия, появится кнопка «Обновить»: она скачает сборку,
+        подменит программу и запустит её заново. Настройки, очередь и входы
+        останутся на месте — они лежат в отдельной папке.
+      </div>
+      <label class="field" style="margin-top:12px">
+        <span>Репозиторий на GitHub</span>
+        <input type="text" id="upd-repo" spellcheck="false" autocomplete="off"
+               placeholder="имя/репозиторий">
+        <span class="hint">Оттуда берутся выпуски. Пишется как в адресе:
+          часть после github.com. Выпуски должны быть публичными, иначе
+          скачивание попросит пароль.</span>
+      </label>
+      <div class="sum" id="upd-sum"></div>
+      <div class="acts">
+        <button class="act small" id="upd-check">Проверить обновления</button>
+        <button class="act small key" id="upd-install" hidden>Обновить</button>
+        <a class="act small" id="upd-page" target="_blank" rel="noopener" hidden>Открыть страницу выпусков</a>
       </div>
     </div>
 
