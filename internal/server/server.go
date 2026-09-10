@@ -27,6 +27,7 @@ import (
 	"songrequest/internal/match"
 	"songrequest/internal/player"
 	"songrequest/internal/queue"
+	"songrequest/internal/smtc"
 	"songrequest/internal/spotify"
 	"songrequest/internal/spotifyapp"
 	"songrequest/internal/store"
@@ -138,6 +139,15 @@ type Server struct {
 	// localTrack подменяет чтение играющего трека у программы Spotify.
 	// Пусто — читаем по-настоящему. Заполняется только в проверках.
 	localTrack func() (spotifyapp.Track, spotifyapp.Status)
+
+	// panelTrack подменяет чтение из системной панели управления медиа
+	// Windows. Пусто — читаем по-настоящему.
+	//
+	// Нужно ровно затем же, зачем localTrack: на машине разработчика Spotify
+	// тоже запущен, и без подмены проверки ловили бы его настоящий трек
+	// вместо выдуманного. Без этого четыре проверки своей музыки начали
+	// падать в ту же секунду, как приложение научилось читать панель.
+	panelTrack func() (smtc.Now, bool, error)
 
 	// paused — показана ли сейчас в панели объявленная Spotify пауза.
 	// См. notePause: карточку надо пересобрать и когда пауза началась, и

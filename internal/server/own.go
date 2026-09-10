@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"songrequest/internal/app"
+	"songrequest/internal/smtc"
 	"songrequest/internal/spotify"
 	"songrequest/internal/spotifyapp"
 )
@@ -176,6 +177,18 @@ type ownWatch struct {
 	// asked — когда последний раз ходили за подробностями. Нужно, чтобы
 	// подхватывать перемотку внутри трека, но не каждую секунду.
 	asked time.Time
+	// cover — обложка нынешнего трека. Живёт отдельно от now, потому что при
+	// чтении из системной панели Windows всё остальное приходит бесплатно и
+	// каждый раз заново, а обложка стоит запроса и берётся один раз на трек.
+	cover string
+	// coverTried — за обложкой этого трека уже ходили.
+	//
+	// Признак нужен отдельно от самой обложки: спросить и не получить —
+	// обычное дело (Spotify молчит, играет с телефона, кончилась норма). Без
+	// него приложение просило бы обложку на каждом опросе, то есть раз в две
+	// секунды, — ровно та утечка, ради устранения которой всё и затевалось.
+	// Поймано проверкой TestIdleSpotifyIsNotAskedOften.
+	coverTried bool
 }
 
 // forget сбрасывает всё, что знали про трек. Время последнего запроса по сети
@@ -217,15 +230,45 @@ func (s *Server) pollOwn(ctx context.Context, w *ownWatch) {
 		s.setOwn(nil)
 		return
 	}
-	if !s.cfg.Get().Widget.ShowOwn || !s.spotify.Connected() {
+	if !s.cfg.Get().Widget.ShowOwn {
 		w.forget()
 		s.setOwn(nil)
 		return
 	}
 
-	// Сначала спрашиваем программу Spotify на этом же компьютере: это не
-	// стоит ничего и работает даже тогда, когда Spotify закрыл приложению
-	// доступ по сети.
+	// Первым делом — системная панель управления медиа Windows.
+	//
+	// Она знает всё, что нам нужно, и знает точно: название, артиста,
+	// положение внутри трека, длительность и паузу. Всё это лежит внутри
+	// Windows, стоит пять миллисекунд и не считается никакой нормой запросов.
+	// Именно она снимает последний постоянный расход: раньше приложение
+	// каждые несколько минут ходило к Spotify по сети только затем, чтобы
+	// узнать, где сейчас игла.
+	//
+	// Заодно оттуда приходит то, чего у нас не было вовсе: пауза. В заголовке
+	// окна Spotify её нет, а по сети за ней ходить слишком дорого — и до сих
+	// пор приложение помнило только свои же нажатия.
+	if done := s.pollOwnPanel(ctx, w); done {
+		return
+	}
+
+	// Дальше начинаются пути, которым нужен работающий вход в Spotify: они
+	// либо спрашивают его по сети, либо этим и заканчиваются.
+	//
+	// Проверка стоит здесь, а не выше, нарочно. Системная панель Windows
+	// работает вообще без Spotify: она читает то, что программа сама
+	// рассказала операционной системе. Поэтому в кадре и в панели трек виден
+	// даже тогда, когда Spotify закрыл приложению доступ на сутки, — а
+	// раньше в такой момент экран становился пустым, и выглядело это как
+	// «приложение умерло».
+	if !s.spotify.Connected() {
+		w.forget()
+		s.setOwn(nil)
+		return
+	}
+
+	// Панель промолчала — например, Windows старая или Spotify играет не с
+	// этого компьютера. Тогда прежним путём: заголовок окна программы.
 	track, status := s.readLocal()
 	if status == spotifyapp.Playing {
 		s.pollOwnLocal(ctx, w, track)
@@ -463,4 +506,118 @@ func (s *Server) ownTrackLeft() time.Duration {
 		return 0
 	}
 	return time.Duration(own.DurationMs-own.PositionMs) * time.Millisecond
+}
+
+// ── системная панель Windows ─────────────────────────────────────────
+
+// pollOwnPanel читает музыку стримера из системной панели управления медиа.
+//
+// Возвращает true, если разобрался сам и лезть куда-то ещё не надо. false
+// означает «панель молчит»: Windows старая, Spotify в ней не виден или музыка
+// идёт вообще не с этого компьютера — тогда работают прежние пути.
+//
+// По сети отсюда уходит ровно один запрос, и только когда сменился трек: за
+// обложкой. Всё остальное Windows отдаёт бесплатно. См. internal/smtc.
+func (s *Server) pollOwnPanel(ctx context.Context, w *ownWatch) bool {
+	seen, ok, err := s.readPanel()
+	if err != nil {
+		// Не поломка, из-за которой стоит беспокоить человека: панель — это
+		// удобство, а не работа приложения. Но в лог надо, иначе «почему-то
+		// перестало показывать паузу» будет неразбираемо.
+		s.log.Debug("системная панель управления медиа не ответила", "ошибка", err)
+		return false
+	}
+	if !ok || strings.TrimSpace(seen.Title) == "" {
+		return false
+	}
+
+	// Остановлен или закрыт — это тишина, и показывать нечего.
+	if seen.Status == smtc.StatusClosed || seen.Status == smtc.StatusStopped {
+		w.forget()
+		s.setOwn(nil)
+		return true
+	}
+
+	// Своя отметка о паузе больше не нужна: настоящая приезжает из Windows.
+	// Гасим её, чтобы две правды не спорили между собой.
+	s.ownPaused.Store(false)
+
+	track := spotifyapp.Track{Artist: seen.Artist, Title: seen.Title}
+	if !track.Same(w.track) {
+		// Трек сменился — прежняя обложка больше не годится.
+		w.forget()
+		w.track = track
+	}
+
+	now := &app.NowPlaying{
+		Provider:   "spotify",
+		Source:     app.SourceOwn,
+		Title:      seen.Title,
+		Artist:     seen.Artist,
+		PositionMs: seen.PositionMs,
+		DurationMs: seen.DurationMs,
+		Paused:     seen.Paused(),
+		CoverURL:   w.cover,
+	}
+
+	// Обложка — единственное, чего в панели Windows нет в готовом виде
+	// (она отдаёт картинку потоком, а это отдельная возня с COM). Спрашиваем
+	// её у Spotify один раз на трек и запоминаем.
+	if w.cover == "" && !w.coverTried && s.wantCover() && s.spotify.Connected() {
+		w.coverTried = true
+		if url := s.fetchOwnCover(ctx, seen.Title); url != "" {
+			w.cover = url
+			now.CoverURL = url
+		}
+	}
+
+	s.setOwn(now)
+	return true
+}
+
+// readPanel читает системную панель. Через поле, а не напрямую, ради
+// проверок — как и readLocal.
+func (s *Server) readPanel() (smtc.Now, bool, error) {
+	if s.panelTrack != nil {
+		return s.panelTrack()
+	}
+	return smtc.Read(smtc.SpotifyApp)
+}
+
+// wantCover — нужна ли обложка прямо сейчас.
+//
+// Если панель закрыта, а виджет обложку не показывает, то и запрос за ней —
+// это запрос ни за чем. Мелочь, но из таких мелочей и складывалась норма,
+// которую Spotify однажды закрыл на сутки.
+func (s *Server) wantCover() bool {
+	if s.panels.Load() > 0 {
+		return true
+	}
+	return s.cfg.Get().Widget.ShowArt
+}
+
+// fetchOwnCover спрашивает у Spotify обложку играющего трека.
+//
+// Один запрос на смену трека. Сверяем название: заголовок в панели Windows
+// меняется раньше, чем это доезжает до серверов Spotify, и без сверки к
+// новому треку прилипла бы обложка предыдущего.
+func (s *Server) fetchOwnCover(ctx context.Context, title string) string {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	st, ok, err := s.spotify.State(ctx)
+	if err != nil {
+		s.noteSpotifyError(err)
+		s.log.Debug("не спросил обложку своей музыки", "ошибка", err)
+		return ""
+	}
+	if !ok || st == nil || st.Item == nil || len(st.Item.Album.Images) == 0 {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(st.Item.Name), strings.TrimSpace(title)) {
+		s.log.Debug("обложка пришла от другого трека",
+			"в_панели", title, "в_ответе", st.Item.Name)
+		return ""
+	}
+	return st.Item.Album.Images[0].URL
 }

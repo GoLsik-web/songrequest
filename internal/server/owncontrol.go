@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"songrequest/internal/errs"
+	"songrequest/internal/smtc"
 )
 
 // Управление музыкой самого стримера — той, что играет между заказами.
@@ -41,6 +42,23 @@ func (s *Server) ownPlaying() bool {
 
 // holdOwn ставит на паузу или снимает с неё музыку стримера.
 func (s *Server) holdOwn(ctx context.Context, on bool) error {
+	// Сначала пробуем системную панель Windows: команда уходит прямо в
+	// программу Spotify, не стоит ни одного запроса и работает даже тогда,
+	// когда Spotify закрыл приложению доступ по сети на сутки. Именно в такой
+	// момент кнопка «пауза» и нужна больше всего.
+	cmd := smtc.CmdPlay
+	if on {
+		cmd = smtc.CmdPause
+	}
+	if err := smtc.Control(smtc.SpotifyApp, cmd); err != nil {
+		s.log.Debug("панель Windows команду не приняла, иду в Spotify", "ошибка", err)
+	} else {
+		s.ownPaused.Store(on)
+		s.log.Info("своя музыка через панель Windows", "пауза", on)
+		s.syncPlayback()
+		return nil
+	}
+
 	if s.spotify == nil || !s.spotify.Connected() {
 		return errs.New(errs.SpotifyAuthExpired, "Spotify не подключён.")
 	}
@@ -71,6 +89,13 @@ func (s *Server) holdOwn(ctx context.Context, on bool) error {
 // пару секунд. Спрашивать его отдельным запросом значило бы платить вторым
 // запросом за то, что и так вот-вот придёт бесплатно.
 func (s *Server) nextOwn(ctx context.Context) error {
+	if err := smtc.Control(smtc.SpotifyApp, smtc.CmdNext); err != nil {
+		s.log.Debug("панель Windows команду не приняла, иду в Spotify", "ошибка", err)
+	} else {
+		s.ownPaused.Store(false)
+		s.log.Info("своя музыка: следующий трек через панель Windows")
+		return nil
+	}
 	if s.spotify == nil || !s.spotify.Connected() {
 		return errs.New(errs.SpotifyAuthExpired, "Spotify не подключён.")
 	}
@@ -85,6 +110,13 @@ func (s *Server) nextOwn(ctx context.Context) error {
 
 // prevOwn возвращает Spotify на предыдущий трек плейлиста стримера.
 func (s *Server) prevOwn(ctx context.Context) error {
+	if err := smtc.Control(smtc.SpotifyApp, smtc.CmdPrevious); err != nil {
+		s.log.Debug("панель Windows команду не приняла, иду в Spotify", "ошибка", err)
+	} else {
+		s.ownPaused.Store(false)
+		s.log.Info("своя музыка: предыдущий трек через панель Windows")
+		return nil
+	}
 	if s.spotify == nil || !s.spotify.Connected() {
 		return errs.New(errs.SpotifyAuthExpired, "Spotify не подключён.")
 	}
