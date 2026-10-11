@@ -170,8 +170,12 @@ const (
 	mSessionPlaybackInfo    = firstMethod + 3
 	mSessionPlay            = firstMethod + 4
 	mSessionPause           = firstMethod + 5
-	mSessionNext            = firstMethod + 11
-	mSessionPrevious        = firstMethod + 12
+	// Порядок по описанию: TryStop, TryRecord, TryFastForward, TryRewind,
+	// TrySkipNext, TrySkipPrevious. 11.10 владелец поймал сдвиг на единицу:
+	// здесь стояли 11 и 12, и «далее» включало предыдущий трек, а «назад»
+	// звало смену канала, которую Spotify молча пропускает.
+	mSessionNext            = firstMethod + 10
+	mSessionPrevious        = firstMethod + 11
 
 	// IGlobalSystemMediaTransportControlsSessionMediaProperties.
 	mPropsTitle      = firstMethod
