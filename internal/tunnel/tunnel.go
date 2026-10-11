@@ -511,8 +511,18 @@ func (t *Tunnel) fetchSubscription(ctx context.Context, url, agent string) ([]by
 			"Не получилось скачать список серверов по ссылке. Проверь интернет и саму ссылку.", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		// Сломан сам сервис подписки, а не ключ и не подписка: 11.10 у
+		// тестера sub.vpnvpn.best отвечал 502 на любой запрос, а текст «проверь
+		// ссылку» отправлял человека искать ошибку у себя. Говорим как есть и
+		// даём обходной путь: отдельный ключ сервера работает без сервиса.
+		return nil, true, errs.New(errs.TunnelSubscription,
+			fmt.Sprintf("Сервис подписки сейчас сломан (ответил %d) — это на их стороне, ключ в порядке. "+
+				"Пока он не починится: открой своё VPN-приложение, скопируй ключ одного сервера "+
+				"(начинается с vless://, trojan:// или ss://) и вставь его сюда вместо ссылки.", resp.StatusCode))
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, resp.StatusCode >= 500, errs.New(errs.TunnelSubscription,
+		return nil, false, errs.New(errs.TunnelSubscription,
 			fmt.Sprintf("Сервис подписки ответил %d. Проверь ссылку и не кончилась ли подписка.", resp.StatusCode))
 	}
 
