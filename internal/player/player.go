@@ -697,8 +697,15 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 				p.log.Debug("заказ ещё не доехал до Spotify, жду", "трек", item.Title)
 				continue
 			}
+			// Что играет вместо — для разбора: 11.10 заказ сняли посреди
+			// трека, и по журналу было не понять почему.
+			instead := "тишина"
+			if ok && st.Item != nil {
+				instead = st.Item.Name + " (" + st.Item.URI + ")"
+			}
 			p.log.Info("заказ больше не играет в Spotify",
-				"трек", item.Artist+" — "+item.Title, "доиграл_сам", toEnd)
+				"трек", item.Artist+" — "+item.Title, "доиграл_сам", toEnd,
+				"вместо", instead, "играет", ok && st.IsPlaying)
 			return toEnd
 		}
 

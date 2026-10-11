@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"songrequest/internal/match"
 	"songrequest/internal/queue"
 	"songrequest/internal/spotify"
 )
@@ -26,6 +27,33 @@ type Panel interface {
 	// Track — что играет в Spotify по мнению Windows. false — панель молчит:
 	// старая Windows, Spotify закрыт или музыка идёт с телефона.
 	Track() (PanelTrack, bool)
+}
+
+// PanelControl — панель, которая умеет ещё и нажимать «пауза»/«играть».
+type PanelControl interface {
+	Hold(on bool) error
+}
+
+// holdViaPanel ставит заказ на паузу или снимает с неё через панель Windows.
+// false — не вышло (панели нет, в ней не наш трек, команда не прошла), и надо
+// идти в Spotify по сети.
+func (p *Player) holdViaPanel(item queue.Item, on bool) bool {
+	p.mu.Lock()
+	panel := p.panel
+	p.mu.Unlock()
+	ctl, ok := panel.(PanelControl)
+	if !ok {
+		return false
+	}
+	t, seen := panel.Track()
+	if !seen || !samePanelTrack(t, item.Title, item.Artist) {
+		return false
+	}
+	if err := ctl.Hold(on); err != nil {
+		p.log.Debug("панель Windows не приняла паузу заказа", "ошибка", err)
+		return false
+	}
+	return true
 }
 
 // PanelTrack — то, что показывает панель Windows.
@@ -58,16 +86,30 @@ func (p *Player) peek(ctx context.Context, item queue.Item) (*spotify.PlayerStat
 	if panel != nil && p.panelTrusted() {
 		t, ok := panel.Track()
 		if !ok {
-			// Панель молчит: Spotify в ней не виден. Ждать, что заговорит,
-			// незачем — до конца трека работаем по-старому, через Spotify и с
-			// прежним экономным шагом. Иначе короткий шаг ушёл бы в сеть.
+			// Панель молчит: Spotify в ней не виден. Считаем это промахом, а
+			// не приговором: 11.10 панель промолчала один раз ровно в момент,
+			// когда Spotify просыпался после долгой паузы, — и раньше это
+			// выключало её до конца трека, с проверкой раз в минуту. Три
+			// промаха подряд — тогда да, работаем по-старому.
 			p.mu.Lock()
-			p.panelMiss = panelMaxMiss
+			p.panelMiss++
 			p.mu.Unlock()
 			return p.spotify.State(ctx)
 		}
 		if samePanelTrack(t, item.Title, item.Artist) {
-			st := &spotify.PlayerState{ProgressMs: t.PositionMs, IsPlaying: t.Playing}
+			// Узнала — счёт промахов с нуля: «три подряд», а не «три за трек».
+			p.mu.Lock()
+			p.panelMiss = 0
+			p.mu.Unlock()
+			// Положение в треке — по своим часам, а не из панели: 11.10
+			// выяснилось, что Spotify из Microsoft Store обновляет его в
+			// панели редко, и оно часами стоит на месте. По такому числу
+			// остаток трека не кончался бы никогда.
+			progress := t.PositionMs
+			if now := p.Now(); now != nil {
+				progress = int(now.Elapsed().Milliseconds())
+			}
+			st := &spotify.PlayerState{ProgressMs: progress, IsPlaying: t.Playing}
 			st.Item = &spotify.StateItem{URI: item.URI, Name: t.Title, DurationMs: panelDuration(t, item.DurationMs)}
 			return st, true, nil
 		}
@@ -146,7 +188,17 @@ func samePanelTrack(t PanelTrack, title, artist string) bool {
 		return false
 	}
 	first := norm(strings.Split(artist, ",")[0])
-	return first == "" || strings.Contains(norm(t.Artist), first)
+	if first == "" || strings.Contains(norm(t.Artist), first) {
+		return true
+	}
+	// Spotify по сети и панель Windows пишут русских артистов по-разному:
+	// 11.10 заказ «Max Korzh — Малый повзрослел» панель показывала как
+	// «Макс Корж», и приложение решало, что играет не он. Сравниваем ещё и
+	// латиницей.
+	// Латиница у них тоже разная («maks» и «max»), поэтому сравниваем на
+	// слух — тем же способом, что и подбор треков.
+	a, o := norm(match.Transliterate(t.Artist)), norm(match.Transliterate(first))
+	return strings.Contains(a, o) || match.LooseSimilar(a, o) >= 0.75
 }
 
 func norm(s string) string {

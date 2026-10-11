@@ -494,7 +494,29 @@ func supportsOffset(contextURI string) bool {
 //
 // Возврат музыки эту же беду разбирал давно (см. Restore), только заказы шли
 // мимо: они звали play без устройства и без второй попытки.
+//
+// Включаем трек альбомом, с этого трека, а не списком из одного трека.
+//
+// 11.10 на живой проверке программа Spotify для Windows (из Microsoft Store)
+// на «играй список из одного трека» отвечала «готово» — и не играла ничего:
+// плеер становился пустым и стоял. Команду «играй альбом с такого-то трека»
+// та же программа выполняла сразу. Так же, кстати, всегда работал и возврат
+// музыки: он включает плейлист с позицией. Цена — один запрос за адресом
+// альбома. Не вышло (нет альбома, Spotify отказал) — прежний способ.
 func (c *Client) PlayTrack(ctx context.Context, trackURI, deviceID string) error {
+	if id := strings.TrimPrefix(trackURI, "spotify:track:"); id != trackURI {
+		if t, err := c.Track(ctx, id); err == nil && t.AlbumURI != "" {
+			body := &playBody{ContextURI: t.AlbumURI}
+			body.Offset = &struct {
+				URI string `json:"uri"`
+			}{URI: trackURI}
+			err := c.play(ctx, body, deviceID)
+			if err == nil {
+				return nil
+			}
+			c.log.Warn("альбомом трек не включился, включаю одним треком", "ошибка", err)
+		}
+	}
 	return c.play(ctx, &playBody{URIs: []string{trackURI}}, deviceID)
 }
 

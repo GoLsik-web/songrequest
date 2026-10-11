@@ -47,14 +47,20 @@ func (p *Player) Hold(ctx context.Context, on bool) error {
 		}
 		yt.SetPaused(on)
 	} else {
-		var err error
-		if on {
-			err = p.spotify.Pause(ctx, p.playDevice())
-		} else {
-			err = p.spotify.Resume(ctx, p.playDevice())
-		}
-		if err != nil {
-			return err
+		// Сначала — через панель Windows, если заказ виден в ней. 11.10 на
+		// живой проверке Spotify на «продолжить» по сети четыре раза подряд
+		// ответил «ошибка сервера», а та же команда через панель Windows
+		// срабатывает сразу и запросов не стоит.
+		if !p.holdViaPanel(now.Item, on) {
+			var err error
+			if on {
+				err = p.spotify.Pause(ctx, p.playDevice())
+			} else {
+				err = p.spotify.Resume(ctx, p.playDevice())
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 

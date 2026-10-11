@@ -114,15 +114,16 @@ func artistOnly(ctx context.Context, s Searcher, req Request) (Candidate, string
 		if err != nil {
 			continue
 		}
+		// Только треки, где он основной артист. 11.10 «slawa marlow» нашёлся
+		// как «DJ Pill.One — Getting Drunk Again» — трек, где SLAVA MARLOW
+		// лишь гость. При равной популярности берём первый в выдаче: Spotify
+		// ставит известное выше.
 		var best Candidate
 		for _, c := range found {
-			mine := false
-			for _, a := range c.Artists {
-				if Normalize(a) == Normalize(canonical) {
-					mine = true
-				}
+			if len(c.Artists) == 0 || Normalize(c.Artists[0]) != Normalize(canonical) {
+				continue
 			}
-			if mine && c.Popularity > best.Popularity || mine && best.ID == "" {
+			if best.ID == "" || c.Popularity > best.Popularity {
 				best = c
 			}
 		}
