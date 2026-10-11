@@ -15,7 +15,15 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-const service = "songrequest"
+// service — под каким именем лежат записи в хранилище Windows.
+//
+// Переменная, а не постоянная: у пробной сборки своё имя (см. SetService).
+// Раньше обе сборки писали в одно место, и ключ обхода, вставленный в пробную
+// копию, молча подменял ключ рабочей.
+var service = "songrequest"
+
+// SetService задаёт имя хранилища. Зовётся один раз при запуске, до всего.
+func SetService(name string) { service = name }
 
 // ErrNotFound означает, что вход ещё не выполнялся.
 var ErrNotFound = errors.New("сохранённых данных нет")

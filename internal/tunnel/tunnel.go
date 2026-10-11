@@ -760,7 +760,7 @@ func reachable(ctx context.Context, s Server) error {
 // Если непригодными оказались все, список возвращается целиком: пусть лучше
 // приложение попробует ещё раз, чем скажет «серверов нет» при полном списке.
 func sortPreferred(servers []Server, prefer string, bad map[string]bool) []Server {
-	var first, rest []Server
+	var first, rest, home []Server
 	for _, s := range servers {
 		if bad[s.String()] {
 			continue
@@ -769,13 +769,26 @@ func sortPreferred(servers []Server, prefer string, bad map[string]bool) []Serve
 			first = append(first, s)
 			continue
 		}
+		// Серверы в России — в самый конец. Они бывают в подписках (для
+		// своих сайтов), проверку без входа проходят, а Spotify через них
+		// отказывает «не из этой страны». 11.10 такой был в подписке тестера.
+		if inRussia(s) {
+			home = append(home, s)
+			continue
+		}
 		rest = append(rest, s)
 	}
-	out := append(first, rest...)
+	out := append(append(first, rest...), home...)
 	if len(out) == 0 {
 		return servers
 	}
 	return out
+}
+
+// inRussia — сервер, судя по подписи, стоит в России.
+func inRussia(s Server) bool {
+	l := strings.ToLower(s.Label)
+	return strings.Contains(l, "🇷🇺") || strings.Contains(l, "россия") || strings.Contains(l, "russia")
 }
 
 // freePort просит свободный порт у самой системы: занимать заранее выбранный

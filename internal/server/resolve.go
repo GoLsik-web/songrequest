@@ -160,7 +160,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	// Только если обхода сейчас нет: если он уже стоит и Spotify всё равно
 	// отказал, сменой сервера занимается noteSpotifyError, и держать заказ
 	// ради этого незачем.
-	if err != nil && roadTrouble(err) && s.cfg.Get().TunnelOn && !s.tunnel.Status().On {
+	if err != nil && roadTrouble(err) && s.tunnel != nil && s.cfg.Get().TunnelOn && !s.tunnel.Status().On {
 		s.noteSpotifyError(err)
 		if s.waitTunnel(ctx, 40*time.Second) {
 			s.log.Info("обход поднят — повторяю поиск", "заказ", r.UserInput)

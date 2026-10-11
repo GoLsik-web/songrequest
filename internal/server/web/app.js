@@ -1752,7 +1752,11 @@
     // не чинит, человеку бесполезна.
     "tunnel-on": (btn) => tunnelStart(btn),
     "tunnel-check": (btn) => tunnelStart(btn),
-    "tunnel-off": (btn) => post("/api/tunnel/off", btn),
+    // Ответ нужен и здесь: без него внизу оставалась надпись от прошлой
+    // кнопки, и казалось, что «Выключить» не сработало.
+    "tunnel-off": (btn) => post("/api/tunnel/off", btn).then((d) => {
+      if (d) say("Обход выключен. Spotify идёт напрямую.");
+    }),
     "tunnel-forget": (btn) => new Promise((done) => {
       confirmThen(btn, "забыть ключ?", async () => {
         $("tunnel-key").value = "";
