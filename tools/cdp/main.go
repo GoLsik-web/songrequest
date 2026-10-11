@@ -49,6 +49,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Первой в списке бывает служебная страница расширения, а не панель:
+	// так в обычном Chrome без окна. Берём первую страницу с адресом
+	// приложения, а если такой нет — первую как раньше.
+	for i, p := range pages {
+		if strings.HasPrefix(p.URL, "http://127.0.0.1") {
+			pages[0], pages[i] = pages[i], pages[0]
+			break
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 

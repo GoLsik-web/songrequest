@@ -88,6 +88,11 @@
        вовсе, чтобы он не занимал место в обычный вечер. -->
   <section class="pls" id="playlists" hidden></section>
 
+  <!-- Заказы, которых нет в Spotify и которые ждут решения: играть ли их с
+       YouTube. Появляются только в режиме «спрашивать» (вкладка «YouTube»).
+       Раньше такой заказ включался молча, и стример не понимал, откуда звук. -->
+  <section class="pls" id="ytasks" hidden></section>
+
   <div class="lower">
     <section class="orders">
       <div class="kicker">
@@ -134,6 +139,9 @@
       <nav class="menu-nav" id="menu-nav">
         <button class="menu-item" data-menu="settings">
           <svg aria-hidden="true"><use href="#i-settings"></use></svg>Настройки
+        </button>
+        <button class="menu-item" data-menu="youtube">
+          <svg aria-hidden="true"><use href="#i-youtube"></use></svg>YouTube
         </button>
         <button class="menu-item" data-menu="widget">
           <svg aria-hidden="true"><use href="#i-monitor"></use></svg>Виджеты
@@ -453,51 +461,6 @@
   <div class="grid tab-pane" id="tab-fallback" hidden>
 
     <div class="col">
-      <div class="kicker">Если трека нет в Spotify</div>
-      <div class="account" id="yt-status"></div>
-      <label class="field" style="margin-top:14px">
-        <span>Браузер, из которого брать доступ к YouTube</span>
-        <select id="yt-browser">
-          <option value="">выбрать самому</option>
-          <option value="chrome">Chrome</option>
-          <option value="edge">Edge</option>
-          <option value="firefox">Firefox</option>
-          <option value="yandex">Яндекс.Браузер</option>
-          <option value="opera">Opera</option>
-          <option value="brave">Brave</option>
-          <option value="vivaldi">Vivaldi</option>
-        </select>
-        <span class="hint">YouTube иногда требует подтвердить, что запросы не от
-          робота. Тогда приложение берёт доступ из браузера, в котором ты вошёл в
-          YouTube — само перебирает те, что стоят на этом компьютере. Указывать
-          браузер вручную нужно редко.
-          <br><br>
-          Помогает это редко: Chrome, Edge, Brave и Яндекс.Браузер держат файл с
-          куками заблокированным, пока открыты, — а закрывать браузер ради заказа
-          никто не будет. Проверка «я не бот» у YouTube временная, приложение само
-          ждёт и пробует ещё раз. Firefox отдаёт куки и на ходу.
-          Применяется к следующему заказу, перезапуск не нужен.</span>
-      </label>
-
-      <label class="field" style="margin-top:14px">
-        <span>Громкость заказов с YouTube — <b id="yt-volume-val">100%</b></span>
-        <input type="range" id="yt-volume" min="1" max="100" step="1">
-        <span class="hint">Считается <b>от громкости Spotify</b>: сто процентов —
-          заказ звучит ровно как музыка стримера, пятьдесят — вдвое тише. Меняется
-          на лету, даже посреди играющего трека. Тот же ползунок есть на карточке
-          «В эфире», когда играет заказ с YouTube.</span>
-      </label>
-
-      <label class="field" style="margin-top:14px">
-        <span>Куда выводить звук с YouTube</span>
-        <select id="yt-device"><option value="">системное устройство</option></select>
-        <span class="hint">Отдельное устройство нужно, чтобы в OBS это был отдельный
-          источник звука: его можно приглушить в записи и дать зрителям громкость
-          отдельно от фоновой музыки.</span>
-      </label>
-    </div>
-
-    <div class="col">
       <div class="kicker">Запасной вариант</div>
       <div class="hint" style="margin-top:0">Что включить, если вернуть музыку на место не вышло.</div>
       <div class="modes">
@@ -590,6 +553,116 @@
 
   </div>
 
+</section>
+
+<!-- YouTube. Отдельный раздел с 11.10: друг владельца жаловался, что заказ,
+     которого нет в Spotify, «играл непонятно где», а настроить это было
+     нельзя — настройки лежали внизу вкладки «Если трека нет». Здесь всё про
+     второй проигрыватель в одном месте: что играет, как решать, куда звук. -->
+<section class="panel" id="youtube" hidden>
+  <div class="grid">
+
+    <div class="col">
+      <div class="kicker">Если трека нет в Spotify</div>
+      <div class="hint" style="margin-top:0">Что делать, когда трек нашёлся только на YouTube.</div>
+      <div class="modes">
+        <label class="mode">
+          <input type="radio" name="yt-mode" value="ask">
+          <span>
+            <span class="name">Каждый раз спрашивать</span>
+            <span class="why">В панели появится заказ с кнопками «Включить» и «Отклонить».</span>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="yt-mode" value="auto">
+          <span>
+            <span class="name">Включать с YouTube сам</span>
+            <span class="why">Сразу в очередь. В панели — уведомление, зрителю — строчка в чате.</span>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="yt-mode" value="off">
+          <span>
+            <span class="name">Не играть</span>
+            <span class="why">Заказ отклоняется, баллы возвращаются, зритель видит почему.</span>
+          </span>
+        </label>
+      </div>
+
+      <div id="yt-ask-opts">
+        <label class="field" style="margin-top:14px">
+          <span>Сколько ждать решения</span>
+          <select id="yt-ask-seconds">
+            <option value="30">30 секунд</option>
+            <option value="60">1 минуту</option>
+            <option value="120">2 минуты</option>
+            <option value="300">5 минут</option>
+            <option value="0">пока не решу</option>
+          </select>
+        </label>
+        <label class="field" style="margin-top:14px">
+          <span>Если не успел решить</span>
+          <select id="yt-ask-else">
+            <option value="skip">пропустить и вернуть баллы</option>
+            <option value="play">включить</option>
+          </select>
+        </label>
+      </div>
+      <div class="hint">Применяется к следующему заказу, перезапуск не нужен.</div>
+
+      <div class="kicker" style="margin-top:22px">Недавно с YouTube</div>
+      <div id="yt-recent"></div>
+    </div>
+
+    <div class="col">
+      <div class="kicker">Проигрыватель YouTube</div>
+      <div class="account" id="yt-status"></div>
+      <label class="field" style="margin-top:14px">
+        <span>Браузер, из которого брать доступ к YouTube</span>
+        <select id="yt-browser">
+          <option value="">выбрать самому</option>
+          <option value="chrome">Chrome</option>
+          <option value="edge">Edge</option>
+          <option value="firefox">Firefox</option>
+          <option value="yandex">Яндекс.Браузер</option>
+          <option value="opera">Opera</option>
+          <option value="brave">Brave</option>
+          <option value="vivaldi">Vivaldi</option>
+        </select>
+        <span class="hint">YouTube иногда требует подтвердить, что запросы не от
+          робота. Тогда приложение берёт доступ из браузера, в котором ты вошёл в
+          YouTube — само перебирает те, что стоят на этом компьютере. Указывать
+          браузер вручную нужно редко.
+          <br><br>
+          Помогает это редко: Chrome, Edge, Brave и Яндекс.Браузер держат файл с
+          куками заблокированным, пока открыты, — а закрывать браузер ради заказа
+          никто не будет. Проверка «я не бот» у YouTube временная, приложение само
+          ждёт и пробует ещё раз. Firefox отдаёт куки и на ходу.
+          Применяется к следующему заказу, перезапуск не нужен.</span>
+      </label>
+
+      <label class="field" style="margin-top:14px">
+        <span>Громкость заказов с YouTube — <b id="yt-volume-val">100%</b></span>
+        <input type="range" id="yt-volume" min="1" max="100" step="1">
+        <span class="hint">Считается <b>от громкости Spotify</b>: сто процентов —
+          заказ звучит ровно как музыка стримера, пятьдесят — вдвое тише. Меняется
+          на лету, даже посреди играющего трека. Тот же ползунок есть на карточке
+          «В эфире», когда играет заказ с YouTube.</span>
+      </label>
+
+      <label class="field" style="margin-top:14px">
+        <span>Куда выводить звук с YouTube</span>
+        <select id="yt-device"><option value="">системное устройство</option></select>
+        <span class="acts" style="margin-top:8px">
+          <button class="act small" data-do="yt-test"><svg aria-hidden="true"><use href="#i-volume-2"></use></svg>Проверить звук</button>
+        </span>
+        <span class="hint">Отдельное устройство нужно, чтобы в OBS это был отдельный
+          источник звука: его можно приглушить в записи и дать зрителям громкость
+          отдельно от фоновой музыки.</span>
+      </label>
+    </div>
+
+  </div>
 </section>
 
 <section class="panel" id="widget" hidden>

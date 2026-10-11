@@ -72,6 +72,12 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		if hasLink && s.playElsewhere(ctx, r, req, link, viaLink) {
 			return
 		}
+		// Ссылка на ролик, а YouTube стример выключил.
+		if hasLink && s.youtubeOff() && isElsewhereLink(r.UserInput) {
+			s.state.SetOrderMatch(r.ID, app.OrderMatch{State: app.MatchFailed, Note: "YouTube выключен в настройках"})
+			s.rejectRedemption(s.afterSearch(base), r, "ссылки на YouTube и Яндекс.Музыку здесь не играют — закажи трек из Spotify")
+			return
+		}
 		// Ссылка есть, а играть её нечем: запасной проигрыватель ещё не
 		// готов. Раньше зритель получал в ответ «ты не написал, что
 		// заказываешь» — самый сбивающий с толку ответ из возможных, ведь
@@ -208,6 +214,10 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		if res.AbroadOnly > 0 {
 			s.rejectRedemption(s.afterSearch(base), r,
 				"этот трек не издан в стране аккаунта стримера, Spotify его не отдаёт")
+			return
+		}
+		if s.youtubeOff() {
+			s.rejectRedemption(s.afterSearch(base), r, youtubeOffReason())
 			return
 		}
 		s.rejectRedemption(s.afterSearch(base), r, "не нашёл такого трека ни в Spotify, ни на YouTube")
