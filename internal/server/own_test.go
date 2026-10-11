@@ -12,6 +12,7 @@ import (
 	"songrequest/internal/config"
 	"songrequest/internal/player"
 	"songrequest/internal/queue"
+	"songrequest/internal/smtc"
 	"songrequest/internal/spotifyapp"
 )
 
@@ -39,6 +40,7 @@ func TestOwnMusicShowsWhenQueueIsEmpty(t *testing.T) {
 	// «спросить по сети». На машине разработчика Spotify запущен, и без этой
 	// подмены тест ловил бы настоящий трек вместо выдуманного.
 	srv.localTrack = noLocalSpotify
+	srv.panelTrack = noMediaPanel
 	srv.pollOwn(context.Background(), &ownWatch{})
 
 	now := srv.state.Snapshot().Now
@@ -98,6 +100,7 @@ func TestOrderBeatsOwnMusic(t *testing.T) {
 
 	before := countAsks()
 	srv.localTrack = noLocalSpotify
+	srv.panelTrack = noMediaPanel
 	srv.pollOwn(ctx, &ownWatch{})
 
 	if countAsks() != before {
@@ -124,6 +127,7 @@ func TestOwnMusicHiddenWhenTurnedOff(t *testing.T) {
 
 	srv.cfg.Update(func(c *config.Config) { c.Widget.ShowOwn = false })
 	srv.localTrack = noLocalSpotify
+	srv.panelTrack = noMediaPanel
 	srv.pollOwn(context.Background(), &ownWatch{})
 
 	if asked {
@@ -150,6 +154,14 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 
 // noLocalSpotify изображает компьютер, на котором программа Spotify не
 // запущена: тогда остаётся спрашивать по сети.
+// noMediaPanel — системная панель Windows молчит.
+//
+// На машине разработчика Spotify запущен по-настоящему, и без этой подмены
+// проверки ловили бы его живой трек вместо выдуманного. Проверки своей музыки
+// написаны про прежний путь — чтение заголовка окна, — и должны его и
+// проверять.
+func noMediaPanel() (smtc.Now, bool, error) { return smtc.Now{}, false, nil }
+
 func noLocalSpotify() (spotifyapp.Track, spotifyapp.Status) {
 	return spotifyapp.Track{}, spotifyapp.Unknown
 }
@@ -169,6 +181,7 @@ func TestOwnMusicSurvivesSpotifyRefusal(t *testing.T) {
 	srv.localTrack = func() (spotifyapp.Track, spotifyapp.Status) {
 		return spotifyapp.Track{Artist: "Hayd", Title: "Closure"}, spotifyapp.Playing
 	}
+	srv.panelTrack = noMediaPanel
 
 	srv.pollOwn(context.Background(), &ownWatch{})
 
@@ -262,6 +275,7 @@ func TestIdleSpotifyIsNotAskedOften(t *testing.T) {
 	srv.localTrack = func() (spotifyapp.Track, spotifyapp.Status) {
 		return spotifyapp.Track{}, spotifyapp.Idle
 	}
+	srv.panelTrack = noMediaPanel
 
 	var w ownWatch
 	for i := 0; i < 5; i++ {
@@ -272,5 +286,133 @@ func TestIdleSpotifyIsNotAskedOften(t *testing.T) {
 	defer mu.Unlock()
 	if asks != 1 {
 		t.Fatalf("сходили к Spotify %d раз, а хватало одного", asks)
+	}
+}
+
+// ── чтение из системной панели Windows ───────────────────────────────
+//
+// Ради неё всё и затевалось: Windows знает про играющую музыку всё, что нам
+// нужно, и знает бесплатно. Проверяем, что приложение этим пользуется и не
+// ходит в сеть там, где ходить не надо.
+
+// panelPlaying — панель Windows показывает играющий трек.
+func panelPlaying(status smtc.Status) func() (smtc.Now, bool, error) {
+	return func() (smtc.Now, bool, error) {
+		return smtc.Now{
+			App: "SpotifyAB.SpotifyMusic_test!Spotify", Title: "Группа крови",
+			Artist: "КИНО", Album: "Группа крови", Status: status,
+			PositionMs: 42_000, DurationMs: 235_100,
+		}, true, nil
+	}
+}
+
+func TestPanelGivesTrackWithoutNetwork(t *testing.T) {
+	asks := 0
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		asks++
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv.localTrack = noLocalSpotify
+	srv.panelTrack = panelPlaying(smtc.StatusPlaying)
+	// Обложка никому не нужна: панель закрыта, виджет её не показывает.
+	srv.cfg.Update(func(c *config.Config) { c.Widget.ShowArt = false })
+
+	srv.pollOwn(context.Background(), &ownWatch{})
+
+	now := srv.state.Snapshot().Now
+	if now == nil {
+		t.Fatal("трек из панели Windows не попал в состояние")
+	}
+	if now.Artist != "КИНО" || now.Title != "Группа крови" {
+		t.Fatalf("показано не то: %s — %s", now.Artist, now.Title)
+	}
+	// Главное: точное положение и длительность, которых у нас не было без сети.
+	if now.PositionMs != 42_000 || now.DurationMs != 235_100 {
+		t.Fatalf("время приехало не то: %d из %d", now.PositionMs, now.DurationMs)
+	}
+	if now.Source != app.SourceOwn {
+		t.Fatalf("трек помечен как %q", now.Source)
+	}
+	if asks != 0 {
+		t.Fatalf("сходили к Spotify %d раз, а панель Windows знает всё сама", asks)
+	}
+}
+
+// Пауза своей музыки — то, чего приложение не видело в принципе: в заголовке
+// окна Spotify её нет, а по сети за ней ходить слишком дорого.
+func TestPanelSeesPause(t *testing.T) {
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv.localTrack = noLocalSpotify
+	srv.panelTrack = panelPlaying(smtc.StatusPaused)
+	srv.cfg.Update(func(c *config.Config) { c.Widget.ShowArt = false })
+
+	srv.pollOwn(context.Background(), &ownWatch{})
+
+	now := srv.state.Snapshot().Now
+	if now == nil {
+		t.Fatal("трек не показан")
+	}
+	if !now.Paused {
+		t.Fatal("пауза из панели Windows не доехала до состояния")
+	}
+}
+
+// Остановлено — это тишина, а не «играет с нулевой позиции».
+func TestPanelStoppedMeansSilence(t *testing.T) {
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv.localTrack = noLocalSpotify
+	srv.panelTrack = panelPlaying(smtc.StatusStopped)
+
+	srv.pollOwn(context.Background(), &ownWatch{})
+
+	if now := srv.state.Snapshot().Now; now != nil {
+		t.Fatalf("при остановленном проигрывателе показан трек: %s", now.Title)
+	}
+}
+
+// За обложкой ходим один раз на трек — даже если её так и не дали.
+//
+// Без этого приложение просило бы её на каждом опросе, то есть раз в две
+// секунды: ровно та утечка, ради устранения которой всё и затевалось.
+func TestPanelAsksCoverOncePerTrack(t *testing.T) {
+	asks := 0
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/me/player") {
+			asks++
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv.localTrack = noLocalSpotify
+	srv.panelTrack = panelPlaying(smtc.StatusPlaying)
+	srv.cfg.Update(func(c *config.Config) { c.Widget.ShowArt = true })
+
+	var w ownWatch
+	for i := 0; i < 5; i++ {
+		srv.pollOwn(context.Background(), &w)
+	}
+	if asks != 1 {
+		t.Fatalf("за обложкой сходили %d раз, а хватало одного", asks)
+	}
+}
+
+// Панель молчит — работают прежние пути, а не пустой экран.
+func TestSilentPanelFallsBackToWindowTitle(t *testing.T) {
+	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv.panelTrack = noMediaPanel
+	srv.localTrack = func() (spotifyapp.Track, spotifyapp.Status) {
+		return spotifyapp.Track{Artist: "Hayd", Title: "Closure"}, spotifyapp.Playing
+	}
+
+	srv.pollOwn(context.Background(), &ownWatch{})
+
+	now := srv.state.Snapshot().Now
+	if now == nil || now.Title != "Closure" {
+		t.Fatalf("запасной путь не сработал: %+v", now)
 	}
 }

@@ -478,6 +478,40 @@ func (p *Player) Playing() bool {
 	return p.playing != ""
 }
 
+// TestSound играет короткий сигнал на выбранное устройство.
+//
+// Появилось 11.10, по жалобе «играло непонятно где»: стример выбирает
+// устройство из списка, а услышать, куда оно ведёт, было нечем — только
+// дождаться заказа с YouTube на живом стриме. Сигнал mpv собирает сам, без
+// сети и без файлов: звуковой генератор у него встроен. Громкость — та же,
+// что у заказа, чтобы проверка заодно показала и её.
+func (p *Player) TestSound(ctx context.Context, device string) error {
+	_, mpv := p.tools.Paths()
+	if mpv == "" {
+		return errs.New(errs.YouTubeNoMpv, "mpv не найден — играть звук нечем.")
+	}
+	p.mu.Lock()
+	volume := finalVolume(p.baseVolume, p.volumePercent)
+	p.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	args := []string{"--no-video", "--no-terminal", "--really-quiet", "--force-window=no",
+		"--volume=" + strconv.Itoa(volume)}
+	if device != "" {
+		args = append(args, "--audio-device="+device)
+	}
+	args = append(args, "--", "av://lavfi:sine=frequency=660:duration=1.2")
+
+	cmd := exec.CommandContext(ctx, mpv, args...)
+	hideWindow(cmd)
+	if err := cmd.Run(); err != nil {
+		return errs.Wrap(errs.YouTubePlay, "Сигнал не прозвучал: mpv не смог открыть это устройство.", err)
+	}
+	return nil
+}
+
 // Devices перечисляет доступные аудиоустройства mpv — чтобы стример выбрал
 // виртуальный кабель из списка, а не вписывал его имя руками.
 func (p *Player) Devices(ctx context.Context) ([]string, error) {

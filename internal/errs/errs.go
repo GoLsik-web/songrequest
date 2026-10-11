@@ -75,6 +75,9 @@ const (
 	YouTubePlay        Code = "YT-04" // не получилось включить
 	YouTubeBadResponse Code = "YT-05" // yt-dlp ответил не тем
 	YouTubeCookies     Code = "YT-06" // YouTube требует подтвердить, что мы не робот
+	// YouTubeAskNone — решают судьбу заказа с YouTube, который уже не ждёт:
+	// стример нажал кнопку ровно тогда, когда вышел срок.
+	YouTubeAskNone Code = "YT-07"
 
 	// Обход блокировок
 	TunnelNoKey        Code = "OB-01" // ключ не вставлен или в нём ничего нет

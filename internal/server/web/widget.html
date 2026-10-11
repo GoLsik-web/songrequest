@@ -345,10 +345,14 @@ body { -webkit-font-smoothing: antialiased; }
 
   // Откуда трек — это отдельная мысль, и сказать её надо словами: цветом
   // или значком зритель не поймёт, а подписи «музыка канала» достаточно.
+  //
+  // Заказ с YouTube помечаем так же словами: звук у него идёт другим
+  // проигрывателем, и стримеру, глядящему в кадр, важно это видеть сразу.
   function byLine(now) {
     if (now.source === "own") return "музыка канала";
-    if (showNick && now.requester) return "заказал " + now.requester;
-    return "заказ зрителя";
+    var tail = now.provider === "youtube" ? " · YouTube" : "";
+    if (showNick && now.requester) return "заказал " + now.requester + tail;
+    return "заказ зрителя" + tail;
   }
 
   function hide() {

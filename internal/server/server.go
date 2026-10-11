@@ -27,6 +27,7 @@ import (
 	"songrequest/internal/match"
 	"songrequest/internal/player"
 	"songrequest/internal/queue"
+	"songrequest/internal/smtc"
 	"songrequest/internal/spotify"
 	"songrequest/internal/spotifyapp"
 	"songrequest/internal/store"
@@ -139,6 +140,15 @@ type Server struct {
 	// Пусто — читаем по-настоящему. Заполняется только в проверках.
 	localTrack func() (spotifyapp.Track, spotifyapp.Status)
 
+	// panelTrack подменяет чтение из системной панели управления медиа
+	// Windows. Пусто — читаем по-настоящему.
+	//
+	// Нужно ровно затем же, зачем localTrack: на машине разработчика Spotify
+	// тоже запущен, и без подмены проверки ловили бы его настоящий трек
+	// вместо выдуманного. Без этого четыре проверки своей музыки начали
+	// падать в ту же секунду, как приложение научилось читать панель.
+	panelTrack func() (smtc.Now, bool, error)
+
 	// paused — показана ли сейчас в панели объявленная Spotify пауза.
 	// См. notePause: карточку надо пересобрать и когда пауза началась, и
 	// когда кончилась, а происходит это само, без единого нажатия.
@@ -231,6 +241,11 @@ type Server struct {
 	// в чате: «одобрить 2». В номера очереди он не превращается — очередь
 	// двигается, а этот номер обязан пережить любое движение.
 	playlistNo int64
+
+	// ytAsks — заказы, которых нет в Spotify и которые ждут решения: играть
+	// ли их с YouTube. См. ytask.go.
+	ytAsks  []ytAsk
+	ytAskNo int64
 }
 
 // New поднимает слушатель на 127.0.0.1. Если желаемый порт занят, берём любой
@@ -346,6 +361,10 @@ func New(d Deps) (*Server, error) {
 	// Плейлисты, ждущие решения. См. internal/server/playlists.go.
 	mux.HandleFunc("POST /api/playlists/{id}/approve", s.handlePlaylistApprove)
 	mux.HandleFunc("POST /api/playlists/{id}/reject", s.handlePlaylistReject)
+	// Заказы с YouTube, ждущие решения. См. ytask.go.
+	mux.HandleFunc("POST /api/youtube-asks/{id}/play", s.handleYouTubeAsk(true))
+	mux.HandleFunc("POST /api/youtube-asks/{id}/reject", s.handleYouTubeAsk(false))
+	mux.HandleFunc("POST /api/youtube/test-sound", s.handleYouTubeTestSound)
 	mux.HandleFunc("POST /api/queue/pause", s.handlePause)
 	mux.HandleFunc("POST /api/bans", s.handleBan)
 	mux.HandleFunc("GET /api/bans", s.handleBans)

@@ -664,6 +664,11 @@ func (s *Server) announceQueued(ctx context.Context, item queue.Item, position i
 	if wait > time.Minute {
 		text += fmt.Sprintf(" (примерно через %s)", humanDuration(wait))
 	}
+	// Зритель должен знать, что звук пойдёт не из Spotify: иначе «почему
+	// играет какая-то запись с ютуба» — вопрос в чат через три минуты.
+	if item.Provider == "youtube" {
+		text += " — в Spotify нет, сыграет с YouTube"
+	}
 	s.say(ctx, text)
 }
 

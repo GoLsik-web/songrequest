@@ -68,6 +68,10 @@ func (s *Server) fallbackChain(raw string, req match.Request, link linkResult, w
 	if s.youtube == nil || s.ytTools == nil || !s.ytTools.Ready() {
 		return nil
 	}
+	// Стример запретил играть мимо Spotify — и искать незачем.
+	if s.youtubeOff() {
+		return nil
+	}
 
 	var chain []sourceLink
 
@@ -122,7 +126,7 @@ func (s *Server) playElsewhere(ctx context.Context, r twitch.Redemption,
 			"трек", item.Artist+" — "+item.Title, "почему", source.via)
 
 		item.Via = source.via
-		s.acceptYouTube(ctx, r, *item, "Играем с YouTube — "+source.via)
+		s.offerYouTube(ctx, r, *item, "Играем с YouTube — "+source.via)
 		return true
 	}
 	return false
@@ -193,6 +197,12 @@ func fromYouTube(track *youtube.Track, s *Server) *queue.Item {
 // запасной источник молчит, дело не в источнике.
 func (s *Server) rescue(ctx context.Context, item queue.Item) (queue.Item, bool) {
 	if s.youtube == nil || s.ytTools == nil || !s.ytTools.Ready() {
+		return queue.Item{}, false
+	}
+	// Стример запретил YouTube. Режим «спрашивать» здесь не спрашивает: заказ
+	// уже в эфире, и держать очередь, пока стример заметит вопрос, нельзя —
+	// поэтому спасаем сразу, как раньше, но с уведомлением.
+	if s.youtubeOff() {
 		return queue.Item{}, false
 	}
 	// Этот заказ уже спасали — второй раз не пробуем.

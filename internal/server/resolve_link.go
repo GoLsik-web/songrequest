@@ -174,6 +174,7 @@ func (s *Server) acceptYouTube(ctx context.Context, r twitch.Redemption, item qu
 	item.RawRequest = r.UserInput
 	item.RedemptionID = r.ID
 	item.RewardID = r.RewardID
+	s.rememberYouTube(r, item)
 	s.enqueue(ctx, item)
 }
 

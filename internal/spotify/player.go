@@ -30,23 +30,27 @@ type PlayerState struct {
 	} `json:"context"`
 	ProgressMs int  `json:"progress_ms"`
 	IsPlaying  bool `json:"is_playing"`
-	Item       *struct {
-		URI        string `json:"uri"`
-		ID         string `json:"id"`
-		Name       string `json:"name"`
-		DurationMs int    `json:"duration_ms"`
-		Artists    []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"artists"`
-		Album struct {
-			Name   string `json:"name"`
-			Images []struct {
-				URL string `json:"url"`
-			} `json:"images"`
-		} `json:"album"`
-	} `json:"item"`
+	Item       *StateItem `json:"item"`
 	CurrentlyPlayingType string `json:"currently_playing_type"`
+}
+
+// StateItem — играющий трек в ответе Spotify. Отдельным типом, потому что
+// такой же ответ собирает и плеер — из того, что показывает панель Windows.
+type StateItem struct {
+	URI        string `json:"uri"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	DurationMs int    `json:"duration_ms"`
+	Artists    []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"artists"`
+	Album struct {
+		Name   string `json:"name"`
+		Images []struct {
+			URL string `json:"url"`
+		} `json:"images"`
+	} `json:"album"`
 }
 
 // Device — устройство Spotify Connect.
