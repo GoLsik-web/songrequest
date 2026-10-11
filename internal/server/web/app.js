@@ -1283,12 +1283,31 @@
     };
     const [word, mood] = look[t.phase] || look.off;
 
+    // Три шага подключения галочками и одна строчка «что это значит».
+    //
+    // Появилось 11.10: тестер не понимал, подключилось ли вообще, и боялся,
+    // что приложение пустило через VPN весь компьютер. Отсюда прямая фраза
+    // про остальной интернет — она правда: через обход идёт только Spotify.
+    const step = (done, text) =>
+      `<div class="plan">${done ? "✓" : "…"} ${text}</div>`;
+    const live = t.phase === "connected";
+    const meaning = {
+      connected: "Spotify идёт через обход. Остальной интернет — напрямую, как обычно.",
+      connecting: "Ищу рабочий сервер из твоего ключа. Первый раз — до пары минут.",
+      reconnecting: "Сервер отвалился, ищу другой. Заказы подождут.",
+      standby: "Spotify сейчас отвечает и без обхода. Перестанет — включу сам.",
+      down: "Что сделать: нажми «Проверить обход». Не помогло — ключ устарел, вставь новый.",
+      off: "Нажми «Включить обход».",
+    }[t.phase] || "";
+
     box.className = "account " + mood;
     box.innerHTML = `
       <div class="who">${word}</div>
-      <div class="mail">ключ сохранён · ${esc(t.hint)}</div>
-      ${t.on && t.server ? `<div class="plan">через ${esc(t.server)}</div>` : ""}
+      ${step(true, "ключ сохранён · " + esc(t.hint))}
+      ${step(live && t.server, live && t.server ? "сервер: " + esc(t.server) : "сервер ещё не выбран")}
+      ${step(live, live ? "Spotify отвечает через обход" : "Spotify через обход ещё не проверен")}
       ${t.from_cache ? `<div class="plan">список серверов взят из памяти — сервис подписки не ответил</div>` : ""}
+      ${meaning ? `<div class="plan"><b>${meaning}</b></div>` : ""}
       ${t.note ? `<div class="plan">${esc(t.note)}</div>` : ""}`;
   }
 
