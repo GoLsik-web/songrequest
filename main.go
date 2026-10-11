@@ -167,6 +167,9 @@ func run() error {
 
 	state := app.New(version)
 
+	if flavor != "" {
+		secrets.SetService("songrequest-" + flavor)
+	}
 	keys := secrets.New()
 	sp := spotify.New(cfg, log, keys)
 	tw := twitch.New(cfg, log, keys)
