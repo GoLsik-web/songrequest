@@ -75,7 +75,26 @@ func (p *Player) Search(ctx context.Context, query string) (*Track, error) {
 	if ytdlp == "" {
 		return nil, errs.New(errs.YouTubeNoTool, "yt-dlp не найден.")
 	}
-	return p.metadata(ctx, "ytsearch1:"+query)
+	return p.metadata(ctx, "ytsearch1:"+CleanQuery(query))
+}
+
+// CleanQuery убирает из запроса то, что поиск YouTube понимает как команды.
+//
+// 11.10: зритель написал «я в деле -slawa merlow». Минус перед словом для
+// YouTube значит «исключить это слово», и искалось «я в деле, но без slawa»
+// — нашёлся ролик про PvP-игрока, к музыке отношения не имеющий. Минус
+// между словами здесь всегда просто тире: заказ — не поисковый запрос.
+func CleanQuery(q string) string {
+	r := strings.NewReplacer("\"", " ", "|", " ", "*", " ", "#", " ")
+	words := strings.Fields(r.Replace(q))
+	out := words[:0]
+	for _, w := range words {
+		w = strings.TrimLeft(w, "-+~")
+		if w != "" {
+			out = append(out, w)
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 // Lookup достаёт метаданные по прямой ссылке.

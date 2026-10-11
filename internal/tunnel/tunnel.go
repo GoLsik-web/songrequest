@@ -374,6 +374,9 @@ var subscriptionAgents = []string{
 	"v2rayN/6.23",
 	"Shadowrocket/1.0",
 	"v2rayNG/1.8.0",
+	// Последним — Happ: некоторые сервисы отдают серверы только ему, и
+	// только вместе с номером устройства (см. happ.go). Ответ у него — JSON.
+	"Happ/3.0",
 }
 
 // resolve превращает то, что вставил человек, в список серверов.
@@ -474,6 +477,17 @@ func (t *Tunnel) fromSubscription(ctx context.Context, link string, n, total int
 			}
 
 			servers, err := ParseKey(string(body))
+			// Настройки Xray в JSON вместо ключей — так отвечают Happ и
+			// v2rayNG. Разбираем и их.
+			if err != nil {
+				if list, isJSON := parseXrayJSON(string(body)); isJSON {
+					if len(list) > 0 {
+						servers, err = list, nil
+					} else {
+						err = errs.New(errs.TunnelSubscription, "в настройках нет серверов")
+					}
+				}
+			}
 			if err != nil {
 				lastErr = errs.New(errs.TunnelSubscription,
 					"Сервис подписки ответил не списком ключей. Попробуй взять в личном "+
@@ -504,6 +518,11 @@ func (t *Tunnel) fetchSubscription(ctx context.Context, url, agent string) ([]by
 		return nil, false, errs.Wrap(errs.TunnelSubscription, "Ссылка на подписку записана непонятно.", err)
 	}
 	req.Header.Set("User-Agent", agent)
+	// Номер устройства шлём всем: тем сервисам, что его не спрашивают, он не
+	// мешает, а тем, что спрашивают, без него серверов не дают.
+	for k, v := range deviceHeaders() {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := (&http.Client{Timeout: subTimeout}).Do(req)
 	if err != nil {
@@ -517,7 +536,7 @@ func (t *Tunnel) fetchSubscription(ctx context.Context, url, agent string) ([]by
 		// ссылку» отправлял человека искать ошибку у себя. Говорим как есть и
 		// даём обходной путь: отдельный ключ сервера работает без сервиса.
 		return nil, true, errs.New(errs.TunnelSubscription,
-			fmt.Sprintf("Сервис подписки сейчас сломан (ответил %d) — это на их стороне, ключ в порядке. "+
+			fmt.Sprintf("Сервис подписки не отдал список серверов (ответ %d). Похоже, сломано у них, ключ в порядке. "+
 				"Пока он не починится: открой своё VPN-приложение, скопируй ключ одного сервера "+
 				"(начинается с vless://, trojan:// или ss://) и вставь его сюда вместо ссылки.", resp.StatusCode))
 	}

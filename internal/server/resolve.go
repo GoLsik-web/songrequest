@@ -149,10 +149,34 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	opts.WantMs = link.WantMs
 
 	res, err := match.Find(ctx, s.spotify, req, opts)
+
+	// Spotify не пустил по стране или не ответил — это дело дороги, а не
+	// поиска. Поднимаем обход, ждём его и спрашиваем ещё раз.
+	//
+	// 11.10 у тестера: обход не был поднят, поиск получил «не работает из
+	// этой страны», и заказ «Я в деле — SLAVA MARLOW», который в Spotify
+	// есть, ушёл на YouTube. Раньше отказ поиска обход не будил вовсе.
+	//
+	// Только если обхода сейчас нет: если он уже стоит и Spotify всё равно
+	// отказал, сменой сервера занимается noteSpotifyError, и держать заказ
+	// ради этого незачем.
+	if err != nil && roadTrouble(err) && s.cfg.Get().TunnelOn && !s.tunnel.Status().On {
+		s.noteSpotifyError(err)
+		if s.waitTunnel(ctx, 40*time.Second) {
+			s.log.Info("обход поднят — повторяю поиск", "заказ", r.UserInput)
+			res, err = match.Find(ctx, s.spotify, req, opts)
+		}
+	}
+
 	if err != nil {
 		code, text := errs.Describe(err)
 		s.log.Error("поиск трека не удался", "заказ", r.UserInput, "код", code, "ошибка", err)
-		s.autoProbeSearch(req.Clean)
+		// Пробы поиска (полтора десятка запросов) нужны, когда поиск ломается
+		// сам по себе. При отказе по стране или без связи они ничего не
+		// скажут, а запросы потратят.
+		if !roadTrouble(err) {
+			s.autoProbeSearch(req.Clean)
+		}
 
 		// Отказ поиска — не конец заказа. Запасные пути раньше стояли
 		// только ниже, в ветке «поиск отработал, но ничего не подошло», и

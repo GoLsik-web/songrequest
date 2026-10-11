@@ -2162,6 +2162,12 @@
   };
 
   $("save-id").onclick = async () => {
+    // Пустое поле не сохраняем: раньше на это отвечало «сохранён» —
+    // и человек шёл дальше, уверенный, что всё вставил.
+    if (!$("client-id").value.trim()) {
+      say("Поле пустое — сначала вставь Client ID Spotify.", true);
+      return;
+    }
     if (await saveConfig({ spotify_client_id: $("client-id").value.trim() })) {
       say("Client ID сохранён. Теперь нажми «Подключить Spotify».");
     }
@@ -2175,18 +2181,30 @@
   };
 
   $("save-da-id").onclick = async () => {
+    // Пустое поле не сохраняем: раньше на это отвечало «сохранён» —
+    // и человек шёл дальше, уверенный, что всё вставил.
+    if (!$("da-id").value.trim()) {
+      say("Поле пустое — сначала вставь Client ID DonationAlerts.", true);
+      return;
+    }
     if (await saveConfig({ donationalerts_client_id: $("da-id").value.trim() })) {
       say("Сохранено. Теперь нажми «Подключить DonationAlerts».");
     }
   };
   $("save-dp-key").onclick = async () => {
     if (await saveConfig({ donatepay_key: $("dp-key").value.trim() })) {
-      say("Ключ DonatePay сохранён. Перезапусти приложение, чтобы он заработал.");
+      // Пустое поле — это «убрать ключ», и сказать надо именно так.
+      say($("dp-key").value.trim()
+        ? "Ключ DonatePay сохранён. Перезапусти приложение, чтобы он заработал."
+        : "Ключ DonatePay убран.");
     }
   };
   $("save-dx-key").onclick = async () => {
     if (await saveConfig({ donatex_key: $("dx-key").value.trim() })) {
-      say("Ключ DonateX сохранён. Перезапусти приложение, чтобы он заработал.");
+      // Пустое поле — это «убрать ключ», и сказать надо именно так.
+      say($("dx-key").value.trim()
+        ? "Ключ DonateX сохранён. Перезапусти приложение, чтобы он заработал."
+        : "Ключ DonateX убран.");
     }
   };
 
@@ -2203,6 +2221,12 @@
   };
 
   $("save-twitch-id").onclick = async () => {
+    // Пустое поле не сохраняем: раньше на это отвечало «сохранён» —
+    // и человек шёл дальше, уверенный, что всё вставил.
+    if (!$("twitch-id").value.trim()) {
+      say("Поле пустое — сначала вставь Client ID Twitch.", true);
+      return;
+    }
     if (await saveConfig({ twitch_client_id: $("twitch-id").value.trim() })) {
       say("Client ID Twitch сохранён. Теперь нажми «Подключить Twitch».");
     }

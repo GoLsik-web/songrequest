@@ -149,7 +149,33 @@ func (s *Server) findOnYouTube(ctx context.Context, raw, query string) *queue.It
 		s.log.Info("на YouTube не нашлось", "запрос", query, "ошибка", err)
 		return nil
 	}
+	if !relevant(query, track) {
+		s.log.Info("на YouTube нашлось не то — ни одного слова из заказа",
+			"запрос", query, "нашлось", track.Artist+" — "+track.Title)
+		return nil
+	}
 	return fromYouTube(track, s)
+}
+
+// relevant — похоже ли найденное на заказ хоть одним словом.
+//
+// Поиск YouTube выдаёт что-нибудь всегда, даже на бессмыслицу. 11.10 на
+// заказ с опечаткой нашёлся ролик «Лучший PvP игрок. Крупнейшая история
+// обмана» — и стримеру предложили его включить. Проверка простая и
+// нестрогая: опечатку YouTube обычно исправляет сам (slava merlow → SLAVA
+// MARLOW), и тогда общее слово найдётся; а совсем чужой ролик её не пройдёт.
+func relevant(query string, t *youtube.Track) bool {
+	if t == nil {
+		return false
+	}
+	have := strings.ToLower(t.Title + " " + t.Artist)
+	for _, w := range strings.Fields(strings.ToLower(youtube.CleanQuery(query))) {
+		w = strings.Trim(w, ".,!?()[]«»—-")
+		if len([]rune(w)) >= 3 && strings.Contains(have, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // lookupTrack читает метаданные по адресу и делает из них заказ.
@@ -223,6 +249,10 @@ func (s *Server) rescue(ctx context.Context, item queue.Item) (queue.Item, bool)
 	track, err := s.youtube.Search(ctx, query)
 	if err != nil {
 		s.log.Info("запасной источник тоже не нашёл", "запрос", query, "ошибка", err)
+		return queue.Item{}, false
+	}
+	if !relevant(query, track) {
+		s.log.Info("запасной источник нашёл не то", "запрос", query, "нашлось", track.Title)
 		return queue.Item{}, false
 	}
 	found := fromYouTube(track, s)
