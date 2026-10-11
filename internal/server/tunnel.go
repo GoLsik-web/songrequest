@@ -370,17 +370,17 @@ func (s *Server) noteSpotifyError(err error) {
 	if !st.On || st.Server == "" {
 		// Spotify отказывает по стране, а обхода нет. Если ключ есть и обход
 		// разрешён — самое время его поднять: ровно для этого он и заведён.
-		if s.cfg.Get().TunnelOn && s.reviveTunnel("Spotify не работает из этой страны") {
-			// И заодно проверим, не чужой ли VPN тому виной: если до Spotify
-			// достаёт и напрямую, дело не в провайдере, а в том, через какой
-			// адрес мы к нему приходим. Проверка сетевая, поэтому в стороне.
-			go func() {
-				ctx, cancel := context.WithTimeout(s.baseContext(), 15*time.Second)
-				defer cancel()
-				if tunnel.CheckSpotify(ctx, "") == nil {
-					s.warnAboutOwnVPN()
-				}
-			}()
+		//
+		// Запоминаем, что напрямую нельзя: иначе следующая проверка прямой
+		// дороги снова скажет «отвечает» и выключит обход.
+		//
+		// Раньше здесь же проверялось «достаёт ли до Spotify напрямую», и если
+		// да — стримеру писалось «у тебя включён свой VPN». Это было ложью:
+		// без входа Spotify отвечает и из России, так что предупреждение
+		// выскакивало у всех подряд и только сбивало с толку.
+		s.markTunnelNeeded()
+		if s.cfg.Get().TunnelOn {
+			s.reviveTunnel("Spotify не работает из этой страны")
 		}
 		return
 	}
@@ -685,6 +685,12 @@ func (s *Server) checkRoad(ctx context.Context) {
 // свой обход поверх чужого VPN работает, но так медленно, что запросы не
 // укладываются в срок ожидания.
 func (s *Server) spotifyWorksDirect(ctx context.Context) (works bool, vpnLikely bool) {
+	// Недавно Spotify напрямую отказал по стране — не проверяем, сразу
+	// «нужен обход». См. TunnelNeededAt в config.
+	if at := s.cfg.Get().TunnelNeededAt; !at.IsZero() && time.Since(at) < tunnelNeededFor {
+		s.log.Debug("прямую дорогу не проверяю: Spotify недавно отказал по стране", "когда", at)
+		return false, false
+	}
 	if err := tunnel.CheckSpotify(ctx, ""); err != nil {
 		s.log.Debug("напрямую Spotify не отвечает", "ошибка", err)
 		return false, false
@@ -705,9 +711,25 @@ func (s *Server) spotifyWorksDirect(ctx context.Context) (works bool, vpnLikely 
 	if _, _, err := s.spotify.State(ctx); err != nil {
 		s.log.Info("напрямую Spotify отвечает, но плеер не отдаёт — обход нужен",
 			"ошибка", err)
-		return false, errs.CodeOf(err) == errs.SpotifyCountry
+		// Отказ по стране — это обычная Россия, а не «свой VPN стримера»:
+		// раньше здесь выходило «да, VPN», и каждому стримеру в России при
+		// запуске писалось, что его VPN всё замедляет. Запоминаем и молчим.
+		if errs.CodeOf(err) == errs.SpotifyCountry {
+			s.markTunnelNeeded()
+		}
+		return false, false
 	}
 	return true, false
+}
+
+// tunnelNeededFor — сколько помнить отказ Spotify по стране.
+const tunnelNeededFor = 7 * 24 * time.Hour
+
+// markTunnelNeeded запоминает, что напрямую Spotify отказывает по стране.
+func (s *Server) markTunnelNeeded() {
+	if err := s.cfg.Update(func(c *config.Config) { c.TunnelNeededAt = time.Now() }); err != nil {
+		s.log.Warn("не запомнил, что обход нужен", "ошибка", err)
+	}
 }
 
 // warnAboutOwnVPN объясняет, почему всё медленно, когда у стримера включён свой

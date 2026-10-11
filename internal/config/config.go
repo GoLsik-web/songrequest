@@ -54,6 +54,12 @@ type Config struct {
 	TunnelOn      bool   `json:"tunnel_on"`
 	TunnelKeyHint string `json:"tunnel_key_hint"`
 	TunnelServer  string `json:"tunnel_server"`
+	// TunnelNeededAt — когда Spotify последний раз отказал напрямую «не
+	// работает из этой страны». Неделю после этого прямую дорогу не
+	// проверяем: она «отвечает» (без входа Spotify пускает и из России), а
+	// через десять секунд плеер снова отказывает. Из-за этого обход
+	// выключался и включался по кругу, каждый раз с перебором серверов.
+	TunnelNeededAt time.Time `json:"tunnel_needed_at"`
 	// TunnelToolPath — путь к xray.exe, если человек положил его руками.
 	// Пусто — приложение скачает и будет держать свою копию.
 	TunnelToolPath string `json:"tunnel_tool_path"`
