@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"songrequest/internal/app"
+	"songrequest/internal/player"
 	"songrequest/internal/smtc"
 	"songrequest/internal/spotify"
 	"songrequest/internal/spotifyapp"
@@ -582,6 +583,28 @@ func (s *Server) readPanel() (smtc.Now, bool, error) {
 		return s.panelTrack()
 	}
 	return smtc.Read(smtc.SpotifyApp)
+}
+
+// orderPanel отдаёт плееру то, что показывает панель Windows.
+type orderPanel struct{ s *Server }
+
+func (o orderPanel) Track() (player.PanelTrack, bool) {
+	seen, ok, err := o.s.readPanel()
+	if err != nil || !ok || strings.TrimSpace(seen.Title) == "" {
+		return player.PanelTrack{}, false
+	}
+	// Закрытый или остановленный Spotify — не ответ «играет другое», а
+	// молчание: пусть решает Spotify по сети, как раньше.
+	if !seen.Playing() && !seen.Paused() {
+		return player.PanelTrack{}, false
+	}
+	return player.PanelTrack{
+		Title:      seen.Title,
+		Artist:     seen.Artist,
+		PositionMs: seen.PositionMs,
+		DurationMs: seen.DurationMs,
+		Playing:    seen.Playing(),
+	}, true
 }
 
 // wantCover — нужна ли обложка прямо сейчас.

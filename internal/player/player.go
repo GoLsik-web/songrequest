@@ -127,6 +127,12 @@ type Player struct {
 	// rescue — что играть, если заказ не заиграл. См. SetRescue.
 	rescue Rescue
 
+	// panel — панель Windows; через неё await узнаёт, играет ли заказ, не
+	// тратя запросов к Spotify. См. panel.go.
+	panel Panel
+	// panelMiss — сколько раз подряд панель не узнала играющий заказ.
+	panelMiss int
+
 	// volumeTouched — стример двигал громкость Spotify из панели. Тогда после
 	// очереди её надо вернуть на место вместе со всем остальным: иначе заказ
 	// навсегда меняет громкость самому стримеру, а он об этом даже не узнает —
@@ -630,6 +636,7 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 		length = 30 * time.Second
 	}
 	deadline := time.Now().Add(length + 15*time.Second)
+	p.resetPanel()
 
 	left := length
 	// endBy — когда трек доиграет по нашим часам. Пока музыка идёт, срок
@@ -666,7 +673,7 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 			return false
 		}
 
-		st, ok, err := p.spotify.State(ctx)
+		st, ok, err := p.peek(ctx, item)
 		if err != nil {
 			// Spotify не ответил. Гадать не будем: досидим по своим часам.
 			p.log.Warn("не проверил, доиграл ли трек", "ошибка", err)
@@ -733,7 +740,7 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 			// Раньше срок продлевался на десять секунд на каждой проверке, а
 			// проверки шли чаще, — то есть убегал быстрее, чем шло время, и
 			// заказ висел «играет» вечно. Теперь у паузы свой общий запас.
-			paused += p.step()
+			paused += p.awaitStep()
 			if paused > maxPause {
 				// Музыку остановил человек — возврату здесь делать нечего.
 				p.log.Info("заказ снят: Spotify стоит на паузе слишком долго",
@@ -783,7 +790,7 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 // не узнаем. Больше трёх секунд — тоже: тогда под конец трека настоящая
 // пауза начнёт сходить за конец.
 func (p *Player) endSlack(length time.Duration) time.Duration {
-	slack := p.step()
+	slack := p.awaitStep()
 	if slack > 3*time.Second {
 		slack = 3 * time.Second
 	}
@@ -800,7 +807,7 @@ const maxPause = 5 * time.Minute
 
 // awaitNap — сколько спать до следующей проверки.
 func (p *Player) awaitNap(left time.Duration) time.Duration {
-	step := p.step()
+	step := p.awaitStep()
 	// Нижний порог держим коротким независимо от шага. Он работает только на
 	// последних мгновениях трека, и от него зависит, будет ли между заказами
 	// слышна пауза. С длинным шагом (двадцать пять секунд) десятая доля дала
