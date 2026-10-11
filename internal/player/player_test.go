@@ -40,6 +40,8 @@ type fakeSpotify struct {
 	held    bool
 	sought  []int
 	volumes []int
+	// states — сколько раз спросили Spotify, что играет.
+	states int
 }
 
 // setPlaying изображает, что у стримера что-то играет.
@@ -140,26 +142,12 @@ func (f *fakeSpotify) SetVolume(ctx context.Context, percent int, deviceID strin
 func (f *fakeSpotify) State(ctx context.Context) (*spotify.PlayerState, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.states++
 	if f.playing == "" {
 		return nil, false, nil
 	}
 	st := &spotify.PlayerState{IsPlaying: !f.paused}
-	st.Item = &struct {
-		URI        string `json:"uri"`
-		ID         string `json:"id"`
-		Name       string `json:"name"`
-		DurationMs int    `json:"duration_ms"`
-		Artists    []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"artists"`
-		Album struct {
-			Name   string `json:"name"`
-			Images []struct {
-				URL string `json:"url"`
-			} `json:"images"`
-		} `json:"album"`
-	}{URI: f.playing, Name: f.playing, DurationMs: f.dur()}
+	st.Item = &spotify.StateItem{URI: f.playing, Name: f.playing, DurationMs: f.dur()}
 	st.ProgressMs = f.progress
 	return st, true, nil
 }
