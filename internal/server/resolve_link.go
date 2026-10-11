@@ -10,6 +10,7 @@ import (
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
 	"songrequest/internal/twitch"
+	"songrequest/internal/youtube"
 )
 
 // linkResult — что удалось понять из ссылки.
@@ -73,11 +74,41 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 		// ссылке на Яндекс подбирались хуже, чем по ссылке на YouTube.
 		return linkResult{Query: meta.Query(), WantMs: meta.DurationMs}, true
 
-	case links.YouTube, links.VK:
-		if s.youtube == nil || !s.ytTools.Ready() {
-			return linkResult{Note: "запасной проигрыватель ещё не готов"}, false
+	case links.Page:
+		// Apple Music, SoundCloud, Deezer и прочие: название со страницы —
+		// и в поиск Spotify. Сыграть такую ссылку саму по себе нечем.
+		info, err := links.ReadPage(ctx, link)
+		if err != nil {
+			s.log.Info("не прочитал страницу по ссылке", "сервис", link.Service, "ссылка", link.URL, "ошибка", err)
+			return linkResult{Note: "не удалось узнать трек по ссылке на " + link.Service}, false
 		}
-		track, err := s.youtube.Lookup(ctx, link.URL)
+		s.log.Info("трек по ссылке на "+link.Service,
+			"название", info.Title, "артист", info.Artist, "запрос", info.Query())
+		return linkResult{Query: info.Query(), WantMs: info.DurationMs}, true
+
+	case links.YouTube, links.VK:
+		var (
+			track *youtube.Track
+			err   error = errs.New(errs.YouTubeNoTool, "запасной проигрыватель ещё не готов")
+		)
+		if s.youtube != nil && s.ytTools.Ready() {
+			track, err = s.youtube.Lookup(ctx, link.URL)
+		}
+		// yt-dlp не смог (нет его, или YouTube требует «не бот») — узнаём хотя
+		// бы название через открытый сервис YouTube и ищем трек в Spotify.
+		// Только для YouTube: у VK такого сервиса нет.
+		if err != nil && link.Kind == links.YouTube {
+			lookup := youtube.OEmbed
+			if s.oembed != nil {
+				lookup = s.oembed
+			}
+			if alt, altErr := lookup(ctx, link.URL); altErr == nil {
+				s.log.Info("название ролика взял через oEmbed — yt-dlp не смог",
+					"ссылка", link.URL, "ошибка_ytdlp", err)
+				track, err = alt, nil
+				track.ID = link.ID
+			}
+		}
 		if err != nil {
 			s.log.Info("не разобрал ссылку", "ссылка", link.URL, "ошибка", err)
 			_, note := errs.Describe(err)
