@@ -82,3 +82,53 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// artistOnly — зритель написал только имя артиста.
+//
+// 11.10: заказ «slawa marlow» нашёлся как «Носовой Платон — Слава Марлов» —
+// чужая песня, у которой имя артиста стоит в названии. Зритель же хотел
+// самого SLAVA MARLOW, просто не сказал какой трек. Если весь заказ на слух
+// совпадает с именем артиста, которого знает Spotify, играем его самый
+// популярный трек. Стоит два запроса и только тогда, когда обычный подбор
+// уверенного ответа не дал.
+func artistOnly(ctx context.Context, s Searcher, req Request) (Candidate, string, bool) {
+	resolver, ok := s.(ArtistResolver)
+	if !ok || req.Artist != "" || req.Title == "" {
+		return Candidate{}, "", false
+	}
+	for _, name := range []string{req.Title, Transliterate(req.Title)} {
+		if name == "" {
+			continue
+		}
+		canonical, err := resolver.ResolveArtist(ctx, name)
+		if err != nil || canonical == "" {
+			continue
+		}
+		// Запрос должен быть именем целиком, а не «имя + что-то ещё»: иначе
+		// «кино группа крови» превратилось бы в любой популярный трек Кино.
+		if LooseSimilar(Normalize(name), Normalize(canonical)) < 0.8 {
+			continue
+		}
+		query := fmt.Sprintf("artist:%s", quoted(canonical))
+		found, err := s.SearchTracks(ctx, query, 10)
+		if err != nil {
+			continue
+		}
+		var best Candidate
+		for _, c := range found {
+			mine := false
+			for _, a := range c.Artists {
+				if Normalize(a) == Normalize(canonical) {
+					mine = true
+				}
+			}
+			if mine && c.Popularity > best.Popularity || mine && best.ID == "" {
+				best = c
+			}
+		}
+		if best.ID != "" {
+			return best, query, true
+		}
+	}
+	return Candidate{}, "", false
+}

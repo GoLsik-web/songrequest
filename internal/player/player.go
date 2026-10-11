@@ -130,6 +130,9 @@ type Player struct {
 	// panel — панель Windows; через неё await узнаёт, играет ли заказ, не
 	// тратя запросов к Spotify. См. panel.go.
 	panel Panel
+	// startGrace — см. постоянную startGrace. Полем ради проверок, где треки
+	// длятся доли секунды.
+	startGrace time.Duration
 	// panelMiss — сколько раз подряд панель не узнала играющий заказ.
 	panelMiss int
 
@@ -197,6 +200,7 @@ func New(q *queue.Queue, sp Spotify, log *logx.Logger) *Player {
 		spotify:     sp,
 		log:         log,
 		ResumeDelay: time.Second,
+		startGrace:  startGrace,
 		wake:        make(chan struct{}, 1),
 		skip:        make(chan struct{}, 1),
 	}
@@ -637,6 +641,9 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 	}
 	deadline := time.Now().Add(length + 15*time.Second)
 	p.resetPanel()
+	// begun — когда заказ включили. Первые секунды ни Windows, ни Spotify
+	// ещё не знают про новый трек и показывают прежний.
+	begun := time.Now()
 
 	left := length
 	// endBy — когда трек доиграет по нашим часам. Пока музыка идёт, срок
@@ -681,6 +688,15 @@ func (p *Player) await(ctx context.Context, item queue.Item) bool {
 			continue
 		}
 		if !ok || st.Item == nil || st.Item.URI != item.URI {
+			// Только что включили — это ещё не «переключили», а «не успело
+			// доехать». 11.10 каждый заказ обрывался через 2 секунды: проверка
+			// стала частой (через панель Windows), и первая же видела прежний
+			// трек. Раньше первая проверка была через минуту и этого не
+			// замечала.
+			if time.Since(begun) < p.startGrace {
+				p.log.Debug("заказ ещё не доехал до Spotify, жду", "трек", item.Title)
+				continue
+			}
 			p.log.Info("заказ больше не играет в Spotify",
 				"трек", item.Artist+" — "+item.Title, "доиграл_сам", toEnd)
 			return toEnd
@@ -799,6 +815,10 @@ func (p *Player) endSlack(length time.Duration) time.Duration {
 	}
 	return slack
 }
+
+// startGrace — сколько после запуска заказа не верить ответу «играет
+// другое». Spotify переключается за секунду-две, с запасом — десять.
+const startGrace = 10 * time.Second
 
 // maxPause — сколько всего готовы ждать стримера, если он поставил паузу.
 // Больше пяти минут — это уже не пауза, а «отошёл»: очередь при этом стоять

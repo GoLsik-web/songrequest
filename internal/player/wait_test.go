@@ -292,3 +292,27 @@ func TestRewoundToZeroAndPausedCountsAsFinished(t *testing.T) {
 			return len(played) >= 2 && played[1] == "spotify:track:второй"
 		})
 }
+
+// Сразу после запуска Spotify ещё показывает прежний трек. Это не повод
+// снимать заказ: 11.10 так обрывался каждый заказ через 2 секунды.
+func TestJustStartedOrderIsNotCutShort(t *testing.T) {
+	p, q, sp := newPlayer(t)
+	p.startGrace = time.Second
+	addTrack(t, q, "заказ", 240000)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx)
+
+	waitUntil(t, 3*time.Second, "заказ не заиграл",
+		func() bool { return p.Now() != nil })
+	// Spotify «ещё не доехал»: показывает другое.
+	sp.finish()
+	time.Sleep(500 * time.Millisecond)
+	if p.Now() == nil {
+		t.Fatal("заказ сняли в первые мгновения после запуска")
+	}
+	// А после запаса — это уже настоящее переключение.
+	waitUntil(t, 3*time.Second, "после запаса подмену не заметили",
+		func() bool { return p.Now() == nil })
+}
