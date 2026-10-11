@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -350,7 +351,19 @@ func (s *Server) applyProxy() {
 		}
 	}
 
-	shown, err := s.spotify.SetProxy(s.cfg.Get().SpotifyProxy)
+	proxy := s.cfg.Get().SpotifyProxy
+	// Ручной прокси на этом же компьютере, а там никто не слушает.
+	//
+	// 11.10 у тестера так и было: в настройках с давних пор стоял
+	// socks5://127.0.0.1:1080 от VPN-программы, которой уже нет, — и каждый
+	// запрос к Spotify падал «соединение отвергнуто», а обход из-за этого
+	// считал, что Spotify недоступен. Мёртвый местный прокси не используем:
+	// напрямую хотя бы есть шанс, а через пустой порт его нет вовсе.
+	if dead := deadLocalProxy(proxy); dead {
+		s.log.Warn("ручной прокси для Spotify не отвечает — хожу без него", "прокси", proxy)
+		proxy = ""
+	}
+	shown, err := s.spotify.SetProxy(proxy)
 	if err != nil {
 		s.log.Error("прокси для Spotify не настроен", "ошибка", err)
 		s.state.NotifyError(err)
@@ -554,4 +567,27 @@ func (s *Server) WarnIfPortChanged() {
 		want, actual, s.redirectURI())
 	s.log.Warn("панель на другом порту", "ожидали", want, "получили", actual)
 	s.state.NotifyWarn(errs.SpotifyAuthDenied, text)
+}
+
+// deadLocalProxy — прокси указан на этот же компьютер, а порт закрыт.
+// Чужие адреса не проверяем: удалённый прокси может просто долго отвечать.
+func deadLocalProxy(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := u.Hostname()
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return false
+	}
+	c, err := net.DialTimeout("tcp", u.Host, 700*time.Millisecond)
+	if err != nil {
+		return true
+	}
+	c.Close()
+	return false
 }
