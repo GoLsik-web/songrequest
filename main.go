@@ -231,6 +231,7 @@ func run() error {
 	srv.StartDonations(ctx)
 	srv.StartYouTube(ctx)
 	srv.StartTunnel(ctx)
+	srv.StartWatch(ctx)
 
 	// mpv не должен пережить приложение: иначе он останется занимать
 	// звуковое устройство, а музыка продолжит играть после закрытия.
