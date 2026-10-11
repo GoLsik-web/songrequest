@@ -359,7 +359,22 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			req.Header.Set("Content-Type", "application/json")
 		}
 
+		sent := time.Now()
 		resp, err := c.client().Do(req)
+		// Подробный журнал: каждый запрос с временем и дорогой. По нему видно,
+		// сколько запросов уходит за вечер и не тормозит ли обход.
+		if c.cfg != nil && c.cfg.Get().VerboseLog {
+			status := 0
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			route := c.ProxyLabel()
+			if route == "" {
+				route = "напрямую"
+			}
+			c.log.Info("[подробно] запрос к Spotify", "метод", method, "путь", path,
+				"ответ", status, "мс", time.Since(sent).Milliseconds(), "дорога", route, "попытка", attempt)
+		}
 		if err != nil {
 			// Сеть моргнула — это самый частый сбой на домашнем интернете,
 			// и он не должен превращаться в ошибку на стриме.

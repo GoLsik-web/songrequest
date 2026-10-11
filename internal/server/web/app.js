@@ -1562,6 +1562,7 @@
     $("yt-volume").value = config.youtube_volume ?? 100;
     $("yt-volume-val").textContent = ($("yt-volume").value) + "%";
       fillYouTubeMode();
+      $("verbose-log").checked = !!config.verbose_log;
 
       $("reward-title").value = config.reward_title || "";
       $("reward-cost").value = config.reward_cost ?? "";
@@ -2217,6 +2218,13 @@
       }
     };
   });
+  $("verbose-log").onchange = async (e) => {
+    if (await saveConfig({ verbose_log: e.target.checked })) {
+      say(e.target.checked
+        ? "Подробный журнал включён. Первые цифры о компьютере — через полминуты."
+        : "Подробный журнал выключен.");
+    }
+  };
   $("yt-ask-seconds").onchange = async (e) => {
     if (await saveConfig({ youtube_ask_seconds: parseInt(e.target.value, 10) })) markSaved(e.target);
   };

@@ -52,6 +52,10 @@ type Config struct {
 	// показывать: включён ли обход, что за ключ вставлен (без секретной части)
 	// и какой сервер сработал в прошлый раз.
 	TunnelOn      bool   `json:"tunnel_on"`
+	// VerboseLog — подробный журнал: каждый запрос к Spotify с временем и
+	// дорогой, и раз в полминуты — состояние компьютера (см. internal/diag).
+	// Для разбора жалоб вида «тормозит интернет»; в обычной жизни не нужен.
+	VerboseLog bool `json:"verbose_log"`
 	TunnelKeyHint string `json:"tunnel_key_hint"`
 	TunnelServer  string `json:"tunnel_server"`
 	// TunnelNeededAt — когда Spotify последний раз отказал напрямую «не
