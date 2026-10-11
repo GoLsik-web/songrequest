@@ -143,6 +143,23 @@ type Config struct {
 	// сто процентов, и первый же заказ с YouTube оглушил эфир.
 	YouTubeVolume int `json:"youtube_volume"`
 
+	// YouTubeMode — что делать, когда трека нет в Spotify, а на YouTube он
+	// нашёлся:
+	//
+	//	"auto" — включать самим и показать уведомление;
+	//	"ask"  — каждый раз спрашивать стримера;
+	//	"off"  — не играть, вернуть баллы.
+	//
+	// Появилось 11.10. Раньше было только «auto», и молча: друг владельца
+	// жаловался, что заказ «играл непонятно где». По умолчанию «ask» —
+	// так стример точно ничего не пропустит.
+	YouTubeMode string `json:"youtube_mode"`
+	// YouTubeAskSeconds — сколько ждать решения в режиме «ask». Ноль — ждать,
+	// пока не ответят.
+	YouTubeAskSeconds int `json:"youtube_ask_seconds"`
+	// YouTubeAskElse — что делать, если не ответили в срок: "skip" или "play".
+	YouTubeAskElse string `json:"youtube_ask_else"`
+
 	// Фильтр «это не музыка»
 	RejectKeywords []string `json:"reject_keywords"`
 
@@ -187,6 +204,9 @@ func Defaults() Config {
 		ResumeDelaySeconds:  1,
 		WaitForCurrent:      true,
 		YouTubeVolume:       100,
+		YouTubeMode:         "ask",
+		YouTubeAskSeconds:   60,
+		YouTubeAskElse:      "skip",
 		MatchAccept:         0.80,
 		MatchMaybe:          0.55,
 		MatchWeight: MatchWeights{
@@ -344,6 +364,15 @@ func (c *Config) NormalizeMatching() {
 	// поля в старом config.json тоже даёт ноль, и тихий эфир после
 	// обновления выглядел бы как поломка. Различить их нечем, поэтому
 	// нижняя граница — единица: почти тишина, но слышно, что играет.
+	if c.YouTubeMode != "auto" && c.YouTubeMode != "ask" && c.YouTubeMode != "off" {
+		c.YouTubeMode = d.YouTubeMode
+	}
+	if c.YouTubeAskElse != "skip" && c.YouTubeAskElse != "play" {
+		c.YouTubeAskElse = d.YouTubeAskElse
+	}
+	if c.YouTubeAskSeconds < 0 || c.YouTubeAskSeconds > 600 {
+		c.YouTubeAskSeconds = d.YouTubeAskSeconds
+	}
 	if c.YouTubeVolume < 1 || c.YouTubeVolume > 100 {
 		c.YouTubeVolume = d.YouTubeVolume
 	}

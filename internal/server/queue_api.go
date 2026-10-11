@@ -225,6 +225,19 @@ func (s *Server) handlePlaylistApprove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "added": added})
 }
 
+// handleYouTubeAsk — кнопки «Включить» и «Отклонить» у заказа с YouTube.
+func (s *Server) handleYouTubeAsk(play bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if _, err := s.decideYouTube(ctx, r.PathValue("id"), play, panelActor); err != nil {
+			s.fail(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
 func (s *Server) handlePlaylistReject(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()

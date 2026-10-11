@@ -241,6 +241,11 @@ type Server struct {
 	// в чате: «одобрить 2». В номера очереди он не превращается — очередь
 	// двигается, а этот номер обязан пережить любое движение.
 	playlistNo int64
+
+	// ytAsks — заказы, которых нет в Spotify и которые ждут решения: играть
+	// ли их с YouTube. См. ytask.go.
+	ytAsks  []ytAsk
+	ytAskNo int64
 }
 
 // New поднимает слушатель на 127.0.0.1. Если желаемый порт занят, берём любой
@@ -356,6 +361,10 @@ func New(d Deps) (*Server, error) {
 	// Плейлисты, ждущие решения. См. internal/server/playlists.go.
 	mux.HandleFunc("POST /api/playlists/{id}/approve", s.handlePlaylistApprove)
 	mux.HandleFunc("POST /api/playlists/{id}/reject", s.handlePlaylistReject)
+	// Заказы с YouTube, ждущие решения. См. ytask.go.
+	mux.HandleFunc("POST /api/youtube-asks/{id}/play", s.handleYouTubeAsk(true))
+	mux.HandleFunc("POST /api/youtube-asks/{id}/reject", s.handleYouTubeAsk(false))
+	mux.HandleFunc("POST /api/youtube/test-sound", s.handleYouTubeTestSound)
 	mux.HandleFunc("POST /api/queue/pause", s.handlePause)
 	mux.HandleFunc("POST /api/bans", s.handleBan)
 	mux.HandleFunc("GET /api/bans", s.handleBans)
