@@ -206,6 +206,9 @@ func newPlayer(t *testing.T) (*Player, *queue.Queue, *fakeSpotify) {
 	// И шесть секунд до первой проверки Spotify — тоже: проверяем поведение,
 	// а не терпение.
 	p.SetPollEvery(100 * time.Millisecond)
+	// Треки здесь длятся доли секунды — запас на запуск им не нужен. Сам
+	// запас проверяет TestJustStartedOrderIsNotCutShort.
+	p.startGrace = 0
 	return p, q, sp
 }
 

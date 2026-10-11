@@ -248,6 +248,22 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		return
 	}
 
+	// Зритель прислал ролик, а Spotify нашёл лишь похожее. Тогда играем
+	// сам ролик: он точно то, что хотели.
+	//
+	// 11.10: ссылка на «Puvel — Малиновая елда» нашлась в Spotify как
+	// «GAYAZOV$ BROTHER$ — МАЛИНОВАЯ ЛАДА» (артист мимо, оценка 0.57) — и
+	// заиграла совсем другая песня. Точное совпадение по-прежнему берём из
+	// Spotify: там звук лучше и не нужен второй проигрыватель.
+	if link.YouTube != nil && res.Uncertain {
+		s.log.Info("по ссылке на ролик Spotify нашёл лишь похожее — играю ролик",
+			"заказ", r.UserInput, "в_spotify", firstArtist(res.Track.Artists)+" — "+res.Track.Title,
+			"оценка", res.Score.Total)
+		if s.playElsewhere(ctx, r, req, link, viaLink) {
+			return
+		}
+	}
+
 	s.log.Info("трек найден",
 		"заказ", r.UserInput,
 		"трек", firstArtist(res.Track.Artists)+" — "+res.Track.Title,

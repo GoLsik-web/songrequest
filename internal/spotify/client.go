@@ -457,8 +457,18 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 						"путь", path, "пауза", wait.String(), "кончился_запас", quota)
 				}
 				if quota {
+					// Закрыта бывает только часть. 11.10 у тестера Spotify сутки
+					// не отдавал данные аккаунта (/me), а поиск, плеер и заказы
+					// работали — но панель писала «заказы играть не будут», и
+					// человек решил, что всё сломалось.
+					group := rateGroup(path)
+					if group != "плеер" && group != "поиск" {
+						return errs.New(errs.SpotifyQuota,
+							"Spotify на время закрыл часть запросов («"+group+"») — откроет сам через "+
+								wait.Round(time.Minute).String()+". Заказы и музыка при этом работают.")
+					}
 					return errs.New(errs.SpotifyQuota,
-						"У приложения кончился дневной запас запросов к Spotify. "+
+						"У приложения кончился дневной запас запросов к Spotify («"+group+"»). "+
 							"Он вернётся сам через "+wait.Round(time.Minute).String()+
 							". Заказы до тех пор играть не будут; нажимать «Проверить связь» "+
 							"бесполезно — это только продлевает срок.")

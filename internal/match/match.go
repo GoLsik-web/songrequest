@@ -165,6 +165,19 @@ func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, e
 		}
 	}
 
+	// Заказан один артист без трека — играем его популярный трек. См.
+	// artistOnly. Только если обычный подбор не уверен в ответе.
+	if _, sc, _ := pick(req, pool, opts); sc.Total < opts.Accept {
+		if c, q, ok := artistOnly(ctx, s, req); ok {
+			result.Attempts = append(result.Attempts, q)
+			result.Found = true
+			result.Track = c
+			result.Score = Score{Total: opts.Accept, Why: "заказан артист — его популярный трек"}
+			result.Considered = len(pool) + 1
+			return result, nil
+		}
+	}
+
 	result.Considered = len(pool)
 	best, score, abroad := pick(req, pool, opts)
 	result.AbroadOnly = abroad
