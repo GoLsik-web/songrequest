@@ -14,9 +14,9 @@ import (
 // запросы к Spotify, а решает это оно само в internal/spotify/proxy.go.
 
 type xrayConfig struct {
-	Log       xrayLog        `json:"log"`
-	Inbounds  []xrayInbound  `json:"inbounds"`
-	Outbounds []xrayOutbound `json:"outbounds"`
+	Log       xrayLog       `json:"log"`
+	Inbounds  []xrayInbound `json:"inbounds"`
+	Outbounds []any         `json:"outbounds"`
 }
 
 type xrayLog struct {
@@ -91,9 +91,16 @@ type xrayHTTPUpgrade struct {
 // buildConfig собирает настройку Xray: вход SOCKS на указанном порту, выход —
 // на сервер из ключа.
 func buildConfig(s Server, port int) ([]byte, error) {
-	out, err := outbound(s)
-	if err != nil {
-		return nil, err
+	var out any
+	if len(s.Raw) > 0 {
+		// Готовый выход из подписки (см. happ.go) — берём как есть.
+		out = s.Raw
+	} else {
+		o, err := outbound(s)
+		if err != nil {
+			return nil, err
+		}
+		out = o
 	}
 
 	cfg := xrayConfig{
@@ -109,7 +116,7 @@ func buildConfig(s Server, port int) ([]byte, error) {
 			Settings: xraySocksIn{Auth: "noauth", UDP: false},
 			Sniffing: &xraySniffOff{Enabled: false},
 		}},
-		Outbounds: []xrayOutbound{out},
+		Outbounds: []any{out},
 	}
 	return json.Marshal(cfg)
 }

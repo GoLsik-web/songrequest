@@ -73,6 +73,11 @@ type Server struct {
 	ShortID     string // reality
 	SpiderX     string // reality
 	Insecure    bool   // не проверять сертификат — так себе идея, но встречается
+
+	// Raw — готовый выход Xray из подписки в формате JSON (см. happ.go). Если
+	// есть, настройка собирается из него как есть, а поля выше не нужны.
+	// Секрет целиком: в лог не пишем.
+	Raw json.RawMessage `json:",omitempty"`
 }
 
 // String — как сервер выглядит в панели и в логе. Без секретов: ни uuid, ни

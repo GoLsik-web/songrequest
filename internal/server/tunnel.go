@@ -696,19 +696,27 @@ func (s *Server) spotifyWorksDirect(ctx context.Context) (works bool, vpnLikely 
 		return false, false
 	}
 	if s.spotify == nil || !s.spotify.Connected() {
-		// Входа ещё нет — проверить со входом нечем. Скажем «работает»: если
-		// окажется, что нет, приложение поднимет обход на первом же отказе.
-		return true, false
+		// Входа ещё нет — проверить со входом нечем.
+		//
+		// Раньше здесь отвечали «работает», и обход не поднимался: без входа
+		// Spotify пускает и из России. 11.10 так на «Включить обход» приходило
+		// «Spotify отвечает и без обхода», а потом не работал ни вход, ни
+		// поиск. Ключ вставлен — значит обход человеку нужен; поднимаем.
+		return false, false
 	}
 
-	// Спрашиваем именно плеер, а не профиль.
+	// Спрашиваем не профиль.
 	//
 	// 31.08 выяснилось на живой машине: через включённый VPN владельца профиль
 	// (`/v1/me`) отвечал спокойно, а плейлисты и плеер — «403, не работает из
 	// этой страны». Проверка по профилю поэтому ничего не значит: приложение
 	// решало, что всё хорошо, а список плейлистов в ту же секунду получал SP-16.
 	// Плеер — то, без чего приложение бесполезно, и стоит запрос ровно один.
-	if _, _, err := s.spotify.State(ctx); err != nil {
+	// Плеер из России бывает отвечает, а поиск — нет («не работает из этой
+	// страны»): 11.10 у тестера проверка по плееру говорила «обход не
+	// нужен», и тут же отказывал поиск. Поэтому спрашиваем поиск — он и есть
+	// первое, что нужно заказу. Один запрос.
+	if _, err := s.spotify.SearchTracks(ctx, "test", 1); err != nil {
 		s.log.Info("напрямую Spotify отвечает, но плеер не отдаёт — обход нужен",
 			"ошибка", err)
 		// Отказ по стране — это обычная Россия, а не «свой VPN стримера»:
@@ -720,6 +728,38 @@ func (s *Server) spotifyWorksDirect(ctx context.Context) (works bool, vpnLikely 
 		return false, false
 	}
 	return true, false
+}
+
+// roadTrouble — отказ из-за дороги до Spotify: страна или нет связи.
+func roadTrouble(err error) bool {
+	c := errs.CodeOf(err)
+	return c == errs.SpotifyCountry || c == errs.SpotifyUnreachable
+}
+
+// waitTunnel ждёт, пока обход поднимется, но не дольше d.
+func (s *Server) waitTunnel(ctx context.Context, d time.Duration) bool {
+	if s.tunnel == nil {
+		return false
+	}
+	start := time.Now()
+	deadline := start.Add(d)
+	for time.Now().Before(deadline) {
+		if s.tunnel.Status().On && s.spotify.ProxyLabel() != "" {
+			return true
+		}
+		// Через пару секунд обход так и не начал подниматься — значит и не
+		// начнёт (например, сеть просто моргнула). Заказ держать незачем.
+		busy := s.starting.Load() || s.reviving.Load() || s.reselecting.Load()
+		if time.Since(start) > 2*time.Second && !busy {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return false
 }
 
 // tunnelNeededFor — сколько помнить отказ Spotify по стране.
