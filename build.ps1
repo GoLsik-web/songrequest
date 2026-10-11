@@ -9,9 +9,13 @@
 #   -Version 0.2.0   вписать конкретную версию вместо автоматической
 #   -NoZip           не собирать архив, нужен только .exe
 #   -SkipTests       пропустить тесты (по умолчанию они обязательны)
+#   -Flavor панель    отдельная сборка рядом с рабочей: своя папка настроек,
+#                     свой порт, своё имя файла. Нужна, чтобы пробовать новое,
+#                     не трогая то, что уже работает у людей.
 
 param(
     [string]$Version,
+    [string]$Flavor,
     [switch]$NoZip,
     [switch]$SkipTests
 )
@@ -51,21 +55,26 @@ if (-not $SkipTests) {
 Write-Host "Сборка $Version…" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-$exe = "dist\songrequest.exe"
+# Пробная сборка получает своё имя файла: иначе, скачанная в ту же папку, она
+# затрёт рабочую, и человек об этом узнает не сразу.
+$name = if ($Flavor) { "songrequest-$Flavor" } else { "songrequest" }
+$exe = "dist\$name.exe"
 # -s -w выкидывают отладочные таблицы: файл меньше почти на треть.
 # -H=windowsgui убирает чёрное окно консоли: приложение теперь обычная
 # программа со своим окном, и консоль ей не нужна. Печатать в неё поэтому
 # некуда — про поломки при запуске приложение говорит окном с сообщением,
 # всё остальное пишется в лог.
 $env:CGO_ENABLED = "0"
-go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$Version" -o $exe .
+$ldflags = "-s -w -H=windowsgui -X main.version=$Version"
+if ($Flavor) { $ldflags += " -X main.flavor=$Flavor" }
+go build -trimpath -ldflags $ldflags -o $exe .
 if ($LASTEXITCODE -ne 0) { throw "Сборка не удалась." }
 
 $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)
 Write-Host "Готово: $exe ($size МБ, версия $Version)" -ForegroundColor Green
 
 if (-not $NoZip) {
-    $zip = "dist\songrequest-$Version.zip"
+    $zip = "dist\$name-$Version.zip"
     $staging = "dist\_pack"
     Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $staging | Out-Null

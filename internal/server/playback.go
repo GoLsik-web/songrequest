@@ -28,6 +28,10 @@ func (s *Server) setupPlayer(cfg *config.File) {
 	// См. Server.rescue и internal/server/sources.go.
 	s.player.SetRescue(s.rescue)
 
+	// Играет ли ещё заказ — спрашиваем у Windows, а не у Spotify. Это был
+	// последний опрос по сети, который шёл весь стрим. См. player/panel.go.
+	s.player.SetPanel(orderPanel{s})
+
 	s.player.OnChange = s.syncPlayback
 	s.player.OnError = func(err error) { s.state.NotifyError(err) }
 

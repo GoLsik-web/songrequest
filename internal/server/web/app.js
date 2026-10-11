@@ -731,6 +731,90 @@
       }).join("")}`;
   }
 
+  // ── заказы с YouTube, ждущие решения ────────────────────────────────
+  //
+  // Трека нет в Spotify, а на YouTube нашёлся. В режиме «спрашивать» он
+  // ждёт здесь: рядом то, что написал зритель, и то, что нашлось, — чтобы
+  // сразу было видно, то ли это. Обратный отсчёт — до решения «само».
+
+  function renderYouTubeAsks(s) {
+    const list = s.youtube_asks || [];
+    const box = $("ytasks");
+    box.hidden = list.length === 0;
+    if (list.length === 0) {
+      box.innerHTML = "";
+      return;
+    }
+    box.innerHTML = `
+      <div class="kicker">
+        Нет в Spotify — включить с YouTube? <span class="cnt">${list.length}</span>
+      </div>
+      ${list.map((a) => `
+        <div class="pl">
+          <div class="pl-head">
+            <div>
+              <div class="pl-title">${esc(a.artist ? a.artist + " — " + a.title : a.title)}</div>
+              <div class="pl-sub">
+                ${icon("user")}заказал <b>${esc(a.requester)}</b>
+                <span class="sep">/</span> написал «${esc(a.request)}»
+                <span class="sep">/</span> <a href="${esc(a.url)}" target="_blank" rel="noopener">открыть ролик</a>
+              </div>
+            </div>
+            <div class="pl-time">${a.duration_ms > 0 ? mmss(a.duration_ms) : ""}</div>
+          </div>
+          <div class="acts">
+            <button class="act key small" data-yta="play" data-id="${esc(a.id)}">
+              ${icon("play")}Включить
+            </button>
+            <button class="act small" data-yta="reject" data-id="${esc(a.id)}">
+              ${icon("x")}Отклонить, вернуть баллы
+            </button>
+            <span class="hint yt-left" data-until="${esc(a.until || "")}" data-else="${esc(a.else)}"
+                  style="margin:0"></span>
+          </div>
+        </div>`).join("")}`;
+    tickYouTubeAsks();
+  }
+
+  // tickYouTubeAsks обновляет «осталось N с» без перерисовки карточек.
+  function tickYouTubeAsks() {
+    document.querySelectorAll("#ytasks .yt-left").forEach((el) => {
+      const until = Date.parse(el.dataset.until);
+      if (!until || until < Date.UTC(2000, 0, 1)) {
+        el.textContent = "ждёт, пока не решишь";
+        return;
+      }
+      const left = Math.max(0, Math.round((until - Date.now()) / 1000));
+      const then = el.dataset.else === "play" ? "включится сам" : "пропустится";
+      el.textContent = `через ${left} с ${then}`;
+    });
+  }
+  setInterval(tickYouTubeAsks, 1000);
+
+  // Раздел «YouTube»: недавно сыгравшие с YouTube. Видно, что именно нашлось
+  // по заказу, — промах здесь замечают раньше, чем в чате.
+  function renderYouTubeRecent(list) {
+    const box = $("yt-recent");
+    if (!box) return;
+    list = list || [];
+    if (list.length === 0) {
+      box.innerHTML = `<div class="hint" style="margin-top:0">Пока ничего: с YouTube за этот запуск не играло.</div>`;
+      return;
+    }
+    box.innerHTML = `<ol class="pl-tracks">${list.map((r) => `
+      <li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.artist ? r.artist + " — " + r.title : r.title)}</a>
+        <span class="hint" style="margin:0">— ${esc(r.requester)}: «${esc(r.request)}»</span></li>`).join("")}</ol>`;
+  }
+
+  function fillYouTubeMode() {
+    if (!config) return;
+    const mode = config.youtube_mode || "ask";
+    document.querySelectorAll('input[name="yt-mode"]').forEach((r) => { r.checked = r.value === mode; });
+    $("yt-ask-opts").hidden = mode !== "ask";
+    $("yt-ask-seconds").value = String(config.youtube_ask_seconds ?? 60);
+    $("yt-ask-else").value = config.youtube_ask_else || "skip";
+  }
+
   function renderOrders(s) {
     const list = s.queue;
     const box = $("orders");
@@ -1307,7 +1391,7 @@
   // «панель виджета на экране, значит перерисуй кадр») работает как работал и
   // про меню ничего не знает.
 
-  const MENU_SECTIONS = ["settings", "widget", "log"];
+  const MENU_SECTIONS = ["settings", "youtube", "widget", "log"];
 
   // Меню гаснет плавно, и до конца исчезновения прятать его нельзя — иначе
   // вместо ухода будет рывок. Отсюда таймер и обязательная его отмена, если
@@ -1324,9 +1408,13 @@
     MENU_SECTIONS.forEach((id) => {
       const on = id === name;
       $(id).hidden = !on;
+      // У раздела «YouTube» своей кнопки в верхней полосе нет: он нужен
+      // редко, и полоса и так полна.
       const btn = $(id + "-toggle");
-      btn.classList.toggle("active", on);
-      btn.setAttribute("aria-expanded", String(on));
+      if (btn) {
+        btn.classList.toggle("active", on);
+        btn.setAttribute("aria-expanded", String(on));
+      }
       const item = document.querySelector('#menu-nav [data-menu="' + id + '"]');
       if (item) item.classList.toggle("on", on);
     });
@@ -1454,6 +1542,7 @@
       $("yt-device").value = config.audio_device || "";
     $("yt-volume").value = config.youtube_volume ?? 100;
     $("yt-volume-val").textContent = ($("yt-volume").value) + "%";
+      fillYouTubeMode();
 
       $("reward-title").value = config.reward_title || "";
       $("reward-cost").value = config.reward_cost ?? "";
@@ -1695,6 +1784,11 @@
     }),
     snapshot: (btn) => post("/api/spotify/snapshot", btn),
     skip: (btn) => post("/api/queue/skip", btn),
+    // Короткий сигнал на устройство заказов с YouTube: услышать, куда оно
+    // ведёт, до того как на стриме заиграет настоящий заказ.
+    "yt-test": (btn) => post("/api/youtube/test-sound", btn).then((d) => {
+      if (d && d.ok) say("Сигнал отправлен. Не услышал — выбери другое устройство.");
+    }),
     restore: (btn) => post("/api/spotify/restore", btn),
     "twitch-login": (btn) => saveThenConnect("twitch-id", "twitch_client_id",
       (b) => post("/api/twitch/login", b), btn),
@@ -1753,6 +1847,13 @@
         refund: `/api/queue/${id}/remove?refund=1`,
       }[q.dataset.act];
       if (path) post(path, q);
+      return;
+    }
+
+    // Заказы с YouTube, ждущие решения.
+    const yta = e.target.closest("[data-yta]");
+    if (yta) {
+      post(`/api/youtube-asks/${encodeURIComponent(yta.dataset.id)}/${yta.dataset.yta}`, yta);
       return;
     }
 
@@ -2085,6 +2186,23 @@
     if (await saveConfig({ twitch_client_id: $("twitch-id").value.trim() })) {
       say("Client ID Twitch сохранён. Теперь нажми «Подключить Twitch».");
     }
+  };
+
+  document.querySelectorAll('input[name="yt-mode"]').forEach((radio) => {
+    radio.onchange = async () => {
+      $("yt-ask-opts").hidden = radio.value !== "ask";
+      if (await saveConfig({ youtube_mode: radio.value })) {
+        say({ ask: "Буду спрашивать про каждый заказ с YouTube.",
+              auto: "Заказы с YouTube будут включаться сами.",
+              off: "С YouTube больше не играем — такие заказы отклоняются." }[radio.value]);
+      }
+    };
+  });
+  $("yt-ask-seconds").onchange = async (e) => {
+    if (await saveConfig({ youtube_ask_seconds: parseInt(e.target.value, 10) })) markSaved(e.target);
+  };
+  $("yt-ask-else").onchange = async (e) => {
+    if (await saveConfig({ youtube_ask_else: e.target.value })) markSaved(e.target);
   };
 
   document.querySelectorAll('input[name="resume"]').forEach((radio) => {
@@ -2902,6 +3020,8 @@
                         s.twitch.reward_cost, s.twitch.reward_ready]), () => renderOrders(s));
     draw("update", sig(s.update), () => renderUpdate(s.update || {}));
     draw("playlists", sig(s.playlists), () => renderPlaylists(s));
+    draw("ytasks", sig(s.youtube_asks), () => renderYouTubeAsks(s));
+    draw("yt-recent", sig(s.youtube_recent), () => renderYouTubeRecent(s.youtube_recent));
     draw("bans", sig(s.bans), () => renderBans(s.bans));
     draw("yt", sig(s.youtube), () => renderYouTube(s.youtube));
     draw("feed", sig(s.notices), () => renderFeed(s));

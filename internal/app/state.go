@@ -292,14 +292,20 @@ type Snapshot struct {
 	LastPlayed *LastPlayed `json:"last_played"`
 	Queue      []QueueItem `json:"queue"`
 	// Playlists — заказанные плейлисты, ждущие решения стримера.
-	Playlists   []PlaylistView   `json:"playlists"`
-	Notices     []Notice         `json:"notices"`
-	Paused      bool             `json:"paused"` // приём заказов остановлен
-	Version     string           `json:"version"`
-	Spotify     SpotifyInfo      `json:"spotify"`
-	Twitch      TwitchInfo       `json:"twitch"`
-	Redemptions []RedemptionView `json:"redemptions"`
-	Session     Session          `json:"session"`
+	Playlists []PlaylistView `json:"playlists"`
+	// YouTubeAsks — заказы, которых нет в Spotify и которые ждут решения
+	// стримера: играть ли их с YouTube.
+	YouTubeAsks []YouTubeAsk `json:"youtube_asks"`
+	// YouTubeRecent — последние заказы, сыгравшие с YouTube. Для вкладки
+	// «YouTube»: видно, что именно нашлось и правильно ли.
+	YouTubeRecent []YouTubeRecent  `json:"youtube_recent"`
+	Notices       []Notice         `json:"notices"`
+	Paused        bool             `json:"paused"` // приём заказов остановлен
+	Version       string           `json:"version"`
+	Spotify       SpotifyInfo      `json:"spotify"`
+	Twitch        TwitchInfo       `json:"twitch"`
+	Redemptions   []RedemptionView `json:"redemptions"`
+	Session       Session          `json:"session"`
 	// Bans — бан-лист музыки. Отдельный от бана в чате: человек может быть
 	// нормальным в чате и неуместным в заказах.
 	Bans    []Ban       `json:"bans"`
@@ -347,6 +353,42 @@ type UpdateInfo struct {
 	// Page — страница выпусков, куда отправить человека, если обновиться
 	// само не вышло.
 	Page string `json:"page"`
+}
+
+// YouTubeAsk — заказ, которого нет в Spotify, найденный на YouTube.
+//
+// Появилось 11.10: друг владельца жаловался, что такой заказ «играл
+// непонятно где» — приложение молча включало его отдельным проигрывателем, и
+// стример не понимал, откуда звук. Теперь стример выбирает в настройках, как
+// с этим быть, и в режиме «спрашивать» заказ ждёт здесь.
+type YouTubeAsk struct {
+	ID        string `json:"id"`
+	Requester string `json:"requester"`
+	// Request — что написал зритель. Рядом с найденным, чтобы сразу видеть,
+	// то ли нашлось.
+	Request    string `json:"request"`
+	Title      string `json:"title"`
+	Artist     string `json:"artist"`
+	URL        string `json:"url"`
+	CoverURL   string `json:"cover_url"`
+	DurationMs int    `json:"duration_ms"`
+	// Via — почему не Spotify, словами: «в Spotify такого нет».
+	Via string `json:"via"`
+	// Until — когда решение примется само. Ноль — ждём сколько угодно.
+	Until time.Time `json:"until"`
+	// Else — что будет по истечении срока: «play» или «skip».
+	Else string `json:"else"`
+}
+
+// YouTubeRecent — заказ, который недавно играл с YouTube.
+type YouTubeRecent struct {
+	Requester string    `json:"requester"`
+	Request   string    `json:"request"`
+	Title     string    `json:"title"`
+	Artist    string    `json:"artist"`
+	URL       string    `json:"url"`
+	Via       string    `json:"via"`
+	At        time.Time `json:"at"`
 }
 
 // PlaylistView — заказанный плейлист, который ждёт решения стримера.
@@ -431,6 +473,8 @@ type State struct {
 	lastPlayed  *LastPlayed
 	queue       []QueueItem
 	playlists   []PlaylistView
+	ytAsks      []YouTubeAsk
+	ytRecent    []YouTubeRecent
 	update      UpdateInfo
 	notices     []Notice
 	paused      bool
@@ -560,6 +604,27 @@ func (s *State) SetPlaylists(list []PlaylistView) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.playlists = list
+	s.notify()
+}
+
+// SetYouTubeAsks обновляет список заказов с YouTube, ждущих решения.
+func (s *State) SetYouTubeAsks(list []YouTubeAsk) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ytAsks = list
+	s.notify()
+}
+
+// AddYouTubeRecent запоминает заказ, сыгравший с YouTube. Держим десять
+// последних: вкладка нужна, чтобы проверить «что там нашлось», а не для
+// истории за вечер — история есть отдельно.
+func (s *State) AddYouTubeRecent(r YouTubeRecent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ytRecent = append([]YouTubeRecent{r}, s.ytRecent...)
+	if len(s.ytRecent) > 10 {
+		s.ytRecent = s.ytRecent[:10]
+	}
 	s.notify()
 }
 
@@ -741,21 +806,23 @@ func (s *State) Snapshot() Snapshot {
 
 	// Пустые срезы, а не nil: панель ждёт массив и на null споткнётся.
 	snap := Snapshot{
-		App:         Marker,
-		Queue:       append(make([]QueueItem, 0, len(s.queue)), s.queue...),
-		Playlists:   append(make([]PlaylistView, 0, len(s.playlists)), s.playlists...),
-		Update:      s.update,
-		Notices:     append(make([]Notice, 0, len(s.notices)), s.notices...),
-		Paused:      s.paused,
-		Version:     s.version,
-		Spotify:     s.spotify,
-		Twitch:      s.twitch,
-		Redemptions: append(make([]RedemptionView, 0, len(s.redemptions)), s.redemptions...),
-		Session:     s.session,
-		Bans:        append(make([]Ban, 0, len(s.bans)), s.bans...),
-		YouTube:     s.youtube,
-		Tunnel:      s.tunnel,
-		Widget:      s.widget,
+		App:           Marker,
+		Queue:         append(make([]QueueItem, 0, len(s.queue)), s.queue...),
+		Playlists:     append(make([]PlaylistView, 0, len(s.playlists)), s.playlists...),
+		YouTubeAsks:   append(make([]YouTubeAsk, 0, len(s.ytAsks)), s.ytAsks...),
+		YouTubeRecent: append(make([]YouTubeRecent, 0, len(s.ytRecent)), s.ytRecent...),
+		Update:        s.update,
+		Notices:       append(make([]Notice, 0, len(s.notices)), s.notices...),
+		Paused:        s.paused,
+		Version:       s.version,
+		Spotify:       s.spotify,
+		Twitch:        s.twitch,
+		Redemptions:   append(make([]RedemptionView, 0, len(s.redemptions)), s.redemptions...),
+		Session:       s.session,
+		Bans:          append(make([]Ban, 0, len(s.bans)), s.bans...),
+		YouTube:       s.youtube,
+		Tunnel:        s.tunnel,
+		Widget:        s.widget,
 	}
 	for _, name := range s.order {
 		snap.Connections = append(snap.Connections, s.conns[name])
