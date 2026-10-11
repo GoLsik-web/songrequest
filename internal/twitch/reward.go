@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"songrequest/internal/errs"
 )
@@ -101,9 +102,21 @@ func (c *Client) EnsureRewardSpec(ctx context.Context, knownID string, spec Rewa
 			return nil, err
 		}
 		if existing != nil {
-			return c.updateReward(ctx, user.ID, existing, spec.Title, spec.Cost)
+			r, err := c.updateReward(ctx, user.ID, existing, spec.Title, spec.Cost)
+			if errs.CodeOf(err) != errs.TwitchForeignAward {
+				return r, err
+			}
+			// Награда чужая (другой Client ID) — менять её нельзя. Ищем свою
+			// с тем же названием, иначе создадим новую.
+			c.log.Warn("записанная награда создана другим ключом Twitch — ищу свою", "прежний_id", knownID)
+		} else {
+			c.log.Info("прежней награды на канале нет, создаю заново", "прежний_id", knownID)
 		}
-		c.log.Info("прежней награды на канале нет, создаю заново", "прежний_id", knownID)
+	}
+
+	if mine, err := c.findOwnByTitle(ctx, user.ID, spec.Title); err == nil && mine != nil {
+		c.log.Info("нашёл свою награду по названию", "название", mine.Title, "id", mine.ID)
+		return c.updateReward(ctx, user.ID, mine, spec.Title, spec.Cost)
 	}
 
 	if !cfg.AutoCreateReward {
@@ -154,6 +167,25 @@ func (c *Client) EnsureRewardSpec(ctx context.Context, knownID string, spec Rewa
 	return &reward, nil
 }
 
+// findOwnByTitle ищет среди наград этого ключа приложения ту, что с нужным
+// названием. Нужна, когда записанный номер награды оказался чужим.
+func (c *Client) findOwnByTitle(ctx context.Context, broadcasterID, title string) (*Reward, error) {
+	path := fmt.Sprintf("/channel_points/custom_rewards?broadcaster_id=%s&only_manageable_by_broadcaster=true",
+		url.QueryEscape(broadcasterID))
+	var out struct {
+		Data []Reward `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	for i := range out.Data {
+		if strings.EqualFold(strings.TrimSpace(out.Data[i].Title), strings.TrimSpace(title)) {
+			return &out.Data[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // findReward ищет награду по идентификатору среди наших наград.
 func (c *Client) findReward(ctx context.Context, broadcasterID, rewardID string) (*Reward, error) {
 	// only_manageable_by_broadcaster=true оставляет только награды, созданные
@@ -201,6 +233,11 @@ func (c *Client) updateReward(ctx context.Context, broadcasterID string, reward 
 		Data []Reward `json:"data"`
 	}
 	if err := c.do(ctx, http.MethodPatch, path, body, &out); err != nil {
+		// «Награда чужая» отдаём как есть: по этому коду EnsureRewardSpec
+		// идёт искать свою, а обёртка его спрятала бы.
+		if errs.CodeOf(err) == errs.TwitchForeignAward {
+			return nil, err
+		}
 		return nil, errs.Wrap(errs.TwitchReward, "Не получилось обновить награду на канале.", err)
 	}
 	if len(out.Data) == 0 {

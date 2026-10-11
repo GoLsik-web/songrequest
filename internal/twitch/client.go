@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -295,6 +296,13 @@ func apiError(statusCode int, data []byte) error {
 	json.Unmarshal(data, &e)
 
 	switch {
+	// Награда создана другим ключом приложения (Client ID). 11.10 так было
+	// на компьютере владельца: в базе осталась награда от прежнего ключа, и
+	// Twitch отказывал её менять — а человеку писалось «на канале нет
+	// баллов», хотя баллы были.
+	case statusCode == http.StatusForbidden && strings.Contains(e.Message, "Client-Id header must match"):
+		return errs.New(errs.TwitchForeignAward,
+			"Награда на канале создана другим ключом Twitch (Client ID). Приложение возьмёт или создаст свою.")
 	case statusCode == http.StatusForbidden:
 		// Twitch отвечает 403 и когда на канале нет баллов, и когда прав не
 		// хватает. Разбирать по тексту ненадёжно, поэтому текст для человека
