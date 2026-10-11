@@ -26,6 +26,10 @@ const (
 	Yandex Kind = "yandex"
 	// VK — метаданные достанет yt-dlp, он умеет и VK.
 	VK Kind = "vk"
+	// Page — другие музыкальные сервисы (Apple Music, SoundCloud, Deezer…):
+	// играть их нечем, но со страницы читается название для поиска в
+	// Spotify. См. page.go.
+	Page Kind = "page"
 
 	// Дальше — не один трек, а сразу пачка.
 	//
@@ -61,6 +65,8 @@ type Link struct {
 	// адрес состоит из логина владельца и номера, и без логина плейлист не
 	// запросить.
 	Owner string
+	// Service — название сервиса для ссылок вида Page: «Apple Music» и т. п.
+	Service string
 }
 
 // IsCollection сообщает, что по ссылке лежит не один трек, а пачка.
@@ -163,6 +169,10 @@ func Find(text string) (Link, bool) {
 
 	case hostIn(host, "vk.com", "vk.ru", "vkvideo.ru"):
 		return Link{Kind: VK, URL: clean(raw)}, true
+	}
+
+	if l, ok := pageLink(u, raw); ok {
+		return l, true
 	}
 
 	return Link{}, false

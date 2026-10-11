@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/twitch"
+	"songrequest/internal/youtube"
 )
 
 // Сквозная проверка пути заказа: текст зрителя → поиск в Spotify → строка в
@@ -135,10 +137,16 @@ func TestOrderWithoutTextIsHandled(t *testing.T) {
 // У тестера не стоял mpv, ссылку играть было нечем, адрес вырезался из текста
 // заказа — и зритель получал «ты не написал, что заказываешь», хотя написал
 // ровно то, что просили.
+//
+// С 11.10 название ролика без проигрывателя берётся через oEmbed и ищется в
+// Spotify. Здесь oEmbed тоже молчит — и тогда честно говорим про проигрыватель.
 func TestYouTubeLinkWithoutPlayerSaysWhy(t *testing.T) {
 	srv, _ := newTestServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("играть нечем — в Spotify ходить не нужно")
 	})
+	srv.oembed = func(context.Context, string) (*youtube.Track, error) {
+		return nil, errors.New("молчит")
+	}
 
 	r := placeOrder(srv, "https://youtu.be/hZEPgjqOhS8")
 	srv.resolveOrder(context.Background(), r)
@@ -149,6 +157,25 @@ func TestYouTubeLinkWithoutPlayerSaysWhy(t *testing.T) {
 	}
 	if !strings.Contains(m.Note, "проигрыватель") {
 		t.Fatalf("в панели не сказано про проигрыватель: %q", m.Note)
+	}
+}
+
+// Проигрывателя нет, но название ролика известно через oEmbed — трек ищется и
+// находится в Spotify. 11.10 такие ссылки падали целиком из-за проверки
+// YouTube «не бот», хотя трек был в Spotify.
+func TestYouTubeLinkFoundInSpotifyViaOEmbed(t *testing.T) {
+	srv, _ := newTestServer(t, nil, spotifySearchStub(
+		track("vdele", "Я в деле", "SLAVA MARLOW", 93290, 70),
+	))
+	srv.oembed = func(context.Context, string) (*youtube.Track, error) {
+		return &youtube.Track{Title: "SLAVA MARLOW - Я в деле", Artist: "SLAVA MARLOW"}, nil
+	}
+
+	r := placeOrder(srv, "https://youtu.be/hZEPgjqOhS8")
+	srv.resolveOrder(context.Background(), r)
+
+	if m := orderMatch(t, srv, r.ID); m.TrackID != "vdele" {
+		t.Fatalf("ждали трек из Spotify, вышло %q (%s)", m.TrackID, m.State)
 	}
 }
 

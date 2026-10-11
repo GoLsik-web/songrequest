@@ -149,6 +149,10 @@ type Server struct {
 	// падать в ту же секунду, как приложение научилось читать панель.
 	panelTrack func() (smtc.Now, bool, error)
 
+	// oembed узнаёт название ролика без yt-dlp. Полем ради проверок: иначе
+	// они ходили бы в настоящий YouTube.
+	oembed func(ctx context.Context, link string) (*youtube.Track, error)
+
 	// paused — показана ли сейчас в панели объявленная Spotify пауза.
 	// См. notePause: карточку надо пересобрать и когда пауза началась, и
 	// когда кончилась, а происходит это само, без единого нажатия.
