@@ -27,6 +27,7 @@ func (c *Client) Track(ctx context.Context, id string) (match.Candidate, error) 
 			Name string `json:"name"`
 		} `json:"artists"`
 		Album struct {
+			URI       string `json:"uri"`
 			Name      string `json:"name"`
 			AlbumType string `json:"album_type"`
 			Images    []struct {
@@ -57,6 +58,7 @@ func (c *Client) Track(ctx context.Context, id string) (match.Candidate, error) 
 	}
 
 	cand := match.Candidate{
+		AlbumURI:   t.Album.URI,
 		ID:         t.ID,
 		URI:        t.URI,
 		Title:      t.Name,

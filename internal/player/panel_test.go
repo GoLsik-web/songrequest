@@ -52,13 +52,20 @@ func TestPeekStopsTrustingPanelAfterMisses(t *testing.T) {
 	}
 }
 
-// Панель молчит — сразу прежний путь и прежний шаг.
+// Панель молчит — прежний путь, а после трёх раз подряд и прежний шаг.
+// Одно молчание (Spotify просыпается) панель не выключает.
 func TestPeekSilentPanelFallsBack(t *testing.T) {
 	p, _, sp := newPlayer(t)
 	p.SetPanel(fakePanel{})
 	p.resetPanel()
 	p.peek(context.Background(), queue.Item{URI: "x", Title: "x"})
-	if sp.states != 1 || p.panelTrusted() {
-		t.Fatalf("states=%d trusted=%v", sp.states, p.panelTrusted())
+	if sp.states != 1 || !p.panelTrusted() {
+		t.Fatalf("после одного молчания: states=%d trusted=%v", sp.states, p.panelTrusted())
+	}
+	for i := 1; i < panelMaxMiss; i++ {
+		p.peek(context.Background(), queue.Item{URI: "x", Title: "x"})
+	}
+	if p.panelTrusted() {
+		t.Fatal("панели верим после трёх молчаний подряд")
 	}
 }

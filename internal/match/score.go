@@ -7,11 +7,14 @@ import (
 
 // Candidate — трек из Spotify, которого мы примеряем к заказу.
 type Candidate struct {
-	ID         string
-	URI        string
-	Title      string
-	Artists    []string
-	Album      string
+	ID      string
+	URI     string
+	Title   string
+	Artists []string
+	Album   string
+	// AlbumURI — адрес альбома. Нужен, чтобы включить трек «альбомом с этого
+	// трека»: см. Client.PlayTrack.
+	AlbumURI   string
 	AlbumType  string // album | single | compilation
 	DurationMs int
 	Popularity int // 0..100

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"songrequest/internal/app"
+	"songrequest/internal/errs"
 	"songrequest/internal/player"
 	"songrequest/internal/smtc"
 	"songrequest/internal/spotify"
@@ -190,6 +191,12 @@ type ownWatch struct {
 	// секунды, — ровно та утечка, ради устранения которой всё и затевалось.
 	// Поймано проверкой TestIdleSpotifyIsNotAskedOften.
 	coverTried bool
+	// panelPos и panelAt — какое положение в треке панель Windows показала
+	// и когда оно у нас впервые появилось. Spotify из Microsoft Store
+	// обновляет его редко; пока число не меняется, а музыка играет,
+	// досчитываем сами от этой отметки.
+	panelPos int
+	panelAt  time.Time
 }
 
 // forget сбрасывает всё, что знали про трек. Время последнего запроса по сети
@@ -550,12 +557,26 @@ func (s *Server) pollOwnPanel(ctx context.Context, w *ownWatch) bool {
 		w.track = track
 	}
 
+	pos := seen.PositionMs
+	if seen.PositionMs != w.panelPos || w.panelAt.IsZero() {
+		w.panelPos, w.panelAt = seen.PositionMs, time.Now()
+	} else if seen.Playing() {
+		pos = w.panelPos + int(time.Since(w.panelAt).Milliseconds())
+		if seen.DurationMs > 0 && pos > seen.DurationMs {
+			pos = seen.DurationMs
+		}
+	} else {
+		// На паузе время стоит — и отметку двигаем вместе с ним, иначе после
+		// паузы досчёт прибавил бы всё время, что музыка стояла.
+		w.panelAt = time.Now()
+	}
+
 	now := &app.NowPlaying{
 		Provider:   "spotify",
 		Source:     app.SourceOwn,
 		Title:      seen.Title,
 		Artist:     seen.Artist,
-		PositionMs: seen.PositionMs,
+		PositionMs: pos,
 		DurationMs: seen.DurationMs,
 		Paused:     seen.Paused(),
 		CoverURL:   w.cover,
@@ -605,6 +626,20 @@ func (o orderPanel) Track() (player.PanelTrack, bool) {
 		DurationMs: seen.DurationMs,
 		Playing:    seen.Playing(),
 	}, true
+}
+
+// Hold нажимает «пауза» или «играть» в панели Windows.
+func (o orderPanel) Hold(on bool) error {
+	// Панель подменена — значит, это проверка, и трогать настоящий Spotify
+	// на компьютере нельзя.
+	if o.s.panelTrack != nil {
+		return errs.New(errs.PlayerNoTool, "панель подменена")
+	}
+	cmd := smtc.CmdPlay
+	if on {
+		cmd = smtc.CmdPause
+	}
+	return smtc.Control(smtc.SpotifyApp, cmd)
 }
 
 // wantCover — нужна ли обложка прямо сейчас.
