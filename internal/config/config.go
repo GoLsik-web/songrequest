@@ -51,11 +51,11 @@ type Config struct {
 	// хранилище паролей Windows (internal/secrets). Тут только то, что можно
 	// показывать: включён ли обход, что за ключ вставлен (без секретной части)
 	// и какой сервер сработал в прошлый раз.
-	TunnelOn      bool   `json:"tunnel_on"`
+	TunnelOn bool `json:"tunnel_on"`
 	// VerboseLog — подробный журнал: каждый запрос к Spotify с временем и
 	// дорогой, и раз в полминуты — состояние компьютера (см. internal/diag).
-	// Для разбора жалоб вида «тормозит интернет»; в обычной жизни не нужен.
-	VerboseLog bool `json:"verbose_log"`
+	// Для разбора жалоб вида «тормозит интернет». По умолчанию включён.
+	VerboseLog    bool   `json:"verbose_log"`
 	TunnelKeyHint string `json:"tunnel_key_hint"`
 	TunnelServer  string `json:"tunnel_server"`
 	// TunnelNeededAt — когда Spotify последний раз отказал напрямую «не
@@ -215,10 +215,14 @@ func Defaults() Config {
 		WaitForCurrent:      true,
 		YouTubeVolume:       100,
 		YouTubeMode:         "ask",
-		YouTubeAskSeconds:   60,
-		YouTubeAskElse:      "skip",
-		MatchAccept:         0.80,
-		MatchMaybe:          0.55,
+		// Подробный журнал по умолчанию включён (11.10, просьба владельца):
+		// жалобы приходят от тестеров, и журнал должен быть подробным уже в
+		// тот момент, когда что-то случилось, а не после.
+		VerboseLog:        true,
+		YouTubeAskSeconds: 60,
+		YouTubeAskElse:    "skip",
+		MatchAccept:       0.80,
+		MatchMaybe:        0.55,
 		MatchWeight: MatchWeights{
 			Title:      1.0,
 			Artist:     0.8,
