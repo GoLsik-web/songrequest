@@ -123,6 +123,9 @@ type Player struct {
 	OnFinished func(item queue.Item, natural bool)
 	OnRestored func(outcome spotify.RestoreOutcome, snap *spotify.Snapshot)
 	OnError    func(err error)
+	// OnSnapshot — снимок поменялся (nil — забыт). Сервер кладёт его на
+	// диск: перезапуск посреди заказов не должен терять, куда вернуть музыку.
+	OnSnapshot func(snap *spotify.Snapshot)
 
 	// rescue — что играть, если заказ не заиграл. См. SetRescue.
 	rescue Rescue
@@ -152,6 +155,8 @@ type Player struct {
 	// lastPlayed — URI последнего отыгравшего заказа. Нужен возврату,
 	// чтобы отличить «в Spotify наш заказ» от «стример переключил сам».
 	lastPlayed string
+	// waitOnce — см. WaitCurrentOnce.
+	waitOnce bool
 	// endedNaturally — заказ доиграл сам, а не был оборван. Это разрешение
 	// возврату работать без оглядки на то, что сейчас в Spotify: см. restore.
 	endedNaturally bool
@@ -293,7 +298,42 @@ func (p *Player) SetSnapshot(s *spotify.Snapshot) {
 	p.mu.Lock()
 	p.snap = s
 	p.mu.Unlock()
+	if p.OnSnapshot != nil {
+		p.OnSnapshot(s)
+	}
 	p.changed()
+}
+
+// MarkPlayed запоминает трек как наш отыгравший заказ.
+//
+// Нужен после перезапуска: заказ из прошлого запуска ещё звучит в Spotify,
+// его засчитали, но плеер о нём не знает. 12.10 следующий заказ снял снимок
+// с этого трека как с «музыки стримера», и после очереди Spotify играл альбом
+// заказа вместо плейлиста стримера. Теперь notOurOwn такой снимок отбросит.
+func (p *Player) MarkPlayed(uri string) {
+	p.mu.Lock()
+	p.lastPlayed = uri
+	p.mu.Unlock()
+}
+
+// WaitCurrentOnce велит следующему заказу дождаться конца того, что сейчас
+// играет, даже при готовом снимке.
+//
+// Это заказ из прошлого запуска: он ещё звучит, его засчитали, а снимок
+// вернули с диска. Без этой отметки плеер видел снимок, решал «заказы идут
+// подряд» и обрывал чужой оплаченный трек на середине.
+func (p *Player) WaitCurrentOnce() {
+	p.mu.Lock()
+	p.waitOnce = true
+	p.mu.Unlock()
+}
+
+func (p *Player) takeWaitOnce() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	v := p.waitOnce
+	p.waitOnce = false
+	return v
 }
 
 // Nudge будит плеер: в очередь что-то добавили.
@@ -400,7 +440,8 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 	// пока трек доиграет сам. Снимок делается уже после ожидания — тогда
 	// Spotify успевает перевести стрелку на следующий трек плейлиста, и
 	// возврат приведёт туда, где музыка и была бы без заказа.
-	if p.Snapshot() == nil {
+	force := p.takeWaitOnce()
+	if p.Snapshot() == nil || force {
 		// Пока идёт ожидание, наружу надо показывать, что заказ уже в работе.
 		// Без этого «Скип» в панели и !скип в чате молчали: оба начинаются с
 		// проверки Now()!=nil, а во время ожидания Now() ещё пуст. Стример
@@ -411,7 +452,7 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 		p.mu.Unlock()
 		p.setWaiting(true)
 		p.setWaitingItem(&item)
-		p.waitForOwnTrack(ctx, item)
+		p.waitForOwnTrack(ctx, item, force)
 		p.setWaitingItem(nil)
 		p.setWaiting(false)
 		if ctx.Err() != nil {
@@ -1023,6 +1064,9 @@ func (p *Player) restore(ctx context.Context) {
 	p.restoreTries = 0
 	p.endedNaturally = false
 	p.mu.Unlock()
+	if p.OnSnapshot != nil {
+		p.OnSnapshot(nil)
+	}
 	p.changed()
 }
 

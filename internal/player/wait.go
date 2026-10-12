@@ -49,8 +49,11 @@ const settle = 500 * time.Millisecond
 // Возвращает управление сразу, если играть нечего, если играет не Spotify,
 // или если ждать запретили настройкой. Скип и отмена прерывают ожидание:
 // стример всегда может сказать «хватит, включай».
-func (p *Player) waitForOwnTrack(ctx context.Context, item queue.Item) {
-	if _, wait := p.options(); !wait {
+//
+// force — ждать, даже если стример выключил ожидание: так ждём заказ из
+// прошлого запуска, который ещё звучит (см. WaitCurrentOnce).
+func (p *Player) waitForOwnTrack(ctx context.Context, item queue.Item, force bool) {
+	if _, wait := p.options(); !wait && !force {
 		return
 	}
 
