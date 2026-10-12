@@ -58,6 +58,10 @@ type Config struct {
 	VerboseLog    bool   `json:"verbose_log"`
 	TunnelKeyHint string `json:"tunnel_key_hint"`
 	TunnelServer  string `json:"tunnel_server"`
+	// YouTubeTunnelServer — сервер обхода, через который YouTube последний
+	// раз пустил без «не бот» (см. internal/server/yttunnel.go). Не пусто —
+	// обход для YouTube поднимается сразу при запуске, а не посреди заказа.
+	YouTubeTunnelServer string `json:"youtube_tunnel_server"`
 	// TunnelNeededAt — когда Spotify последний раз отказал напрямую «не
 	// работает из этой страны». Неделю после этого прямую дорогу не
 	// проверяем: она «отвечает» (без входа Spotify пускает и из России), а

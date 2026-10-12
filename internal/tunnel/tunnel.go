@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"songrequest/internal/errs"
+	"songrequest/internal/procjob"
 	"songrequest/internal/logx"
 )
 
@@ -106,6 +107,11 @@ type Tunnel struct {
 	mu     sync.Mutex
 	cmd    *exec.Cmd
 	addr   string // socks5://127.0.0.1:порт
+	// httpAddr — тот же выход, но HTTP-посредником (для mpv, см. buildConfig).
+	httpAddr string
+	// Probe — чем проверять, что через сервер можно работать. Пусто —
+	// проверяем Spotify; обходу для YouTube нужна своя проверка.
+	Probe func(ctx context.Context, addr string) error
 	server string // подпись рабочего сервера, для панели
 	onDown func() // кому сказать, что обход отвалился сам
 
@@ -272,6 +278,13 @@ func (t *Tunnel) Addr() string {
 	return t.addr
 }
 
+// HTTPAddr — тот же посредник для программ, не понимающих SOCKS (mpv).
+func (t *Tunnel) HTTPAddr() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.httpAddr
+}
+
 // Start поднимает обход по ключу и возвращает адрес посредника.
 //
 // key — то, что человек вставил в настройках: ключ, список ключей или ссылка
@@ -309,22 +322,27 @@ func (t *Tunnel) Start(ctx context.Context, key, prefer, toolPath string) (Statu
 			continue
 		}
 
-		addr, cmd, says, err := t.launch(ctx, tool, s)
+		addr, httpAddr, cmd, says, err := t.launch(ctx, tool, s)
 		if err != nil {
 			lastErr = err
 			t.log.Warn("сервер обхода не запустился", "сервер", s.String(), "ошибка", err)
 			continue
 		}
 
-		if err := probe(ctx, addr); err != nil {
+		check := probe
+		if t.Probe != nil {
+			check = t.Probe
+		}
+		if err := check(ctx, addr); err != nil {
 			lastErr = err
-			t.log.Warn("через сервер обхода Spotify не ответил", "сервер", s.String(), "ошибка", err)
+			t.log.Warn("сервер обхода не прошёл проверку", "сервер", s.String(), "ошибка", err)
 			killAndReap(cmd)
 			continue
 		}
 
 		t.mu.Lock()
 		t.cmd, t.addr, t.server, t.says = cmd, addr, s.String(), says
+		t.httpAddr = httpAddr
 		t.fromCache = cached
 		t.mu.Unlock()
 
@@ -345,6 +363,7 @@ func (t *Tunnel) Stop() {
 	t.mu.Lock()
 	cmd := t.cmd
 	t.cmd, t.addr, t.server, t.says = nil, "", "", nil
+	t.httpAddr = ""
 	t.fromCache = false
 	t.mu.Unlock()
 
@@ -554,14 +573,18 @@ func (t *Tunnel) fetchSubscription(ctx context.Context, url, agent string) ([]by
 
 // launch запускает Xray с настройкой под один сервер и ждёт, пока поднимется
 // вход посредника.
-func (t *Tunnel) launch(ctx context.Context, tool string, s Server) (string, *exec.Cmd, *safeBuf, error) {
+func (t *Tunnel) launch(ctx context.Context, tool string, s Server) (string, string, *exec.Cmd, *safeBuf, error) {
 	port, err := freePort()
 	if err != nil {
-		return "", nil, nil, errs.Wrap(errs.TunnelStart, "Не нашёл свободный порт для обхода.", err)
+		return "", "", nil, nil, errs.Wrap(errs.TunnelStart, "Не нашёл свободный порт для обхода.", err)
 	}
-	cfg, err := buildConfig(s, port)
+	httpPort, err := freePort()
+	if err != nil || httpPort == port {
+		httpPort = 0 // без HTTP-входа обход всё равно годится Spotify
+	}
+	cfg, err := buildConfig(s, port, httpPort)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", nil, nil, err
 	}
 
 	// Настройку отдаём через стандартный ввод, а не файлом.
@@ -580,8 +603,9 @@ func (t *Tunnel) launch(ctx context.Context, tool string, s Server) (string, *ex
 	cmd.Stderr = says
 
 	if err := cmd.Start(); err != nil {
-		return "", nil, nil, errs.Wrap(errs.TunnelStart, "Программа обхода не запустилась.", err)
+		return "", "", nil, nil, errs.Wrap(errs.TunnelStart, "Программа обхода не запустилась.", err)
 	}
+	procjob.Bind(cmd)
 
 	addr := fmt.Sprintf("socks5://127.0.0.1:%d", port)
 	if err := waitPort(ctx, port); err != nil {
@@ -589,10 +613,14 @@ func (t *Tunnel) launch(ctx context.Context, tool string, s Server) (string, *ex
 		if text := says.String(); text != "" {
 			t.log.Warn("программа обхода отказалась работать", "ответ", lastLines(text, 3))
 		}
-		return "", nil, nil, errs.Wrap(errs.TunnelStart,
+		return "", "", nil, nil, errs.Wrap(errs.TunnelStart,
 			"Обход не поднялся: программа не приняла ключ.", err)
 	}
-	return addr, cmd, says, nil
+	httpAddr := ""
+	if httpPort > 0 && waitPort(ctx, httpPort) == nil {
+		httpAddr = fmt.Sprintf("http://127.0.0.1:%d", httpPort)
+	}
+	return addr, httpAddr, cmd, says, nil
 }
 
 // safeBuf — то, что программа обхода пишет о себе, с двумя оговорками.
@@ -846,4 +874,38 @@ func lastLines(text string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.TrimSpace(strings.Join(lines, " | "))
+}
+
+// youtubeProbeURL — куда стучаться, проверяя сервер для YouTube. Отвечает
+// пустым 204 и ничего не весит.
+var youtubeProbeURL = "https://www.youtube.com/generate_204"
+
+// CheckYouTube — проверка сервера для обхода YouTube (см. Tunnel.Probe).
+//
+// Проверяет только, что YouTube через сервер вообще открывается. Пустит ли он
+// без «подтверди, что ты не бот», видно лишь по настоящему запросу ролика —
+// это решает internal/youtube и, если что, просит другой сервер.
+func CheckYouTube(ctx context.Context, addr string) error {
+	transport := &http.Transport{TLSHandshakeTimeout: probeTimeout}
+	if addr != "" {
+		u, err := url.Parse(addr)
+		if err != nil {
+			return errs.Wrap(errs.TunnelCheck, "Внутренняя ошибка адреса посредника.", err)
+		}
+		transport.Proxy = http.ProxyURL(u)
+	}
+	client := &http.Client{Timeout: probeTimeout, Transport: transport}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, youtubeProbeURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return errs.Wrap(errs.TunnelCheck, "Через обход YouTube не отвечает.", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return errs.New(errs.TunnelCheck, fmt.Sprintf("Через этот сервер YouTube отвечает ошибкой %d.", resp.StatusCode))
+	}
+	return nil
 }

@@ -205,6 +205,13 @@ func (c *Client) PlayTracks(ctx context.Context, uris []string, deviceID string)
 func (c *Client) fillEmptyCounts(ctx context.Context, list []Playlist) {
 	const maxAsks = 25
 
+	// Spotify отказал в содержимом чужих плейлистов (403) — переспрашивать
+	// бесполезно до перезапуска. 12.10 каждое нажатие «обновить» тратило по три
+	// запроса впустую и всегда получало тот же отказ, а норма запросов у
+	// приложения одна на всё.
+	if c.countsForbidden.Load() {
+		return
+	}
 	asked := 0
 	for i := range list {
 		if list[i].Tracks > 0 {
@@ -223,6 +230,10 @@ func (c *Client) fillEmptyCounts(ctx context.Context, list []Playlist) {
 		if err := c.do(ctx, http.MethodGet, path, nil, &raw); err != nil {
 			c.log.Warn("не переспросил число треков",
 				"плейлист", list[i].Name, "id", list[i].ID, "ошибка", err)
+			if errs.CodeOf(err) == errs.SpotifyNoPremium {
+				c.countsForbidden.Store(true)
+				return
+			}
 			continue
 		}
 

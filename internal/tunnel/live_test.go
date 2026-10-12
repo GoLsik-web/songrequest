@@ -48,7 +48,7 @@ func TestLiveStartWithFakeServer(t *testing.T) {
 		Flow: "xtls-rprx-vision",
 	}
 
-	addr, cmd, _, err := tun.launch(ctx, tool, fake)
+	addr, _, cmd, _, err := tun.launch(ctx, tool, fake)
 	if err != nil {
 		t.Fatalf("обход не поднялся: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestLiveEachServer(t *testing.T) {
 			t.Logf("%-45s порт молчит", s.Label)
 			continue
 		}
-		addr, cmd, _, err := tun.launch(ctx, tool, s)
+		addr, _, cmd, _, err := tun.launch(ctx, tool, s)
 		if err != nil {
 			t.Logf("%-45s обход не поднялся", s.Label)
 			continue

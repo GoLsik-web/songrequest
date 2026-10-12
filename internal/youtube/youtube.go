@@ -14,6 +14,7 @@ import (
 
 	"songrequest/internal/errs"
 	"songrequest/internal/logx"
+	"songrequest/internal/procjob"
 )
 
 // Track — то, что нашлось на YouTube.
@@ -58,6 +59,39 @@ type Player struct {
 	// ipc — канал управления запущенным mpv. Через него меняется громкость
 	// на ходу: другого способа mpv не даёт.
 	ipc string
+
+	// route — через какой посредник ходить к YouTube (см. SetRoute).
+	route    func(ctx context.Context, raise bool) (socks, http string)
+	routeBad func()
+}
+
+// SetRoute подключает обход блокировок для YouTube.
+//
+// Зачем. 12.10 у владельца с VPN на весь компьютер (Happ) YouTube отвечал «войди,
+// чтобы подтвердить, что ты не бот» — и yt-dlp, и даже встроенному плееру
+// YouTube в обычном Chrome: YouTube помечает адреса VPN-серверов целиком. Тот
+// же ролик через сервер из обхода приложения (другой адрес) открылся сразу и
+// без всякого входа. А у стримера без VPN в России YouTube тормозит, и путь
+// через обход для него тоже лучше прямого. Так устроены и сервисы вроде Trula:
+// звук берётся не с адреса стримера.
+//
+// route(ctx, false) — посредник, если он уже есть; route(ctx, true) — поднять
+// его, если нет. bad — нынешний сервер YouTube тоже не пускает, нужен другой.
+func (p *Player) SetRoute(route func(ctx context.Context, raise bool) (socks, http string), bad func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.route, p.routeBad = route, bad
+}
+
+// via — нынешний посредник для YouTube. raise — поднять, если его нет.
+func (p *Player) via(ctx context.Context, raise bool) (socks, http string) {
+	p.mu.Lock()
+	route := p.route
+	p.mu.Unlock()
+	if route == nil {
+		return "", ""
+	}
+	return route(ctx, raise)
 }
 
 // NewPlayer создаёт плеер.
@@ -119,27 +153,61 @@ func (p *Player) metadata(ctx context.Context, target string) (*Track, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
+	// Сначала — как есть (через обход, если он уже поднят). Отказ «не бот»
+	// означает, что YouTube не любит наш адрес, и лечится сменой адреса, а не
+	// куками: пробуем через обход, а если уже шли через него — через другой
+	// его сервер.
+	proxy, _ := p.via(ctx, false)
+	out, stderr, err := p.runYtdlp(ctx, ytdlp, "", proxy, target)
+	if err == nil {
+		if track, perr := parseInfo(out); perr == nil {
+			return track, nil
+		}
+	} else if needsCookies(stderr) {
+		p.log.Info("YouTube просит подтвердить, что мы не бот — пробую через обход", "уже_через_обход", proxy != "")
+		p.mu.Lock()
+		bad := p.routeBad
+		p.mu.Unlock()
+		if proxy != "" && bad != nil {
+			bad()
+		}
+		if px, _ := p.via(ctx, true); px != "" {
+			out, _, err := p.runYtdlp(ctx, ytdlp, "", px, target)
+			if err == nil {
+				if track, perr := parseInfo(out); perr == nil {
+					p.log.Info("через обход YouTube отдал ролик")
+					return track, nil
+				}
+			}
+			proxy = px
+		}
+	} else {
+		p.log.Warn("yt-dlp не смог найти ролик", "запрос", target, "ошибка", err, "жалобы", strings.TrimSpace(stderr))
+		return nil, errs.Wrap(errs.YouTubeNotFound, notFoundText(stderr), err)
+	}
+
 	// Порядок попыток: как есть, потом запомненный браузер, потом перебор
 	// установленных.
-	attempts := []string{""}
+	// Первая попытка без куки уже сделана выше, и YouTube сказал «не бот».
+	var attempts []string
 	switch {
 	case p.Preferred != "":
-		attempts = []string{browserArg(p.Preferred), ""}
+		attempts = []string{browserArg(p.Preferred)}
 	case p.browser() != "":
-		attempts = []string{p.browser(), ""}
+		attempts = []string{p.browser()}
 	default:
-		attempts = append(attempts, installedBrowsers()...)
+		attempts = installedBrowsers()
 	}
 
 	var (
-		lastErr    error
-		lastStderr string
+		lastErr    = err
+		lastStderr = stderr
 		// botCheck запоминаем отдельно: причина отказа именно в нём, а
 		// жалобы последнего браузера её уже не содержат.
-		botCheck bool
+		botCheck = true
 	)
 	for _, browser := range attempts {
-		out, stderr, err := p.runYtdlp(ctx, ytdlp, browser, target)
+		out, stderr, err := p.runYtdlp(ctx, ytdlp, browser, proxy, target)
 		if stderr != "" {
 			lastStderr = stderr
 		}
@@ -186,7 +254,7 @@ func (p *Player) metadata(ctx context.Context, target string) (*Track, error) {
 	// ответа.
 	if botCheck && sleepCtx(ctx, 3*time.Second) {
 		p.log.Info("YouTube не пустил и с куками — жду и пробую ещё раз начисто")
-		out, stderr, err := p.runYtdlp(ctx, ytdlp, "", target)
+		out, stderr, err := p.runYtdlp(ctx, ytdlp, "", proxy, target)
 		if stderr != "" {
 			lastStderr = stderr
 		}
@@ -217,8 +285,11 @@ func (p *Player) metadata(ctx context.Context, target string) (*Track, error) {
 
 // runYtdlp запускает yt-dlp и отдельно возвращает его жалобы: без них
 // разобрать чужую проблему по логу невозможно.
-func (p *Player) runYtdlp(ctx context.Context, ytdlp, browser, target string) (out []byte, stderr string, err error) {
+func (p *Player) runYtdlp(ctx context.Context, ytdlp, browser, proxy, target string) (out []byte, stderr string, err error) {
 	args := []string{"--dump-single-json", "--no-warnings", "--no-playlist", "--skip-download"}
+	if proxy != "" {
+		args = append(args, "--proxy", proxy)
+	}
 	if browser != "" {
 		args = append(args, "--cookies-from-browser", browser)
 	}
@@ -235,7 +306,7 @@ func (p *Player) runYtdlp(ctx context.Context, ytdlp, browser, target string) (o
 	out, err = cmd.Output()
 	stderr = errBuf.String()
 	if stderr != "" {
-		p.log.Debug("yt-dlp", "браузер", browser, "жалобы", strings.TrimSpace(stderr))
+		p.log.Debug("yt-dlp", "браузер", browser, "через_обход", proxy != "", "жалобы", strings.TrimSpace(stderr))
 	}
 	// yt-dlp умеет выйти с нулевым кодом, ничего не найдя.
 	if err == nil && len(bytes.TrimSpace(out)) == 0 {
@@ -387,8 +458,20 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	}
 	// mpv отдаёт ссылку тому же yt-dlp, и ему нужны те же куки: иначе
 	// метаданные найдутся, а поток — нет.
+	// И тот же путь: ссылка на поток у YouTube привязана к адресу, с которого
+	// её получили. Нашли ролик через обход — и звук обязан идти через обход,
+	// иначе YouTube ответит 403.
+	var raw []string
 	if b := p.browser(); b != "" {
-		args = append(args, "--ytdl-raw-options=cookies-from-browser="+b)
+		raw = append(raw, "cookies-from-browser="+b)
+	}
+	socks, httpProxy := p.via(ctx, false)
+	if socks != "" && httpProxy != "" {
+		raw = append(raw, "proxy="+socks)
+		args = append(args, "--http-proxy="+httpProxy)
+	}
+	if len(raw) > 0 {
+		args = append(args, "--ytdl-raw-options="+strings.Join(raw, ","))
 	}
 	// Тот же разделитель, что и у yt-dlp: адрес не должен превратиться в ключ.
 	args = append(args, "--", url)
@@ -399,6 +482,7 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	if err := cmd.Start(); err != nil {
 		return errs.Wrap(errs.YouTubePlay, "Не получилось запустить mpv.", err)
 	}
+	procjob.Bind(cmd)
 
 	p.mu.Lock()
 	p.cmd = cmd
@@ -407,7 +491,7 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	p.ipc = ipc
 	p.mu.Unlock()
 
-	p.log.Info("играю с YouTube", "адрес", url, "устройство", p.Device,
+	p.log.Info("играю с YouTube", "адрес", url, "устройство", p.Device, "через_обход", socks != "",
 		"громкость_mpv", volume, "громкость_spotify", p.baseVolume)
 	return nil
 }

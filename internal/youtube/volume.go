@@ -32,7 +32,10 @@ func newIPCPath() string {
 	n := ipcSeq.Add(1)
 	name := "songrequest-mpv-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatUint(n, 10)
 	if isWindows() {
-		return `\.\pipe\` + name
+		// Две косые в начале обязательны. До 12.10 здесь стояла одна, и
+		// громкость, пауза и перемотка заказа с YouTube молча не работали:
+		// mpv открывал канал не там, где его искало приложение.
+		return `\\.\pipe\` + name
 	}
 	return os.TempDir() + "/" + name
 }

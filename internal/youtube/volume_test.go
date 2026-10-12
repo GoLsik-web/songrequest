@@ -1,6 +1,9 @@
 package youtube
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Громкость заказа считается от громкости Spotify: заказ звучит вперемешку с
 // музыкой стримера, и разъезжаться они не должны. 27.08 mpv запускался без
@@ -51,5 +54,16 @@ func TestSetOptionsRemembersVolume(t *testing.T) {
 func TestIPCPathIsUniquePerLaunch(t *testing.T) {
 	if newIPCPath() == newIPCPath() {
 		t.Fatal("два запуска получили один канал управления")
+	}
+}
+
+// Именованный канал Windows обязан начинаться с \\.\pipe\ — с одной косой
+// громкость и пауза заказа с YouTube не работали вовсе.
+func TestIPCPathWindows(t *testing.T) {
+	if !isWindows() {
+		t.Skip("только Windows")
+	}
+	if p := newIPCPath(); !strings.HasPrefix(p, `\\.\pipe\`) {
+		t.Fatalf("неверный канал: %s", p)
 	}
 }
