@@ -187,7 +187,11 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		// Пробы поиска (полтора десятка запросов) нужны, когда поиск ломается
 		// сам по себе. При отказе по стране или без связи они ничего не
 		// скажут, а запросы потратят.
-		if !roadTrouble(err) {
+		//
+		// И не при ограничении Spotify: 12.10 пробы ушли шестью запросами в
+		// уже закрытый поиск — ответ известен заранее, а запросы на счету.
+		if !roadTrouble(err) && errs.CodeOf(err) != errs.SpotifyRateLimit &&
+			errs.CodeOf(err) != errs.SpotifyQuota {
 			s.autoProbeSearch(req.Clean)
 		}
 
