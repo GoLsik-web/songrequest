@@ -49,6 +49,19 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		return
 	}
 
+	// Команда вместо трека — зритель перепутал награду с чатом. Искать её
+	// нельзя: «!скип» находил трек с Skip Marley, и баллы уходили за чужую
+	// песню. Отказ с возвратом и подсказкой, и ни одного запроса к Spotify.
+	if isChatCommand(r.UserInput, s.prefix()) {
+		s.log.Info("в награду написали команду", "зритель", r.UserLogin, "текст", r.UserInput)
+		s.state.SetOrderMatch(r.ID, app.OrderMatch{
+			State: app.MatchFailed,
+			Note:  "Это команда чата, а не трек",
+		})
+		s.rejectRedemption(base, r, "это команда — её пишут в чат, а в награду пиши артиста и название")
+		return
+	}
+
 	// Ссылка важнее текста: зритель уже указал конкретный трек, и гадать
 	// по названию незачем.
 	link, hasLink := s.fromLink(ctx, r.UserInput)

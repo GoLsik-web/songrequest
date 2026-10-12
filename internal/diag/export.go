@@ -59,6 +59,8 @@ func Build(dataDir, configPath string, red *logx.Redactor, info Info, extra map[
 	for _, item := range []struct{ path, name string }{
 		{logPath, logx.LogFileName},
 		{logPath + ".1", logx.LogFileName + ".1"},
+		// Падения пишутся отдельно, см. main.go: без них отчёт о вылете пуст.
+		{filepath.Join(dataDir, "crash.log"), "crash.log"},
 	} {
 		data, err := os.ReadFile(item.path)
 		if os.IsNotExist(err) {

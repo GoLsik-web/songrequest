@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -110,6 +111,17 @@ func run() error {
 		return err
 	}
 	defer log.Close()
+
+	// Падение пишем в файл. Приложение без консоли, и текст паники уходил в
+	// никуда: 12.10 оно упало посреди нагрузочного прогона, а в логе осталась
+	// только последняя обычная строка. Файл дописывается — прошлые падения не
+	// теряются, и «Сохранить отчёт» в панели забирает его вместе с логом.
+	if f, err := os.OpenFile(filepath.Join(dir, "crash.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		fmt.Fprintf(f, "\n=== запуск %s, версия %s ===\n", time.Now().Format(time.RFC3339), version)
+		_ = debug.SetCrashOutput(f, debug.CrashOptions{})
+		f.Close()
+	}
 
 	cfg, err := config.Load(dir)
 	if err != nil {
