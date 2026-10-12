@@ -614,6 +614,9 @@ func (s *Server) recoverInflight(ctx context.Context) {
 		s.queue.PutJSON(snapshotKey, nil)
 		return
 	}
+	// Его отметка на Twitch может ещё не дойти, и подхват пропущенных
+	// заказов не должен разобрать его второй раз.
+	s.markSeen(item.RedemptionID)
 	var snap spotify.Snapshot
 	haveSnap := s.queue.GetJSON(snapshotKey, &snap)
 	if haveSnap {

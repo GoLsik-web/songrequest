@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"songrequest/internal/errs"
 )
@@ -311,4 +312,45 @@ func isDuplicateTitle(err error) bool {
 	}
 	return contains(e.Message, "CREATE_CUSTOM_REWARD_DUPLICATE_REWARD") ||
 		contains(e.Message, "DUPLICATE_REWARD")
+}
+
+// UnfulfilledRedemptions — заказы награды, которые всё ещё ждут ответа.
+//
+// Нужны после перезапуска и обрыва связи: EventSub не присылает того, что
+// случилось, пока приложение не слушало. 12.10 два заказа, сделанные за
+// минуту простоя, так и повисли на Twitch — баллы списаны, трека нет.
+func (c *Client) UnfulfilledRedemptions(ctx context.Context, rewardID string) ([]Redemption, error) {
+	user := c.Account()
+	if user == nil {
+		return nil, errs.New(errs.TwitchAuthExpired, "Сначала подключи Twitch.")
+	}
+	path := fmt.Sprintf("/channel_points/custom_rewards/redemptions?broadcaster_id=%s&reward_id=%s&status=UNFULFILLED&sort=OLDEST&first=50",
+		url.QueryEscape(user.ID), url.QueryEscape(rewardID))
+	var out struct {
+		Data []struct {
+			ID         string    `json:"id"`
+			UserID     string    `json:"user_id"`
+			UserLogin  string    `json:"user_login"`
+			UserName   string    `json:"user_name"`
+			UserInput  string    `json:"user_input"`
+			RedeemedAt time.Time `json:"redeemed_at"`
+			Reward     struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+				Cost  int    `json:"cost"`
+			} `json:"reward"`
+		} `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	list := make([]Redemption, 0, len(out.Data))
+	for _, d := range out.Data {
+		list = append(list, Redemption{
+			ID: d.ID, RewardID: d.Reward.ID, RewardTitle: d.Reward.Title, RewardCost: d.Reward.Cost,
+			UserID: d.UserID, UserLogin: d.UserLogin, UserName: d.UserName,
+			UserInput: d.UserInput, RedeemedAt: d.RedeemedAt,
+		})
+	}
+	return list, nil
 }

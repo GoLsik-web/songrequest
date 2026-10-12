@@ -239,6 +239,9 @@ func (s *Server) startEventSub(ctx context.Context, rewardIDs []string) {
 	events.OnStatus = func(connected bool, detail string) {
 		if connected {
 			s.state.SetConnOK("Twitch", detail)
+			// Каждое подключение — и первое, и после обрыва: за время
+			// без связи зрители могли нажать награду.
+			go s.catchUpRedemptions(ctx, rewardIDs)
 			return
 		}
 		s.state.SetConnFail("Twitch", detail)
@@ -261,6 +264,15 @@ func (s *Server) startEventSub(ctx context.Context, rewardIDs []string) {
 // Очереди и поиска трека ещё нет, поэтому заказ просто попадает в список
 // панели: так проверяется весь путь от нажатия зрителем до возврата баллов.
 func (s *Server) onRedemption(r twitch.Redemption) {
+	if !s.markSeen(r.ID) {
+		s.log.Info("заказ уже в работе — повтор пропускаю", "заказ", r.ID)
+		return
+	}
+	s.handleRedemption(r)
+}
+
+// handleRedemption — разбор заказа, уже отмеченного увиденным.
+func (s *Server) handleRedemption(r twitch.Redemption) {
 	s.state.AddRedemption(app.RedemptionView{
 		ID:       r.ID,
 		RewardID: r.RewardID,

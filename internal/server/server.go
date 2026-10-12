@@ -188,6 +188,10 @@ type Server struct {
 	snapMu sync.Mutex
 	snap   *spotify.Snapshot
 
+	// seen — заказы, которые приложение уже взяло в работу (см. catchup.go).
+	seenMu sync.Mutex
+	seen   map[string]bool
+
 	// mu защищает то, что заполняется по ходу подключения Twitch.
 	mu       sync.Mutex
 	rewardID string

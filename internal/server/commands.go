@@ -96,6 +96,29 @@ func parseCommand(text, prefix string) (cmd string, args []string, ok bool) {
 	return strings.ToLower(fields[0]), fields[1:], true
 }
 
+// chatCommands — слова команд из onChat. Нужны resolveOrder: зритель путает
+// награду с чатом и пишет туда «!скип» (12.10 по такому заказу заиграл
+// «Call Me Human (feat. Skip Marley)»).
+var chatCommands = map[string]bool{
+	"очередь": true, "queue": true, "q": true, "трек": true, "что": true,
+	"сейчас": true, "now": true, "np": true, "скип": true, "skip": true, "s": true,
+	"вернуть": true, "undo": true, "назад": true, "плейлисты": true, "плейлист": true,
+	"playlists": true, "pl": true, "одобрить": true, "принять": true, "approve": true,
+	"ok": true, "отклонить": true, "отказать": true, "reject": true, "удалить": true,
+	"remove": true, "rm": true, "вверх": true, "поднять": true, "top": true,
+	"громкость": true, "volume": true, "vol": true, "пауза": true, "pause": true,
+	"продолжить": true, "resume": true, "play": true, "очистить": true, "clear": true,
+	"бан": true, "ban": true, "разбан": true, "unban": true, "стоп": true,
+	"stop": true, "старт": true, "start": true, "помощь": true, "help": true,
+	"команды": true,
+}
+
+// isChatCommand — текст заказа на деле команда чата.
+func isChatCommand(text, prefix string) bool {
+	cmd, _, ok := parseCommand(text, prefix)
+	return ok && chatCommands[cmd]
+}
+
 // onChat разбирает сообщение из чата.
 func (s *Server) onChat(msg twitch.ChatMessage) {
 	cfg := s.cfg.Get()

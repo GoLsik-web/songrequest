@@ -43,11 +43,18 @@ func caseFold(s string) string {
 }
 
 // diacritics снимает надстрочные знаки: Beyoncé = Beyonce, Björk = Bjork.
-var diacritics = transform.Chain(
-	norm.NFD,
-	runes.Remove(runes.In(unicode.Mn)),
-	norm.NFC,
-)
+//
+// Новая цепочка на каждый вызов: у transform.Chain внутри общие буферы, и она
+// не годится для двух горутин сразу. 12.10 два заказа разбирались в одну
+// миллисекунду, и приложение падало целиком («slice bounds out of range» в
+// transform.String) — на стриме это два зрителя, нажавших награду вместе.
+func diacritics() transform.Transformer {
+	return transform.Chain(
+		norm.NFD,
+		runes.Remove(runes.In(unicode.Mn)),
+		norm.NFC,
+	)
+}
 
 // ligatures NFKC не раскладывает, а в названиях групп они попадаются.
 var ligatures = strings.NewReplacer(
@@ -58,7 +65,7 @@ var ligatures = strings.NewReplacer(
 
 func stripDiacritics(s string) string {
 	s = ligatures.Replace(s)
-	out, _, err := transform.String(diacritics, s)
+	out, _, err := transform.String(diacritics(), s)
 	if err != nil {
 		return s
 	}
