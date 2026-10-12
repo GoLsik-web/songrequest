@@ -889,6 +889,7 @@ func (s *Server) StopTunnel() {
 	if s.tunnel != nil {
 		s.tunnel.Stop()
 	}
+	s.stopYTTunnel()
 }
 
 // TunnelAddr — адрес посредника, поднятого обходом. Пусто, если обход не

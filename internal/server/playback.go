@@ -433,9 +433,17 @@ func (s *Server) takeSkipBack() (queue.Item, string, error) {
 
 // removeFromQueue убирает заказ, при желании вернув за него баллы.
 func (s *Server) removeFromQueue(ctx context.Context, id int64, refund bool, actor string) error {
+	waiting := false
 	item, err := s.queue.Get(id)
 	if err != nil {
-		return err
+		// Может быть, это заказ, который уже вынут из очереди и ждёт конца
+		// трека стримера (панель показывает его в очереди).
+		w := s.player.WaitingItem()
+		if w == nil || w.ID != id {
+			return err
+		}
+		item = *w
+		waiting = true
 	}
 
 	// Порядок важен: сначала баллы, потом удаление.
@@ -453,7 +461,11 @@ func (s *Server) removeFromQueue(ctx context.Context, id int64, refund bool, act
 		}
 	}
 
-	if err := s.queue.Remove(id); err != nil {
+	if waiting {
+		if !s.player.DropWaiting(id) {
+			return errs.New(errs.Code(""), "Заказ уже заиграл — его можно только скипнуть.")
+		}
+	} else if err := s.queue.Remove(id); err != nil {
 		return err
 	}
 	s.history(item, "removed", what)

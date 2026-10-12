@@ -27,7 +27,7 @@ type xrayInbound struct {
 	Listen   string        `json:"listen"`
 	Port     int           `json:"port"`
 	Protocol string        `json:"protocol"`
-	Settings xraySocksIn   `json:"settings"`
+	Settings any           `json:"settings"`
 	Sniffing *xraySniffOff `json:"sniffing,omitempty"`
 }
 
@@ -90,7 +90,7 @@ type xrayHTTPUpgrade struct {
 
 // buildConfig собирает настройку Xray: вход SOCKS на указанном порту, выход —
 // на сервер из ключа.
-func buildConfig(s Server, port int) ([]byte, error) {
+func buildConfig(s Server, port, httpPort int) ([]byte, error) {
 	var out any
 	if len(s.Raw) > 0 {
 		// Готовый выход из подписки (см. happ.go) — берём как есть.
@@ -117,6 +117,16 @@ func buildConfig(s Server, port int) ([]byte, error) {
 			Sniffing: &xraySniffOff{Enabled: false},
 		}},
 		Outbounds: []any{out},
+	}
+	// Второй вход — обычный HTTP-посредник. Нужен ради mpv: звук с YouTube он
+	// качает сам, а SOCKS не понимает. Ссылка на поток у YouTube привязана к
+	// адресу, с которого её получили, поэтому звук обязан идти тем же путём,
+	// что и yt-dlp, — иначе YouTube отдаст 403.
+	if httpPort > 0 {
+		cfg.Inbounds = append(cfg.Inbounds, xrayInbound{
+			Listen: "127.0.0.1", Port: httpPort, Protocol: "http",
+			Settings: map[string]any{}, Sniffing: &xraySniffOff{Enabled: false},
+		})
 	}
 	return json.Marshal(cfg)
 }

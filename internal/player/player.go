@@ -166,6 +166,8 @@ type Player struct {
 	// waitingItem — что именно ждёт. Панель показывает его в очереди, иначе
 	// заказ исчезает с экрана на всё время ожидания.
 	waitingItem *queue.Item
+	// dropWaiting — ждущий заказ удалили из панели: не играть его вовсе.
+	dropWaiting bool
 	wake        chan struct{}
 	skip        chan struct{}
 	running     bool
@@ -221,6 +223,24 @@ func (p *Player) Now() *Now {
 	}
 	n := *p.now
 	return &n
+}
+
+// DropWaiting снимает заказ, который ждёт конца трека стримера.
+//
+// 12.10: такой заказ виден в очереди панели, но из самой очереди он уже вынут,
+// и «удалить» отвечало «не получилось». Скип тут не годится — он прерывает
+// ожидание и включает заказ сразу, то есть делает ровно обратное.
+func (p *Player) DropWaiting(id int64) bool {
+	p.mu.Lock()
+	ok := p.waitingItem != nil && p.waitingItem.ID == id
+	if ok {
+		p.dropWaiting = true
+	}
+	p.mu.Unlock()
+	if ok {
+		p.Skip()
+	}
+	return ok
 }
 
 // Waiting сообщает, что заказ уже взят в работу, но ждёт конца трека
@@ -381,12 +401,24 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 		// проверки Now()!=nil, а во время ожидания Now() ещё пуст. Стример
 		// видел «заиграет примерно через три минуты» и не мог это ускорить
 		// ничем — при том что сам скип ожидание прерывать умеет.
+		p.mu.Lock()
+		p.dropWaiting = false // от прошлого заказа не должно остаться
+		p.mu.Unlock()
 		p.setWaiting(true)
 		p.setWaitingItem(&item)
 		p.waitForOwnTrack(ctx, item)
 		p.setWaitingItem(nil)
 		p.setWaiting(false)
 		if ctx.Err() != nil {
+			return
+		}
+		p.mu.Lock()
+		dropped := p.dropWaiting
+		p.dropWaiting = false
+		p.mu.Unlock()
+		if dropped {
+			p.drainSkip()
+			p.log.Info("ждущий заказ удалён, не играю", "трек", item.Artist+" — "+item.Title)
 			return
 		}
 	}

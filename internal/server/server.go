@@ -83,6 +83,9 @@ type Server struct {
 	donationAlerts *donations.DonationAlerts
 
 	ytTools *youtube.Tools
+	// ytTunnel — отдельный обход только для YouTube (см. yttunnel.go).
+	ytTunnel   *tunnel.Tunnel
+	ytTunnelMu sync.Mutex
 	youtube *youtube.Player
 	yandex  *links.YandexReader
 	dataDir string

@@ -16,6 +16,8 @@ import (
 func (s *Server) setupYouTube(ctx context.Context) {
 	s.ytTools = youtube.NewTools(s.log, s.dataDir)
 	s.youtube = youtube.NewPlayer(s.log, s.ytTools)
+	s.youtube.SetRoute(s.ytRoute, s.ytRouteBad)
+	s.prewarmYTTunnel(ctx)
 	s.applyYouTubeSettings()
 
 	if s.player != nil {

@@ -31,6 +31,8 @@ type SecretStore interface {
 
 // Client — всё общение со Spotify. Один экземпляр на приложение.
 type Client struct {
+	// countsForbidden — Spotify не отдаёт число треков плейлистов (см. fillEmptyCounts).
+	countsForbidden atomic.Bool
 	cfg     *config.File
 	log     *logx.Logger
 	secrets SecretStore
