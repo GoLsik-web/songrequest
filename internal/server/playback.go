@@ -40,7 +40,7 @@ func (s *Server) setupPlayer(cfg *config.File) {
 	// описывали — «еле включается».
 	s.player.OnWaiting = func(item queue.Item, left time.Duration) {
 		s.state.Notify("info", "«"+item.Artist+" — "+item.Title+
-			"» заиграет после текущего трека, примерно через "+humanDuration(left)+".")
+			"» заиграет после текущего трека, примерно через "+afterDuration(left)+".")
 	}
 
 	// Заказ не удалось включить — это не «отыграл». Баллы списаны, зритель
@@ -159,6 +159,7 @@ func (s *Server) StartPlayer(ctx context.Context) {
 	if s.player == nil {
 		return
 	}
+	s.recoverInflight(ctx)
 	go s.player.Run(ctx)
 	// Между заказами в кадре показываем то, что стример слушает сам.
 	go s.watchOwnPlayback(ctx)
@@ -302,12 +303,22 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 		s.state.CountOrder()
 	}
 
-	s.syncPlayback()
-	s.player.Nudge()
-
 	// Зритель должен понимать, что заказ принят и когда его ждать: иначе
 	// через минуту он спросит об этом в чате.
-	wait, _ := s.queue.TotalDuration()
+	//
+	// Считаем до запуска плеера и только то, что стоит впереди. 12.10 сюда
+	// попадала длина всей очереди вместе с самим заказом: на пустой очереди
+	// зритель читал «следующим (примерно через 5 минут)», а трек включался
+	// через секунду.
+	var wait time.Duration
+	if list, err := s.queue.List(); err == nil {
+		for _, q := range list {
+			if q.ID == added.ID {
+				break
+			}
+			wait += time.Duration(q.DurationMs) * time.Millisecond
+		}
+	}
 	if now := s.player.Now(); now != nil {
 		wait += time.Duration(now.Item.DurationMs)*time.Millisecond - now.Elapsed()
 	} else if cfg.WaitForCurrent {
@@ -316,6 +327,9 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 		// и три минуты тишины.
 		wait += s.ownTrackLeft()
 	}
+
+	s.syncPlayback()
+	s.player.Nudge()
 	s.announceQueued(ctx, added, added.Position, wait)
 }
 
@@ -485,6 +499,12 @@ func (s *Server) clearQueue(ctx context.Context, refund bool, actor string) erro
 	if err != nil {
 		return err
 	}
+	// Заказ, который ждёт конца трека стримера, из очереди уже вынут, но в
+	// панели виден в ней. 12.10 «очистить» его не трогал, и он заиграл после
+	// очистки.
+	if w := s.player.WaitingItem(); w != nil && s.player.DropWaiting(w.ID) {
+		gone = append(gone, *w)
+	}
 	var lost []string
 	for _, item := range gone {
 		if refund && !s.refund(ctx, item, "очередь очищена") {
@@ -501,7 +521,7 @@ func (s *Server) clearQueue(ctx context.Context, refund bool, actor string) erro
 				". Верни им вручную через награду на Twitch.")
 	}
 
-	s.modLog(actor, "очистил очередь", strconv.Itoa(len(gone))+" заказов")
+	s.modLog(actor, "очистил очередь", strconv.Itoa(len(gone))+" "+plural(len(gone), "заказ", "заказа", "заказов"))
 	s.state.Notify("info", actor+" очистил очередь: "+strconv.Itoa(len(gone))+" "+
 		plural(len(gone), "заказ", "заказа", "заказов"))
 
@@ -537,4 +557,41 @@ func (s *Server) takeSkip() (who string, refund bool) {
 		return "музыку переключили в самом Spotify", false
 	}
 	return who, refund
+}
+
+// recoverInflight подбирает заказ, который не закончился в прошлый запуск.
+//
+// Если Spotify всё ещё играет этот трек — зритель его слышит, считаем
+// выполненным, и он доиграет как музыка стримера. Иначе (YouTube, другой
+// трек, тишина) ставим заказ обратно первым: баллы за него уже списаны.
+func (s *Server) recoverInflight(ctx context.Context) {
+	if s.queue == nil {
+		return
+	}
+	item, ok := s.queue.TakeInflight()
+	if !ok {
+		return
+	}
+	if item.Provider != "youtube" && s.spotify != nil {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		st, ok2, err := s.spotify.State(qctx)
+		cancel()
+		if err == nil && ok2 && st != nil && st.IsPlaying && st.Item != nil && st.Item.URI == item.URI {
+			s.log.Info("заказ из прошлого запуска ещё играет — засчитываю", "трек", item.Artist+" — "+item.Title)
+			if s.player.OnFinished != nil {
+				s.player.OnFinished(item, true)
+			}
+			return
+		}
+	}
+	added, err := s.queue.Add(item, false)
+	if err == nil {
+		err = s.queue.MoveTop(added.ID)
+	}
+	if err != nil {
+		s.log.Warn("не вернул в очередь заказ из прошлого запуска", "ошибка", err)
+		return
+	}
+	s.log.Info("вернул в очередь заказ, оборванный перезапуском", "трек", item.Artist+" — "+item.Title)
+	s.state.Notify("info", "Заказ «"+item.Artist+" — "+item.Title+"» оборвался перезапуском — поставил его первым.")
 }

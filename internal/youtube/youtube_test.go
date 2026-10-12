@@ -102,3 +102,11 @@ func mustParse(t *testing.T, s string) *Track {
 	}
 	return tr
 }
+
+// Пустой поиск — список без роликов, а не ролик с id-запросом.
+func TestParseInfoEmptySearch(t *testing.T) {
+	_, err := parseInfo([]byte(`{"_type":"playlist","id":"апролдж","title":"апролдж","entries":[]}`))
+	if err == nil {
+		t.Fatal("пустой поиск принят за ролик")
+	}
+}

@@ -34,9 +34,43 @@ func (r Request) HasParts() bool { return r.Artist != "" && r.Title != "" }
 // оказывается частью самого названия.
 var separators = []string{" // ", " — ", " – ", " - ", " | ", " ~ ", " · ", ": "}
 
-// featPattern вытаскивает дополнительных артистов.
-var featPattern = regexp.MustCompile(
-	`(?i)\s*[\(\[]?\s*(?:feat\.?|ft\.?|featuring|with|при\s+участии|совместно\s+с)\s+([^\)\]]+)[\)\]]?\s*`)
+// featBracket — доп. артисты в скобках: «(feat. X)», «[with X]».
+var featBracket = regexp.MustCompile(
+	`(?i)\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring|with|при\s+участии|совместно\s+с)\s+([^\)\]]+)[\)\]]\s*`)
+
+// featBare — те же пометки без скобок: «The Weeknd ft. Daft Punk - Трек».
+// Без «with»: без скобок это обычное слово названия («Dancing With Myself»).
+var featBare = regexp.MustCompile(
+	`(?i)(?:^|\s)(?:feat\.?|ft\.?|featuring|при\s+участии|совместно\s+с)\s+`)
+
+// takeFeats вынимает доп. артистов из строки.
+//
+// 12.10: «The Weeknd ft. Daft Punk - I Feel It Coming» терял название целиком —
+// пометка без скобок забирала всё до конца строки, и приложение включило
+// случайный популярный трек The Weeknd. Теперь имена без скобок кончаются на
+// первом разделителе «артист — название».
+func takeFeats(work string) (feats []string, rest string) {
+	for {
+		m := featBracket.FindStringSubmatchIndex(work)
+		if m == nil {
+			break
+		}
+		feats = append(feats, splitArtists(work[m[2]:m[3]])...)
+		work = work[:m[0]] + " " + work[m[1]:]
+	}
+	if loc := featBare.FindStringIndex(work); loc != nil {
+		tail := work[loc[1]:]
+		cut := len(tail)
+		for _, sep := range separators {
+			if i := strings.Index(tail, sep); i >= 0 && i < cut {
+				cut = i
+			}
+		}
+		feats = append(feats, splitArtists(tail[:cut])...)
+		work = work[:loc[0]] + " " + tail[cut:]
+	}
+	return feats, work
+}
 
 // remixerPattern ловит «(SomeoneElse Remix)» — имя ремиксера обязано найтись
 // у кандидата, иначе это ремикс не тот, который просили.
@@ -67,11 +101,9 @@ func Parse(text string) Request {
 	req.Markers = FindMarkers(work)
 
 	// Доп. артистов забираем из строки, чтобы они не мешали разбору.
-	if m := featPattern.FindStringSubmatch(work); m != nil {
-		for _, name := range splitArtists(m[1]) {
-			req.Feats = append(req.Feats, name)
-		}
-		work = featPattern.ReplaceAllString(work, " ")
+	if feats, rest := takeFeats(work); len(feats) > 0 {
+		req.Feats = append(req.Feats, feats...)
+		work = rest
 	}
 
 	work = collapseSpaces(work)

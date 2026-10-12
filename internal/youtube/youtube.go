@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -59,6 +61,8 @@ type Player struct {
 	// ipc — канал управления запущенным mpv. Через него меняется громкость
 	// на ходу: другого способа mpv не даёт.
 	ipc string
+	// tmpFile — скачанный звук заказа (см. Play); удаляется в Stop.
+	tmpFile string
 
 	// route — через какой посредник ходить к YouTube (см. SetRoute).
 	route    func(ctx context.Context, raise bool) (socks, http string)
@@ -160,9 +164,14 @@ func (p *Player) metadata(ctx context.Context, target string) (*Track, error) {
 	proxy, _ := p.via(ctx, false)
 	out, stderr, err := p.runYtdlp(ctx, ytdlp, "", proxy, target)
 	if err == nil {
-		if track, perr := parseInfo(out); perr == nil {
+		track, perr := parseInfo(out)
+		if perr == nil {
 			return track, nil
 		}
+		// YouTube ответил, просто ничего не нашлось — куки и обход тут не
+		// помогут, а перебор браузеров стоил 10 секунд и подменял причину
+		// на «не бот».
+		return nil, perr
 	} else if needsCookies(stderr) {
 		p.log.Info("YouTube просит подтвердить, что мы не бот — пробую через обход", "уже_через_обход", proxy != "")
 		p.mu.Lock()
@@ -374,11 +383,18 @@ func parseInfo(out []byte) (*Track, error) {
 		WebURL   string  `json:"webpage_url"`
 		// Поиск возвращает список — берём первый.
 		Entries []json.RawMessage `json:"entries"`
+		Type    string            `json:"_type"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, errs.Wrap(errs.YouTubeBadResponse, "yt-dlp ответил непонятным образом.", err)
 	}
 
+	// Пустой поиск yt-dlp отдаёт списком без единого ролика, у которого id и
+	// название — сам запрос. 12.10 бессмыслица «апролджыфвапролд» так
+	// «нашлась» на YouTube и ушла стримеру на одобрение.
+	if raw.Type == "playlist" && len(raw.Entries) == 0 {
+		return nil, errs.New(errs.YouTubeNotFound, "На YouTube ничего не нашлось.")
+	}
 	if len(raw.Entries) > 0 {
 		if err := json.Unmarshal(raw.Entries[0], &raw); err != nil {
 			return nil, errs.Wrap(errs.YouTubeBadResponse, "yt-dlp ответил непонятным образом.", err)
@@ -456,25 +472,44 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	if p.Device != "" {
 		args = append(args, "--audio-device="+p.Device)
 	}
-	// mpv отдаёт ссылку тому же yt-dlp, и ему нужны те же куки: иначе
-	// метаданные найдутся, а поток — нет.
-	// И тот же путь: ссылка на поток у YouTube привязана к адресу, с которого
-	// её получили. Нашли ролик через обход — и звук обязан идти через обход,
-	// иначе YouTube ответит 403.
-	var raw []string
-	if b := p.browser(); b != "" {
-		raw = append(raw, "cookies-from-browser="+b)
-	}
-	socks, httpProxy := p.via(ctx, false)
-	if socks != "" && httpProxy != "" {
-		raw = append(raw, "proxy="+socks)
-		args = append(args, "--http-proxy="+httpProxy)
-	}
-	if len(raw) > 0 {
-		args = append(args, "--ytdl-raw-options="+strings.Join(raw, ","))
+	// Через обход звук сначала скачивается целиком, а играется с диска.
+	//
+	// 12.10: mpv, тянущий YouTube сам через посредника, то и дело падал
+	// («Timeout was reached», «Could not resolve proxy name») — особенно после
+	// перемотки, когда дозагружает куски. Звук трека — несколько мегабайт, через
+	// обход это секунды, зато дальше ни перемотка, ни пауза от сети не зависят.
+	socks, _ := p.via(ctx, false)
+	target := url
+	if socks != "" {
+		file, err := p.fetchAudio(ctx, socks, url)
+		if err != nil {
+			// Сервер обхода пускает на youtube.com, но узел с самим звуком
+			// через него молчит — 12.10 так было со шведским сервером. Берём
+			// другой сервер и пробуем ещё раз.
+			p.mu.Lock()
+			bad := p.routeBad
+			p.mu.Unlock()
+			if bad != nil {
+				bad()
+				if px, _ := p.via(ctx, true); px != "" {
+					file, err = p.fetchAudio(ctx, px, url)
+				}
+			}
+		}
+		if err != nil {
+			return err
+		}
+		target = file
+		p.mu.Lock()
+		p.tmpFile = file
+		p.mu.Unlock()
+	} else if b := p.browser(); b != "" {
+		// mpv отдаёт ссылку тому же yt-dlp, и ему нужны те же куки: иначе
+		// метаданные найдутся, а поток — нет.
+		args = append(args, "--ytdl-raw-options=cookies-from-browser="+b)
 	}
 	// Тот же разделитель, что и у yt-dlp: адрес не должен превратиться в ключ.
-	args = append(args, "--", url)
+	args = append(args, "--", target)
 
 	cmd := exec.Command(mpv, args...)
 	hideWindow(cmd)
@@ -562,8 +597,24 @@ func (p *Player) Stop() {
 	p.playing = ""
 	p.ipc = ""
 	p.gen++
+	tmp := p.tmpFile
+	p.tmpFile = ""
 	p.mu.Unlock()
 
+	if tmp != "" {
+		// Windows не даст удалить файл, пока mpv его держит, — удаляем чуть
+		// позже, когда процесс уже убит.
+		defer func() {
+			go func() {
+				for i := 0; i < 10; i++ {
+					if err := os.Remove(tmp); err == nil || os.IsNotExist(err) {
+						return
+					}
+					time.Sleep(500 * time.Millisecond)
+				}
+			}()
+		}()
+	}
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
@@ -675,4 +726,51 @@ func (p *Player) SetOptions(device, browser string, volumePercent int) {
 	if changed {
 		p.SetVolumePercent(volumePercent)
 	}
+}
+
+// fetchAudio скачивает звук ролика через обход во временную папку.
+func (p *Player) fetchAudio(ctx context.Context, proxy, url string) (string, error) {
+	ytdlp, _ := p.tools.Paths()
+	if ytdlp == "" {
+		return "", errs.New(errs.YouTubeNoTool, "yt-dlp не найден.")
+	}
+	dir := filepath.Join(os.TempDir(), "songrequest-youtube")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", errs.Wrap(errs.YouTubePlay, "Не смог подготовить папку для звука.", err)
+	}
+	// Хвосты прошлых запусков (приложение убили посреди трека).
+	if old, _ := os.ReadDir(dir); len(old) > 0 {
+		for _, f := range old {
+			if info, err := f.Info(); err == nil && time.Since(info.ModTime()) > time.Hour {
+				os.Remove(filepath.Join(dir, f.Name()))
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	started := time.Now()
+	cmd := exec.CommandContext(ctx, ytdlp,
+		"-f", "bestaudio/best", "--no-playlist", "--no-part", "--no-warnings",
+		"--force-overwrites", "--proxy", proxy,
+		// Молчащий узел должен отвалиться быстро, а не держать заказ минутами.
+		"--socket-timeout", "15", "--retries", "2",
+		"-o", filepath.Join(dir, "%(id)s.%(ext)s"),
+		"--print", "after_move:filepath",
+		"--", url)
+	hideWindow(cmd)
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	out, err := cmd.Output()
+	if err != nil {
+		p.log.Warn("не скачал звук с YouTube через обход", "ошибка", err, "жалобы", strings.TrimSpace(errBuf.String()))
+		return "", errs.Wrap(errs.YouTubePlay, "Не получилось скачать звук с YouTube.", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	file := strings.TrimSpace(lines[len(lines)-1])
+	if _, err := os.Stat(file); err != nil {
+		return "", errs.Wrap(errs.YouTubePlay, "yt-dlp не сказал, куда сохранил звук.", err)
+	}
+	p.log.Info("звук с YouTube скачан через обход", "мс", time.Since(started).Milliseconds())
+	return file, nil
 }
