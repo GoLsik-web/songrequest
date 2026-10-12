@@ -149,11 +149,15 @@ func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, e
 
 		// Останавливаемся, как только набрали уверенного кандидата: остальные
 		// запросы только потратят лимит Spotify.
-		if best, score, _ := pick(req, pool, opts); best.ID != "" && score.Total >= opts.Accept {
+		if best, score, _ := pick(req, pool, opts); best.ID != "" &&
+			(score.Total >= opts.Accept || namedInRequest(req, best, score, opts)) {
 			result.Found = true
 			result.Track = best
 			result.Score = score
 			result.Considered = len(pool)
+			// Ниже порога — значит, остановились по namedInRequest: пометка
+			// «неточно» та же, что дал бы полный перебор.
+			result.Uncertain = score.Total < opts.Accept
 			return result, nil
 		}
 	}
@@ -408,6 +412,31 @@ func abroadOnly(ctx context.Context, s Searcher, req Request, opts Options) int 
 		}
 	}
 	return n
+}
+
+// namedInRequest — в заказе написаны и артист, и название найденного трека.
+//
+// Так пишет большинство зрителей: «Queen Don't Stop Me Now», без тире. Где
+// кончается артист, неизвестно, поэтому оценка точной находки — 0.78 при
+// пороге 0.80, и приложение шло вторым поиском (транслитом: «куеен дон'т
+// стоп ме нов»). 12.10 под нагрузкой это удвоило число поисков, и Spotify
+// закрыл поиск на шесть с половиной часов. Если и артист, и название целиком
+// стоят в заказе — это попадание, искать дальше незачем.
+func namedInRequest(req Request, best Candidate, sc Score, opts Options) bool {
+	if !titleInRequest(req, best, sc, opts) || len(best.Artists) == 0 {
+		return false
+	}
+	have := " " + Normalize(req.Clean) + " " + Normalize(Transliterate(req.Clean)) + " "
+	for _, a := range best.Artists {
+		n := Normalize(a)
+		if n == "" {
+			continue
+		}
+		if strings.Contains(have, " "+n+" ") || strings.Contains(have, " "+Normalize(Transliterate(a))+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // titleInRequest — найденный трек назван в заказе по имени, значит заказан

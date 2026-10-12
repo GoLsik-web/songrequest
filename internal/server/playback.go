@@ -189,6 +189,18 @@ func (s *Server) StartPlayer(ctx context.Context) {
 		return
 	}
 	s.recoverInflight(ctx)
+	// Всё, что лежит в очереди с прошлого запуска, — уже в работе. Отметить
+	// надо до запуска плеера: он сразу вынимает первый заказ из таблицы, и
+	// подхват пропущенных заказов (catchup.go) принимал его за потерянный.
+	// 12.10 так заказ отклонили как дубль самого себя и вернули баллы, а трек
+	// потом всё равно сыграл.
+	if s.queue != nil {
+		if items, err := s.queue.List(); err == nil {
+			for _, it := range items {
+				s.markSeen(it.RedemptionID)
+			}
+		}
+	}
 	go s.player.Run(ctx)
 	// Между заказами в кадре показываем то, что стример слушает сам.
 	go s.watchOwnPlayback(ctx)
