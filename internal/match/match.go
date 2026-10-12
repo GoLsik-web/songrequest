@@ -171,7 +171,7 @@ func Find(ctx context.Context, s Searcher, req Request, opts Options) (Result, e
 
 	// Заказан один артист без трека — играем его популярный трек. См.
 	// artistOnly. Только если обычный подбор не уверен в ответе.
-	if _, sc, _ := pick(req, pool, opts); sc.Total < opts.Accept {
+	if best, sc, _ := pick(req, pool, opts); sc.Total < opts.Accept && !titleInRequest(req, best, sc, opts) {
 		if c, q, ok := artistOnly(ctx, s, req); ok {
 			result.Attempts = append(result.Attempts, q)
 			result.Found = true
@@ -408,4 +408,23 @@ func abroadOnly(ctx context.Context, s Searcher, req Request, opts Options) int 
 		}
 	}
 	return n
+}
+
+// titleInRequest — найденный трек назван в заказе по имени, значит заказан
+// не «просто артист».
+//
+// Экономия запросов (12.10): «линкин парк нумб» нашёлся как Linkin Park —
+// Numb с оценкой чуть ниже уверенной, и приложение ещё двумя поисками
+// проверяло, не заказали ли одного артиста. На суточном стриме это сотни
+// лишних запросов.
+func titleInRequest(req Request, best Candidate, sc Score, opts Options) bool {
+	if best.ID == "" || sc.Total < opts.Maybe {
+		return false
+	}
+	title := Normalize(best.Title)
+	if title == "" {
+		return false
+	}
+	have := " " + Normalize(req.Clean) + " " + Normalize(Transliterate(req.Clean)) + " "
+	return strings.Contains(have, " "+title+" ") || strings.Contains(have, " "+Normalize(Transliterate(best.Title))+" ")
 }

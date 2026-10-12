@@ -133,15 +133,53 @@ func mmss(ms int) string {
 // State читает текущее состояние плеера. Второе значение false означает,
 // что Spotify молчит: плеер закрыт или ничего не играет.
 func (c *Client) State(ctx context.Context) (*PlayerState, bool, error) {
+	// Два вопроса подряд об одном и том же — один запрос. 12.10 в журнале
+	// старт каждого заказа спрашивал /me/player дважды в одну секунду (снимок
+	// и проверка устройства). Любая команда плееру (PUT/POST) ответ забывает.
+	if st, ok, hit := c.cachedState(); hit {
+		return st, ok, nil
+	}
 	var st PlayerState
 	err := c.do(ctx, http.MethodGet, "/me/player", nil, &st)
 	if errors.Is(err, errNoContent) {
+		c.rememberState(nil, false)
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	return &st, true, nil
+	c.rememberState(&st, true)
+	cp := st
+	return &cp, true, nil
+}
+
+// stateFresh — сколько живёт запомненный ответ /me/player.
+const stateFresh = 2 * time.Second
+
+func (c *Client) cachedState() (*PlayerState, bool, bool) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.stateAt.IsZero() || time.Since(c.stateAt) > stateFresh {
+		return nil, false, false
+	}
+	if c.stateVal == nil {
+		return nil, c.stateOK, true
+	}
+	cp := *c.stateVal
+	return &cp, c.stateOK, true
+}
+
+func (c *Client) rememberState(st *PlayerState, ok bool) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.stateVal, c.stateOK, c.stateAt = st, ok, time.Now()
+}
+
+// forgetState — плееру отдали команду, прежний ответ устарел.
+func (c *Client) forgetState() {
+	c.stateMu.Lock()
+	c.stateAt = time.Time{}
+	c.stateMu.Unlock()
 }
 
 // Devices перечисляет устройства Spotify Connect.
@@ -231,6 +269,9 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 		}, nil
 	}
 
+	// Перед возвратом — только свежий ответ: от него зависит, куда и как
+	// возвращать, а устройство могло уснуть секунду назад.
+	c.forgetState()
 	current, playing, err := c.State(ctx)
 	if err != nil {
 		c.log.Warn("не прочитал состояние перед возвратом", "ошибка", err)
@@ -245,14 +286,28 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 		}, nil
 	}
 
-	devices, err := c.Devices(ctx)
-	if err != nil {
-		return RestoreOutcome{}, err
-	}
-
-	deviceID, derr := ChooseDevice(snap, devices)
-	if derr != nil {
-		return RestoreOutcome{}, derr
+	// Экономия запросов (12.10, расчёт на суточный стрим с заказом каждые пять
+	// минут): возврат стоил семь запросов. Если устройство из снимка и так
+	// активно — список устройств не нужен, а шаффл и повтор не трогаем, когда
+	// они уже такие, как были.
+	var (
+		devices  []Device
+		deviceID string
+	)
+	if current != nil && current.Device.ID != "" && current.Device.IsActive &&
+		!current.Device.IsRestricted && (snap.DeviceID == "" || snap.DeviceID == current.Device.ID) {
+		deviceID = current.Device.ID
+		devices = []Device{{ID: deviceID, IsActive: true}}
+	} else {
+		devices, err = c.Devices(ctx)
+		if err != nil {
+			return RestoreOutcome{}, err
+		}
+		var derr error
+		deviceID, derr = ChooseDevice(snap, devices)
+		if derr != nil {
+			return RestoreOutcome{}, derr
+		}
 	}
 
 	// Устройство могло уснуть, пока играл заказ. Тогда переносим на него
@@ -271,10 +326,12 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 
 	// Порядок важен: шаффл и повтор ставим до старта. Если включить их после,
 	// Spotify успеет уехать на случайный следующий трек.
-	if err := c.SetShuffle(ctx, snap.Shuffle, deviceID); err != nil {
-		c.log.Warn("не восстановил шаффл", "ошибка", err)
+	if current == nil || current.ShuffleState != snap.Shuffle {
+		if err := c.SetShuffle(ctx, snap.Shuffle, deviceID); err != nil {
+			c.log.Warn("не восстановил шаффл", "ошибка", err)
+		}
 	}
-	if snap.Repeat != "" {
+	if snap.Repeat != "" && (current == nil || current.RepeatState != snap.Repeat) {
 		if err := c.SetRepeat(ctx, snap.Repeat, deviceID); err != nil {
 			c.log.Warn("не восстановил повтор", "ошибка", err)
 		}
