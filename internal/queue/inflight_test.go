@@ -28,3 +28,19 @@ func TestInflightSurvivesUntilDone(t *testing.T) {
 		t.Fatal("законченный заказ остался незаконченным")
 	}
 }
+
+// Снимок Spotify лежит в kv и стирается по nil — иначе после перезапуска
+// музыка возвращалась бы на место прошлого стрима.
+func TestKVJSON(t *testing.T) {
+	q := newQueue(t)
+	type snap struct{ Track string }
+	q.PutJSON("snapshot", snap{"плейлист стримера"})
+	var got snap
+	if !q.GetJSON("snapshot", &got) || got.Track != "плейлист стримера" {
+		t.Fatalf("снимок не прочитался: %+v", got)
+	}
+	q.PutJSON("snapshot", nil)
+	if q.GetJSON("snapshot", &got) {
+		t.Fatal("стёртый снимок всё ещё читается")
+	}
+}

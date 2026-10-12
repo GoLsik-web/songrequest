@@ -256,6 +256,29 @@ func (q *Queue) TakeInflight() (Item, bool) {
 	return it, true
 }
 
+// PutJSON кладёт значение в kv; nil — стирает ключ.
+func (q *Queue) PutJSON(key string, v any) {
+	if v == nil {
+		_, _ = q.db.Exec(`DELETE FROM kv WHERE key = ?`, key)
+		return
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	_, _ = q.db.Exec(`INSERT INTO kv(key, value) VALUES(?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, string(raw))
+}
+
+// GetJSON читает значение из kv. false — ключа нет или он испорчен.
+func (q *Queue) GetJSON(key string, v any) bool {
+	var raw string
+	if err := q.db.QueryRow(`SELECT value FROM kv WHERE key = ?`, key).Scan(&raw); err != nil {
+		return false
+	}
+	return json.Unmarshal([]byte(raw), v) == nil
+}
+
 // Peek смотрит на первый заказ, не забирая его.
 func (q *Queue) Peek() (Item, error) {
 	items, err := q.List()

@@ -103,7 +103,24 @@ func (s *Server) setupPlayer(cfg *config.File) {
 			// Отмечаем выполненным всё остальное: и отыгравшее до конца, и
 			// оборванное без возврата (музыку переключили в самом Spotify).
 			// Иначе заказ навсегда останется висеть в очереди наград.
-			if err := s.twitch.FulfillRedemption(ctx, item.RewardID, item.RedemptionID); err != nil {
+			//
+			// Несколько попыток: заказ из прошлого запуска засчитывается в
+			// первые миллисекунды, когда Twitch ещё не подключён (12.10:
+			// «TW-04: Сначала подключи Twitch», и заказ навсегда повис в
+			// очереди наград). Та же пауза переживает и моргнувшую сеть.
+			var err error
+			for try := 0; try < 4; try++ {
+				if try > 0 {
+					time.Sleep(10 * time.Second)
+				}
+				actx, acancel := context.WithTimeout(s.baseContext(), 20*time.Second)
+				err = s.twitch.FulfillRedemption(actx, item.RewardID, item.RedemptionID)
+				acancel()
+				if err == nil {
+					break
+				}
+			}
+			if err != nil {
 				s.log.Warn("не отметил заказ выполненным", "ошибка", err)
 				return
 			}
@@ -115,6 +132,18 @@ func (s *Server) setupPlayer(cfg *config.File) {
 
 	// Очередь опустела и музыка вернулась на место — говорим об этом в панели
 	// и, если источник вернуть не вышло, дозаполняем по выбранному режиму.
+	// Снимок живёт и на диске. 12.10 приложение перезапустили посреди
+	// заказов, снимок пропал вместе с памятью, и следующий заказ снял новый —
+	// уже с альбома заказа. После очереди Spotify играл Metallica вместо
+	// плейлиста стримера.
+	s.player.OnSnapshot = func(snap *spotify.Snapshot) {
+		if snap == nil {
+			s.queue.PutJSON(snapshotKey, nil)
+			return
+		}
+		s.queue.PutJSON(snapshotKey, snap)
+	}
+
 	s.player.OnRestored = func(outcome spotify.RestoreOutcome, snap *spotify.Snapshot) {
 		go s.afterRestoreAsync(outcome, snap)
 	}
@@ -310,13 +339,19 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 	// попадала длина всей очереди вместе с самим заказом: на пустой очереди
 	// зритель читал «следующим (примерно через 5 минут)», а трек включался
 	// через секунду.
+	//
+	// Место тоже считаем по тем, кто впереди, а не по added.Position: это
+	// внутренний номер строки, он только растёт от удалений и «вверх». 12.10
+	// зритель с двумя треками впереди читал «6-м в очереди».
 	var wait time.Duration
+	place := 1
 	if list, err := s.queue.List(); err == nil {
 		for _, q := range list {
 			if q.ID == added.ID {
 				break
 			}
 			wait += time.Duration(q.DurationMs) * time.Millisecond
+			place++
 		}
 	}
 	if now := s.player.Now(); now != nil {
@@ -330,7 +365,7 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 
 	s.syncPlayback()
 	s.player.Nudge()
-	s.announceQueued(ctx, added, added.Position, wait)
+	s.announceQueued(ctx, added, place, wait)
 }
 
 // refund возвращает баллы за заказ и говорит зрителю, почему.
@@ -559,6 +594,9 @@ func (s *Server) takeSkip() (who string, refund bool) {
 	return who, refund
 }
 
+// snapshotKey — снимок Spotify (куда вернуть музыку) в kv.
+const snapshotKey = "snapshot"
+
 // recoverInflight подбирает заказ, который не закончился в прошлый запуск.
 //
 // Если Spotify всё ещё играет этот трек — зритель его слышит, считаем
@@ -568,9 +606,19 @@ func (s *Server) recoverInflight(ctx context.Context) {
 	if s.queue == nil {
 		return
 	}
+	// Снимок прошлого запуска — туда и возвращаем музыку после очереди.
+	// Берём его, только если остался незаконченный заказ: без него снимок
+	// мог залежаться с прошлого стрима.
 	item, ok := s.queue.TakeInflight()
 	if !ok {
+		s.queue.PutJSON(snapshotKey, nil)
 		return
+	}
+	var snap spotify.Snapshot
+	haveSnap := s.queue.GetJSON(snapshotKey, &snap)
+	if haveSnap {
+		s.player.SetSnapshot(&snap)
+		s.log.Info("вернул снимок прошлого запуска", "куда", snap.Describe())
 	}
 	if item.Provider != "youtube" && s.spotify != nil {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -578,6 +626,15 @@ func (s *Server) recoverInflight(ctx context.Context) {
 		cancel()
 		if err == nil && ok2 && st != nil && st.IsPlaying && st.Item != nil && st.Item.URI == item.URI {
 			s.log.Info("заказ из прошлого запуска ещё играет — засчитываю", "трек", item.Artist+" — "+item.Title)
+			s.player.MarkPlayed(item.URI)
+			s.player.WaitCurrentOnce()
+			if !haveSnap {
+				// Куда возвращаться, неизвестно, а снять снимок сейчас —
+				// значит снять его с заказа: Spotify после него пойдёт по
+				// альбому заказа (12.10 так вместо плейлиста играл Nirvana).
+				// Честнее «возвращать нечего» — тогда сработает запасной план.
+				s.player.SetSnapshot(&spotify.Snapshot{CapturedAt: time.Now(), Empty: true})
+			}
 			if s.player.OnFinished != nil {
 				s.player.OnFinished(item, true)
 			}
