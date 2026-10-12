@@ -50,6 +50,23 @@ func (t *Tools) Ensure(ctx context.Context, overrideYtdlp, overrideMpv string) e
 	t.ytdlp = t.resolve("yt-dlp", overrideYtdlp)
 	t.mpv = t.resolve("mpv", overrideMpv)
 
+	// yt-dlp — только свой и свежий (на Windows, где мы умеем его качать).
+	//
+	// 12.10: у владельца нашёлся yt-dlp из Python трёхмесячной давности, и
+	// приложение брало его. YouTube такому режет скорость: звук на 1 МБ
+	// качался 18 секунд, а через mpv обрывался. Свежий yt-dlp.exe тот же трек
+	// отдавал за 7. YouTube ломает старые версии постоянно, поэтому своя
+	// копия ещё и обновляется (см. refreshYtdlp).
+	if overrideYtdlp == "" && runtime.GOOS == "windows" {
+		own := filepath.Join(t.dir, "yt-dlp.exe")
+		if _, err := os.Stat(own); err == nil {
+			t.ytdlp = own
+			go t.refreshYtdlp(context.WithoutCancel(ctx), own)
+		} else {
+			t.ytdlp = ""
+		}
+	}
+
 	if t.ytdlp == "" {
 		path, err := t.download(ctx, "yt-dlp")
 		if err != nil {
@@ -188,4 +205,24 @@ func (t *Tools) fetch(ctx context.Context, url, path string, code errs.Code, nam
 		t.log.Warn("не выставил права на файл", "путь", path, "ошибка", err)
 	}
 	return nil
+}
+
+// ytdlpFresh — сколько своя копия yt-dlp считается свежей.
+const ytdlpFresh = 3 * 24 * time.Hour
+
+// refreshYtdlp тихо скачивает свежий yt-dlp поверх старого.
+//
+// В фоне: заказы идут и на старом, а новый заменит его одним движением (см.
+// fetch). Не вышло — не беда, попробуем при следующем запуске.
+func (t *Tools) refreshYtdlp(ctx context.Context, path string) {
+	info, err := os.Stat(path)
+	if err != nil || time.Since(info.ModTime()) < ytdlpFresh {
+		return
+	}
+	t.log.Info("обновляю yt-dlp", "возраст_дней", int(time.Since(info.ModTime()).Hours()/24))
+	if err := t.fetch(ctx, downloads["yt-dlp"], path, errs.YouTubeNoTool, "yt-dlp"); err != nil {
+		t.log.Warn("yt-dlp не обновился", "ошибка", err)
+		return
+	}
+	t.log.Info("yt-dlp обновлён")
 }

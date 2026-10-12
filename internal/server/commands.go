@@ -183,7 +183,7 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 		s.cmdUnban(ctx, actor, args)
 
 	case "стоп", "стопзаказы", "stop":
-		s.player.SetPaused(true)
+		s.setOrdersPaused(ctx, true)
 		s.modLog(actor, "остановил приём заказов", "")
 		// Прямо говорим, чего эта команда НЕ делает. Именно на этом месте
 		// люди спотыкались чаще всего: писали «!стоп», ожидая, что музыка
@@ -192,7 +192,7 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 			"остановить её это "+prefix+"пауза")
 
 	case "старт", "start":
-		s.player.SetPaused(false)
+		s.setOrdersPaused(ctx, false)
 		s.modLog(actor, "возобновил приём заказов", "")
 		s.say(ctx, "Заказы снова принимаются")
 
@@ -662,7 +662,7 @@ func (s *Server) announceQueued(ctx context.Context, item queue.Item, position i
 
 	text := fmt.Sprintf("@%s, принято: %s — %s, %s", item.Requester, item.Artist, item.Title, where)
 	if wait > time.Minute {
-		text += fmt.Sprintf(" (примерно через %s)", humanDuration(wait))
+		text += fmt.Sprintf(" (примерно через %s)", afterDuration(wait))
 	}
 	// Зритель должен знать, что звук пойдёт не из Spotify: иначе «почему
 	// играет какая-то запись с ютуба» — вопрос в чат через три минуты.

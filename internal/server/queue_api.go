@@ -87,19 +87,7 @@ func (s *Server) handleQueueClear(w http.ResponseWriter, r *http.Request) {
 // тоже приостанавливается: пусть зрители не тратят баллы впустую.
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 	on := r.URL.Query().Get("on") == "1"
-	s.player.SetPaused(on)
-
-	s.mu.Lock()
-	rewardID := s.rewardID
-	s.mu.Unlock()
-
-	if rewardID != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-		defer cancel()
-		if err := s.twitch.SetRewardPaused(ctx, rewardID, on); err != nil {
-			s.log.Warn("не приостановил награду", "ошибка", err)
-		}
-	}
+	s.setOrdersPaused(r.Context(), on)
 
 	if on {
 		s.state.Notify("info", "Приём заказов остановлен")
@@ -249,4 +237,26 @@ func (s *Server) handlePlaylistReject(w http.ResponseWriter, r *http.Request) {
 	}
 	s.say(ctx, fmt.Sprintf("@%s, плейлист «%s» не одобрили. Баллы вернул.", p.Requester, p.Title))
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// setOrdersPaused останавливает или возобновляет приём заказов вместе с
+// наградой на Twitch.
+//
+// Одно место для панели и для «!стоп»/«!старт». 12.10: команда из чата
+// останавливала только приём, а награда на канале оставалась открытой —
+// зрители тратили баллы и получали «заказ не принят».
+func (s *Server) setOrdersPaused(ctx context.Context, on bool) {
+	s.player.SetPaused(on)
+
+	s.mu.Lock()
+	rewardID := s.rewardID
+	s.mu.Unlock()
+	if rewardID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := s.twitch.SetRewardPaused(ctx, rewardID, on); err != nil {
+		s.log.Warn("не приостановил награду", "ошибка", err)
+	}
 }

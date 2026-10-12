@@ -349,6 +349,11 @@ func (p *Player) Run(ctx context.Context) {
 			continue
 		}
 		p.playOne(ctx, item)
+		// Выход по отмене (приложение закрывают) — не конец заказа: пусть
+		// следующий запуск его подберёт (см. queue.TakeInflight).
+		if ctx.Err() == nil {
+			p.q.Done()
+		}
 	}
 }
 

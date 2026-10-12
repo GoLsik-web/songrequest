@@ -65,6 +65,10 @@ func (s *Server) check(requester string, item queue.Item, cfg config.Config) *Re
 		}
 	}
 
+	if s.alreadyQueued(item) {
+		return &Rejection{Reason: "этот трек уже в очереди — закажи что-нибудь другое"}
+	}
+
 	if cfg.MaxTrackSeconds > 0 && item.DurationMs > cfg.MaxTrackSeconds*1000 {
 		return &Rejection{Reason: fmt.Sprintf(
 			"трек длиннее %s — такое не ставим",
@@ -208,6 +212,16 @@ func plural(n int, one, few, many string) string {
 	}
 }
 
+// afterDuration — то же для «через …»: «через 1 минуту», а не «минута».
+func afterDuration(d time.Duration) string {
+	m := int(d.Minutes())
+	if m < 1 {
+		n := int(d.Seconds())
+		return fmt.Sprintf("%d %s", n, plural(n, "секунду", "секунды", "секунд"))
+	}
+	return fmt.Sprintf("%d %s", m, plural(m, "минуту", "минуты", "минут"))
+}
+
 func humanDuration(d time.Duration) string {
 	// Формы идут в порядке «одна, две, пять»: plural так и объявлена.
 	// Раньше сюда передавали «секунды, секунд, секунд» — и зрители в чате
@@ -217,4 +231,31 @@ func humanDuration(d time.Duration) string {
 		return fmt.Sprintf("%d %s", int(d.Seconds()), plural(int(d.Seconds()), "секунда", "секунды", "секунд"))
 	}
 	return fmt.Sprintf("%d %s", m, plural(m, "минута", "минуты", "минут"))
+}
+
+// alreadyQueued — тот же трек уже стоит в очереди, ждёт или играет.
+//
+// 12.10: один и тот же трек можно было заказать два раза подряд, и он
+// звучал дважды. Сравниваем по адресу трека, а не по названию: два разных
+// исполнения одной песни — это два разных заказа.
+func (s *Server) alreadyQueued(item queue.Item) bool {
+	if item.URI == "" {
+		return false
+	}
+	if list, err := s.queue.List(); err == nil {
+		for _, q := range list {
+			if q.URI == item.URI {
+				return true
+			}
+		}
+	}
+	if s.player != nil {
+		if w := s.player.WaitingItem(); w != nil && w.URI == item.URI {
+			return true
+		}
+		if now := s.player.Now(); now != nil && now.Item.URI == item.URI {
+			return true
+		}
+	}
+	return false
 }

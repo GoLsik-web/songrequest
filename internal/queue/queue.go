@@ -5,6 +5,7 @@
 package queue
 
 import (
+	"encoding/json"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -213,13 +214,46 @@ func (q *Queue) Next() (Item, error) {
 	if _, err := tx.Exec(`DELETE FROM queue WHERE id = ?`, it.ID); err != nil {
 		return Item{}, err
 	}
+	it.Uncertain = uncertain == 1
+	it.CreatedAt = time.Unix(created, 0)
+
+	// Взятый заказ запоминаем той же сделкой — см. TakeInflight.
+	if raw, err := json.Marshal(it); err == nil {
+		if _, err := tx.Exec(`INSERT INTO kv(key, value) VALUES(?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, inflightKey, string(raw)); err != nil {
+			return Item{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return Item{}, err
 	}
-
-	it.Uncertain = uncertain == 1
-	it.CreatedAt = time.Unix(created, 0)
 	return it, nil
+}
+
+// inflightKey — заказ, который вынут из очереди и ещё не закончился.
+//
+// 12.10: приложение перезапустили посреди заказа, и он пропадал бесследно —
+// из очереди он уже вынут, а плеер о нём забыл. Зритель заплатил, трек не
+// дослушал, ни отметки, ни возврата баллов.
+const inflightKey = "inflight"
+
+// Done — взятый заказ закончился (любым исходом).
+func (q *Queue) Done() {
+	_, _ = q.db.Exec(`DELETE FROM kv WHERE key = ?`, inflightKey)
+}
+
+// TakeInflight отдаёт заказ, оставшийся незаконченным с прошлого запуска.
+func (q *Queue) TakeInflight() (Item, bool) {
+	var raw string
+	if err := q.db.QueryRow(`SELECT value FROM kv WHERE key = ?`, inflightKey).Scan(&raw); err != nil {
+		return Item{}, false
+	}
+	q.Done()
+	var it Item
+	if err := json.Unmarshal([]byte(raw), &it); err != nil || it.URI == "" {
+		return Item{}, false
+	}
+	return it, true
 }
 
 // Peek смотрит на первый заказ, не забирая его.
