@@ -31,6 +31,11 @@ type SecretStore interface {
 
 // Client — всё общение со Spotify. Один экземпляр на приложение.
 type Client struct {
+	// Запомненный ответ /me/player (см. State).
+	stateMu  sync.Mutex
+	stateAt  time.Time
+	stateVal *PlayerState
+	stateOK  bool
 	// countsForbidden — Spotify не отдаёт число треков плейлистов (см. fillEmptyCounts).
 	countsForbidden atomic.Bool
 	cfg     *config.File
@@ -328,6 +333,9 @@ func (c *Client) rememberCheck(err error) {
 // do выполняет запрос к API: подставляет ключ доступа, повторяет при временных
 // сбоях и переводит ответы Spotify в понятные ошибки с кодом.
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+	if method != http.MethodGet {
+		c.forgetState()
+	}
 	var payload []byte
 	if body != nil {
 		var err error
