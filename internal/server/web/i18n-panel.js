@@ -40,6 +40,7 @@
     "Назад": "Back",
     "Настройки": "Settings",
     "Виджеты": "Widgets",
+    "Язык": "Language",
     "Esc — закрыть": "Esc to close",
     "Заказы": "Requests",
     "Если трека нет": "If a track is missing",
