@@ -174,8 +174,8 @@ const (
 	// TrySkipNext, TrySkipPrevious. 11.10 владелец поймал сдвиг на единицу:
 	// здесь стояли 11 и 12, и «далее» включало предыдущий трек, а «назад»
 	// звало смену канала, которую Spotify молча пропускает.
-	mSessionNext            = firstMethod + 10
-	mSessionPrevious        = firstMethod + 11
+	mSessionNext     = firstMethod + 10
+	mSessionPrevious = firstMethod + 11
 
 	// IGlobalSystemMediaTransportControlsSessionMediaProperties.
 	mPropsTitle      = firstMethod

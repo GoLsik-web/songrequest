@@ -58,8 +58,8 @@ func pageService(host string) (string, bool) {
 }
 
 var (
-	metaTag  = regexp.MustCompile(`(?is)<meta\s+[^>]*>`)
-	metaAttr = regexp.MustCompile(`(?is)(property|name|content)\s*=\s*("[^"]*"|'[^']*')`)
+	metaTag      = regexp.MustCompile(`(?is)<meta\s+[^>]*>`)
+	metaAttr     = regexp.MustCompile(`(?is)(property|name|content)\s*=\s*("[^"]*"|'[^']*')`)
 	pageTitleTag = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 )
 

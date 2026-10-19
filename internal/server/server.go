@@ -99,6 +99,9 @@ type Server struct {
 	// probeOnce держит автоматическую проверку поиска: один раз за запуск.
 	probeOnce sync.Once
 
+	// obs — связь с OBS. См. obsfit.go.
+	obs obsState
+
 	// covers — обложки, скачанные для виджета. См. cover.go.
 	covers covers
 
@@ -330,6 +333,10 @@ func New(d Deps) (*Server, error) {
 	// Справочник команд для модераторов. Без ?save=1 — текст для панели,
 	// с ним — файл, который стример пересылает модераторам.
 	mux.HandleFunc("GET /api/mods", s.handleMods)
+	mux.HandleFunc("GET /api/obs", s.handleOBSStatus)
+	mux.HandleFunc("POST /api/obs/connect", s.handleOBSConnect)
+	mux.HandleFunc("POST /api/obs/fit", s.handleOBSFit)
+	mux.HandleFunc("POST /api/obs/add", s.handleOBSAdd)
 
 	mux.HandleFunc("POST /api/spotify/login", s.handleSpotifyLogin)
 	mux.HandleFunc("POST /api/spotify/logout", s.handleSpotifyLogout)

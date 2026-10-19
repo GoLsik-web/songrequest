@@ -192,6 +192,18 @@ type Config struct {
 
 	// Виджет для OBS
 	Widget Widget `json:"widget"`
+
+	// OBS — связь с OBS через его встроенный сервер WebSocket: источник с
+	// виджетом сам подгоняется под формат кадра. Пароль сюда не пишется —
+	// он лежит в хранилище паролей Windows.
+	OBS OBS `json:"obs"`
+}
+
+// OBS — где искать сервер WebSocket в OBS и включена ли связь.
+type OBS struct {
+	Enabled bool   `json:"enabled"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
 }
 
 // MatchWeights — веса слагаемых в оценке кандидата из Spotify.
@@ -241,6 +253,7 @@ func Defaults() Config {
 			Version:    1.0,
 		},
 		Widget: DefaultWidget(),
+		OBS:    OBS{Host: "127.0.0.1", Port: 4455},
 		RejectKeywords: []string{
 			"нарезка", "нарезки", "подкаст", "стрим", "compilation", "mix",
 			"1 hour", "1 час", "10 hours", "podcast", "livestream", "best moments",

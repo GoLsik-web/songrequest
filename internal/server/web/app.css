@@ -686,7 +686,7 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 
 .field { display: block; margin-bottom: var(--s3); }
 .field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: var(--s1); }
-.field input[type="text"], .field input[type="number"], .field textarea, .field select {
+.field input[type="text"], .field input[type="number"], .field input[type="password"], .field textarea, .field select {
   width: 100%;
   background: var(--bg); border: 1px solid var(--line-2); border-radius: 2px;
   color: var(--text); padding: var(--s2) var(--s3); font: inherit; font-size: var(--t-sm);
@@ -1699,3 +1699,27 @@ body.menu-open { overflow: hidden; }
 .wx-frames { flex-wrap: wrap; }
 .wx-frames button { font-variant-numeric: tabular-nums; }
 #wx-drag { cursor: grab; }
+
+/* Связь с OBS — компактная рамка под форматом кадра. */
+.obs-box {
+  border: 1px solid var(--line-2); border-radius: 2px;
+  padding: var(--s2, 12px); margin: var(--s2, 12px) 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.obs-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.obs-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.obs-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dimmer); }
+.obs-state .led { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.obs-state.ok { color: var(--dim); }
+.obs-state.ok .led { background: var(--lime); }
+.obs-state.fail { color: var(--bad); }
+.obs-state.fail .led { background: var(--bad); }
+.obs-row { display: flex; gap: 8px; }
+.obs-row .field { margin: 0; min-width: 0; }
+.obs-port { flex: 0 0 96px; }
+.obs-pass { flex: 1 1 auto; }
+.obs-row input { width: 100%; box-sizing: border-box; }
+.obs-box .acts { margin: 0; }
+.obs-box .hint { display: block; }
+#obs-note:empty { display: none; }
+#obs-note.warn { color: var(--text); }

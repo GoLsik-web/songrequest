@@ -5,8 +5,8 @@
 package queue
 
 import (
-	"encoding/json"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"

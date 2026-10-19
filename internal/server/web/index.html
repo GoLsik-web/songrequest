@@ -771,6 +771,26 @@
         </div>
         <span class="hint" id="wx-frame-hint"></span>
       </div>
+      <!-- Связь с OBS: формат кадра сам доезжает до источника в OBS. -->
+      <div class="obs-box" id="obs-box">
+        <div class="obs-head">
+          <span class="obs-title">Связь с OBS</span>
+          <span class="obs-state" id="obs-state"><i class="led"></i><span id="obs-state-text">не подключено</span></span>
+        </div>
+        <div class="obs-row">
+          <label class="field obs-port"><span>Порт</span>
+            <input type="number" id="obs-port" min="1" max="65535" value="4455"></label>
+          <label class="field obs-pass"><span>Пароль</span>
+            <input type="password" id="obs-pass" autocomplete="off" spellcheck="false" placeholder="из настроек OBS"></label>
+        </div>
+        <div class="acts">
+          <button class="act small key" id="obs-connect">Подключить OBS</button>
+          <button class="act small" id="obs-fit" hidden>Подогнать в OBS</button>
+          <button class="act small" id="obs-add" hidden>Добавить в OBS</button>
+        </div>
+        <span class="hint" id="obs-note"></span>
+        <span class="hint" id="obs-how">В OBS: Инструменты → Настройки сервера WebSocket → поставь галочку «Включить сервер WebSocket», нажми «Показать сведения о подключении» и скопируй пароль сюда.</span>
+      </div>
 
       <div class="field">
         <span>Место в кадре</span>

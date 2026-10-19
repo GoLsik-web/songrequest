@@ -107,6 +107,47 @@ var frames = map[string]bool{
 	"21:9": true, "32:9": true, "9:16": true, "1:1": true,
 }
 
+// FrameSize — размер источника OBS для формата кадра, как WX_FRAMES в app.js.
+func FrameSize(frame string) (int, int) {
+	switch frame {
+	case "16:10":
+		return 1920, 1200
+	case "4:3":
+		return 1440, 1080
+	case "5:4":
+		return 1350, 1080
+	case "21:9":
+		return 2560, 1080
+	case "32:9":
+		return 3840, 1080
+	case "9:16":
+		return 1080, 1920
+	case "1:1":
+		return 1080, 1080
+	}
+	return 1920, 1080
+}
+
+// FrameFor — формат из списка, ближе всего подходящий к кадру w×h.
+func FrameFor(w, h int) string {
+	best, diff := "16:9", 1e9
+	if w <= 0 || h <= 0 {
+		return best
+	}
+	ar := float64(w) / float64(h)
+	for f := range frames {
+		fw, fh := FrameSize(f)
+		d := float64(fw)/float64(fh) - ar
+		if d < 0 {
+			d = -d
+		}
+		if d < diff {
+			best, diff = f, d
+		}
+	}
+	return best
+}
+
 // DefaultWidget — то, с чего начинают все.
 func DefaultWidget() Widget {
 	return Widget{

@@ -346,5 +346,13 @@ func init() {
 		"Не смог упаковать лог.":                "Couldn't pack the log.",
 		"Не смог упаковать настройки.":          "Couldn't pack the settings.",
 		"Не смог упаковать сведения о системе.": "Couldn't pack the system info.",
+
+		// OBS
+		"OBS не отвечает. Запусти OBS и включи в нём сервер WebSocket.": "OBS isn't responding. Start OBS and turn on its WebSocket server.",
+		"OBS просит пароль. Скопируй его в OBS и вставь сюда.":          "OBS asks for a password. Copy it in OBS and paste it here.",
+		"OBS не принял пароль. Скопируй его заново в OBS.":              "OBS rejected the password. Copy it again in OBS.",
+		"В OBS нет источника с виджетом. Нажми «Добавить в OBS».":       "There's no widget source in OBS. Press \"Add to OBS\".",
+		"OBS не выполнил команду. Подробности в логе.":                  "OBS couldn't carry out the command. Details are in the log.",
+		"Связь с OBS оборвалась. Попробуй ещё раз.":                     "The connection to OBS dropped. Try again.",
 	})
 }

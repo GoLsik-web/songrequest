@@ -3,6 +3,21 @@
 // читает перевод строки как LF, поэтому ниже добавляется и такой вариант.
 (function () {
   const map = {
+    "Связь с OBS": "OBS link",
+    "не подключено": "not connected",
+    "подключено": "connected",
+    "ошибка {code}": "error {code}",
+    "Порт": "Port",
+    "Пароль": "Password",
+    "из настроек OBS": "from OBS settings",
+    "Подключить OBS": "Connect OBS",
+    "Переподключить": "Reconnect",
+    "Подогнать в OBS": "Fit in OBS",
+    "Добавить в OBS": "Add to OBS",
+    "В OBS: Инструменты → Настройки сервера WebSocket → поставь галочку «Включить сервер WebSocket», нажми «Показать сведения о подключении» и скопируй пароль сюда.": "In OBS: Tools → WebSocket Server Settings → tick \"Enable WebSocket server\", press \"Show Connect Info\" and copy the password here.",
+    "В сценах OBS виджета нет — нажми «Добавить в OBS», и он встанет в текущую сцену.": "There's no widget in your OBS scenes — press \"Add to OBS\" and it will go into the current scene.",
+    "Виджет растянут на весь кадр OBS {canvas}.": "The widget is stretched over the whole OBS frame {canvas}.",
+    "Кадр OBS сейчас {canvas} — формат {frame} подходит лучше.": "The OBS frame is {canvas} now — the {frame} format fits it better.",
     "Свернуть": "Collapse",
     "Развернуть": "Expand",
     "Свернуть в окно": "Restore down",

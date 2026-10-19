@@ -37,9 +37,9 @@ type Client struct {
 	stateOK  bool
 	// countsForbidden — Spotify не отдаёт число треков плейлистов (см. fillEmptyCounts).
 	countsForbidden atomic.Bool
-	cfg     *config.File
-	log     *logx.Logger
-	secrets SecretStore
+	cfg             *config.File
+	log             *logx.Logger
+	secrets         SecretStore
 
 	// httpClient меняется на ходу: стример включает прокси прямо во время
 	// стрима, а запросы в это время идут из горутин плеера и подбора. Голое

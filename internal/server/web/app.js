@@ -2962,10 +2962,63 @@
 
   $("wx-align").onchange = (e) => saveWidget({ align: e.target.value });
   $("wx-art-on").onchange = (e) => saveWidget({ show_art: e.target.checked });
-  $("wx-frame-pick").onclick = (e) => {
+  $("wx-frame-pick").onclick = async (e) => {
     const b = e.target.closest("button[data-frame]");
-    if (b) saveWidget({ frame: b.dataset.frame });
+    if (!b) return;
+    await saveWidget({ frame: b.dataset.frame });
+    // Связь с OBS включена — источник в OBS сразу становится того же размера.
+    if (obsOn) obsShow(await post("/api/obs/fit"));
   };
+
+  // ── связь с OBS ────────────────────────────────────────────────────
+  // Панель только показывает итог: подключается и подгоняет приложение.
+  let obsOn = false;
+  function obsShow(d) {
+    if (!d) return;
+    obsOn = !!d.enabled;
+    if (d.port && document.activeElement !== $("obs-port")) $("obs-port").value = d.port;
+    const st = $("obs-state");
+    st.className = "obs-state " + (d.level === "ok" ? "ok" : d.level === "fail" ? "fail" : "");
+    $("obs-state-text").textContent =
+      d.level === "ok" ? I18N.t("подключено") :
+      d.level === "fail" ? I18N.t("ошибка {code}", { code: d.code || "" }) :
+      I18N.t("не подключено");
+    $("obs-connect").textContent = d.level === "ok" ? I18N.t("Переподключить") : I18N.t("Подключить OBS");
+    $("obs-connect").classList.toggle("key", d.level !== "ok");
+    $("obs-fit").hidden = !(d.level === "ok" && !d.no_source);
+    $("obs-add").hidden = !(d.level === "ok" && d.no_source);
+    $("obs-how").hidden = d.level === "ok";
+    const note = $("obs-note");
+    let text = "";
+    note.classList.remove("warn");
+    if (d.level === "fail") {
+      text = errLine(d);
+      note.classList.add("warn");
+    } else if (d.level === "ok" && d.no_source) {
+      text = I18N.t("В сценах OBS виджета нет — нажми «Добавить в OBS», и он встанет в текущую сцену.");
+    } else if (d.level === "ok") {
+      text = I18N.t("Виджет растянут на весь кадр OBS {canvas}.", { canvas: d.canvas || "" });
+    }
+    if (d.level === "ok" && d.suggest) {
+      text += " " + I18N.t("Кадр OBS сейчас {canvas} — формат {frame} подходит лучше.",
+        { canvas: d.canvas, frame: d.suggest });
+      note.classList.add("warn");
+    }
+    note.textContent = text.trim();
+  }
+  $("obs-connect").onclick = async () => {
+    const port = parseInt($("obs-port").value, 10) || 4455;
+    const d = await post("/api/obs/connect", $("obs-connect"), { port, password: $("obs-pass").value });
+    $("obs-pass").value = "";
+    obsShow(d);
+  };
+  $("obs-fit").onclick = async () => obsShow(await post("/api/obs/fit", $("obs-fit")));
+  $("obs-add").onclick = async () => obsShow(await post("/api/obs/add", $("obs-add")));
+  fetch("/api/obs").then((r) => r.json()).then((d) => {
+    obsShow(d);
+    // Связь включена раньше — проверяем её тихо, без ожидания.
+    if (d.enabled) post("/api/obs/fit").then(obsShow);
+  }).catch(() => {});
   // Щелчок по кнопке перетаскивания открыл бы виджет во вкладке — это не то,
   // что от неё ждут. Её надо тащить мышью.
   $("wx-drag").onclick = (e) => {
