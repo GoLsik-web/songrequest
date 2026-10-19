@@ -125,6 +125,10 @@ func Open(opts Options) (*Window, error) {
 		procShowWindow.Call(w.hwnd, swShowMaximized)
 		return true
 	})
+	// Окно могло открыться сразу развёрнутым (так его закрыли в прошлый раз) —
+	// сообщение о развороте тогда пришло раньше, чем загрузилась страница, и
+	// значок на кнопке остался бы неверным. Страница спрашивает сама.
+	wv.Bind("srWindowIsMaximized", func() bool { return isMaximized(w.hwnd) })
 	// Крестик в своей полосе делает то же, что делал системный: прячет
 	// программу к часам, а не закрывает её.
 	wv.Bind("srWindowHide", func() {

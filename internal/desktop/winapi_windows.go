@@ -36,6 +36,9 @@ var (
 	procGetWindowLong      = user32.NewProc("GetWindowLongW") // 32-битная Windows
 	procReleaseCapture     = user32.NewProc("ReleaseCapture")
 	procIsZoomed           = user32.NewProc("IsZoomed")
+	procAdjustRectForDpi   = user32.NewProc("AdjustWindowRectExForDpi")
+	procAdjustRect         = user32.NewProc("AdjustWindowRectEx")
+	procGetDpiForWindow    = user32.NewProc("GetDpiForWindow")
 	procMonitorFromWindow  = user32.NewProc("MonitorFromWindow")
 	procGetMonitorInfo     = user32.NewProc("GetMonitorInfoW")
 
@@ -372,8 +375,36 @@ func fitMaximized(hwnd, lp uintptr) bool {
 	// говорит про работу с буфером обмена выше) — иначе разговаривать с Windows
 	// нельзя вообще.
 	info := (*minMaxInfo)(unsafe.Pointer(lp))
-	info.MaxPosition = point{X: mi.RcWork.Left - mi.RcMonitor.Left, Y: mi.RcWork.Top - mi.RcMonitor.Top}
-	info.MaxSize = point{X: mi.RcWork.Right - mi.RcWork.Left, Y: mi.RcWork.Bottom - mi.RcWork.Top}
+	// Рамка для растягивания остаётся у окна и в развёрнутом виде, только
+	// невидимая. Если сделать всё окно ровно в рабочую часть экрана, эта рамка
+	// съедает по краям несколько пикселей — получались щели вокруг панели.
+	// Поэтому окно делаем больше на толщину рамки: рамка уходит за край
+	// экрана, а страница ложится ровно в рабочую часть.
+	edge := frameInsets(hwnd)
+	info.MaxPosition = point{
+		X: mi.RcWork.Left - mi.RcMonitor.Left + edge.Left,
+		Y: mi.RcWork.Top - mi.RcMonitor.Top + edge.Top,
+	}
+	info.MaxSize = point{
+		X: mi.RcWork.Right - mi.RcWork.Left + edge.Right - edge.Left,
+		Y: mi.RcWork.Bottom - mi.RcWork.Top + edge.Bottom - edge.Top,
+	}
 	info.MinTrackSize = point{X: minWidth, Y: minHeight}
 	return true
+}
+
+// frameInsets — толщина рамки окна с каждой стороны: Left и Top отрицательные,
+// Right и Bottom положительные, как их отдаёт AdjustWindowRectEx для пустого
+// прямоугольника. Считаем для того масштаба экрана, на котором лежит окно.
+func frameInsets(hwnd uintptr) rect {
+	var r rect
+	style := windowStyle(hwnd)
+	if procGetDpiForWindow.Find() == nil && procAdjustRectForDpi.Find() == nil {
+		if dpi, _, _ := procGetDpiForWindow.Call(hwnd); dpi != 0 {
+			procAdjustRectForDpi.Call(uintptr(unsafe.Pointer(&r)), style, 0, 0, dpi)
+			return r
+		}
+	}
+	procAdjustRect.Call(uintptr(unsafe.Pointer(&r)), style, 0, 0)
+	return r
 }

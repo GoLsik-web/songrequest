@@ -57,8 +57,15 @@
     // а сама страница про это не знает — для неё разворот ничем не отличается
     // от того, что окно растянули мышью.
     window.srMaximized = (on) => {
-      bar.querySelector(".win-max").dataset.on = on ? "1" : "";
+      const btn = bar.querySelector(".win-max");
+      btn.dataset.on = on ? "1" : "";
+      const label = tt(on ? "Свернуть в окно" : "Развернуть");
+      btn.title = label;
+      btn.setAttribute("aria-label", label);
     };
+    if (typeof window.srWindowIsMaximized === "function") {
+      window.srWindowIsMaximized().then(window.srMaximized, () => {});
+    }
   }
 
   // ── заставка ───────────────────────────────────────────────────────

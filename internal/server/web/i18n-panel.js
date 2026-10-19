@@ -5,6 +5,7 @@
   const map = {
     "Свернуть": "Collapse",
     "Развернуть": "Expand",
+    "Свернуть в окно": "Restore down",
     "Свернуть к часам": "Collapse to clock",
     "Подключения": "Connections",
     "Меню": "Menu",

@@ -92,6 +92,10 @@ body.has-titlebar .status-bar { top: 38px; }
 }
 
 .win-btn svg { width: 11px; height: 11px; }
+/* Развёрнутому окну кнопка предлагает вернуть прежний размер — значок
+   двух окошек, как у любой программы Windows. */
+.win-max .ic-restore, .win-max[data-on="1"] .ic-max { display: none; }
+.win-max[data-on="1"] .ic-restore { display: block; }
 .win-btn:hover { background: var(--hover); color: var(--text); }
 /* Крестик прячет программу к часам, а не закрывает — но привычка сильнее
    объяснений, поэтому он красный, как везде. */
