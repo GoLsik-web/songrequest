@@ -3,7 +3,6 @@ package links
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -150,8 +149,8 @@ func (y *YandexReader) track(ctx context.Context, id string) (Meta, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return Meta{}, errs.New(errs.YandexRead,
-			fmt.Sprintf("Яндекс.Музыка ответила ошибкой (%d).", resp.StatusCode))
+		return Meta{}, errs.Newf(errs.YandexRead,
+			"Яндекс.Музыка ответила ошибкой (%d).", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -299,8 +298,8 @@ func (y *YandexReader) readPage(ctx context.Context, pageURL string) (Meta, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return Meta{}, errs.New(errs.YandexRead,
-			fmt.Sprintf("Яндекс.Музыка ответила ошибкой (%d).", resp.StatusCode))
+		return Meta{}, errs.Newf(errs.YandexRead,
+			"Яндекс.Музыка ответила ошибкой (%d).", resp.StatusCode)
 	}
 
 	// Страница большая, а нужное лежит в самом начале, в head.
@@ -544,8 +543,8 @@ func (y *YandexReader) get(ctx context.Context, path string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, errs.New(errs.YandexRead,
-			fmt.Sprintf("Яндекс.Музыка ответила ошибкой (%d).", resp.StatusCode))
+		return nil, errs.Newf(errs.YandexRead,
+			"Яндекс.Музыка ответила ошибкой (%d).", resp.StatusCode)
 	}
 	// Плейлисты бывают большими: у редакционных Яндекса это две сотни
 	// килобайт. Предел на всякий случай, а не потому, что столько нужно.

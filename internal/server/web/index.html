@@ -146,6 +146,9 @@
         <button class="menu-item" data-menu="widget">
           <svg aria-hidden="true"><use href="#i-monitor"></use></svg>Виджеты
         </button>
+        <button class="menu-item" data-menu="language" data-no-i18n>
+          <svg aria-hidden="true"><use href="#i-globe"></use></svg>Язык / Language
+        </button>
         <button class="menu-item" data-menu="log">
           <svg aria-hidden="true"><use href="#i-history"></use></svg>Хроника
         </button>
@@ -574,6 +577,20 @@
      которого нет в Spotify, «играл непонятно где», а настроить это было
      нельзя — настройки лежали внизу вкладки «Если трека нет». Здесь всё про
      второй проигрыватель в одном месте: что играет, как решать, куда звук. -->
+<!-- Язык — отдельным разделом меню: иностранный стример не должен искать
+     переключатель на русском в глубине настроек. -->
+<section class="panel" id="language" hidden>
+  <div class="grid">
+    <div class="col">
+      <div class="kicker">Язык / Language</div>
+      <div class="chips lang-pick" id="lang-pick" data-no-i18n>
+        <button data-lang="ru"></button>
+        <button data-lang="en"></button>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="panel" id="youtube" hidden>
   <div class="grid">
 
@@ -712,9 +729,11 @@
           <button data-scene="light">светлая</button>
           <button data-scene="busy">пёстрая</button>
         </div>
-        <button class="link-btn" id="wx-play">появление</button>
-        <button class="link-btn" id="wx-leave">уход</button>
-        <button class="link-btn" id="wx-next">следующий трек</button>
+        <div class="wx-replay">
+          <button class="link-btn" id="wx-play">появление</button>
+          <button class="link-btn" id="wx-leave">уход</button>
+          <button class="link-btn" id="wx-next">следующий трек</button>
+        </div>
       </div>
 
       <div class="hint">Так плашка выглядит в кадре, в натуральную величину.
@@ -767,7 +786,7 @@
 
       <label class="field">
         <span>Размер <b id="wx-scale-val">100%</b></span>
-        <input type="range" id="wx-scale" min="50" max="200" step="5">
+        <input type="range" id="wx-scale" min="50" max="400" step="5">
       </label>
 
       <label class="field">
@@ -928,6 +947,10 @@
 </div>
 
 <footer id="status" class="offline">Подключаюсь к приложению…</footer>
+<script src="/static/i18n.js"></script>
+<script src="/static/i18n-panel.js"></script>
+<script src="/static/i18n-setup.js"></script>
+<script src="/static/i18n-widget.js"></script>
 <script src="/static/widget-presets.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/setup.js"></script>

@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -94,8 +95,8 @@ func Latest(ctx context.Context, repo string) (Release, error) {
 			"GitHub не нашёл такой репозиторий или в нём ещё нет ни одного выпуска. "+
 				"Проверь имя в настройках и что выпуск не помечен черновиком.")
 	case resp.StatusCode != http.StatusOK:
-		return Release{}, errs.New(errs.UpdateCheck,
-			fmt.Sprintf("GitHub ответил ошибкой (%d).", resp.StatusCode))
+		slog.Warn("GitHub ответил ошибкой при проверке обновлений", "код_http", resp.StatusCode)
+		return Release{}, errs.HTTPStatus(errs.UpdateCheck, "GitHub", resp.StatusCode)
 	}
 
 	var out struct {
@@ -171,8 +172,9 @@ func Download(ctx context.Context, rel Release, dir string) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", errs.New(errs.UpdateDownload,
-			fmt.Sprintf("GitHub не отдал файл обновления (%d).", resp.StatusCode))
+		slog.Warn("GitHub не отдал файл обновления", "код_http", resp.StatusCode)
+		return "", errs.Newf(errs.UpdateDownload,
+			"GitHub не отдал файл обновления. %s", errs.HTTPStatusPhrase("GitHub", resp.StatusCode))
 	}
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))

@@ -4,8 +4,11 @@ package desktop
 
 import (
 	"runtime"
+	"time"
 
 	"fyne.io/systray"
+
+	"songrequest/internal/i18n"
 )
 
 // RunTray заводит значок возле часов и крутится до StopTray.
@@ -21,9 +24,14 @@ func RunTray(o TrayOptions) {
 		if o.IconPath != "" {
 			systray.SetIconFromFilePath(o.IconPath)
 		}
-		if o.Tooltip != "" {
-			systray.SetTooltip(o.Tooltip)
+		tooltip := func() {
+			if o.TooltipFn != nil {
+				systray.SetTooltip(o.TooltipFn())
+			} else if o.Tooltip != "" {
+				systray.SetTooltip(o.Tooltip)
+			}
 		}
+		tooltip()
 
 		// Левый клик открывает панель. Меню остаётся на правой кнопке — так
 		// же, как решил владелец про выход: чтобы случайное нажатие ничего
@@ -32,10 +40,27 @@ func RunTray(o TrayOptions) {
 			systray.SetOnTapped(o.OnOpen)
 		}
 
-		открыть := systray.AddMenuItem("Открыть панель", "Показать окно программы")
-		копия := systray.AddMenuItem("Скопировать адрес виджета для OBS", o.WidgetURL)
+		открыть := systray.AddMenuItem(i18n.T("Открыть панель"), i18n.T("Показать окно программы"))
+		копия := systray.AddMenuItem(i18n.T("Скопировать адрес виджета для OBS"), o.WidgetURL)
 		systray.AddSeparator()
-		выход := systray.AddMenuItem("Выход", "Закрыть программу совсем")
+		выход := systray.AddMenuItem(i18n.T("Выход"), i18n.T("Закрыть программу совсем"))
+
+		// Язык меняется в настройках на ходу — подписи меню догоняют его.
+		// Меню строится один раз, поэтому просто переименовываем пункты.
+		go func() {
+			shown := i18n.Lang()
+			for range time.Tick(2 * time.Second) {
+				if l := i18n.Lang(); l != shown {
+					shown = l
+					открыть.SetTitle(i18n.T("Открыть панель"))
+					открыть.SetTooltip(i18n.T("Показать окно программы"))
+					копия.SetTitle(i18n.T("Скопировать адрес виджета для OBS"))
+					выход.SetTitle(i18n.T("Выход"))
+					выход.SetTooltip(i18n.T("Закрыть программу совсем"))
+					tooltip()
+				}
+			}
+		}()
 
 		go func() {
 			for {

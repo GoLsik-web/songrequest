@@ -26,6 +26,19 @@
   // прежний прямой адрес: хуже, чем было, от этого не станет.
   const coverSrc = (u) => "/cover?u=" + encodeURIComponent(u);
 
+  // errLine — отказ приложения одной строкой: «код · текст», а без кода —
+  // просто текст. Без текста — общая фраза, а не «undefined».
+  function errLine(d) {
+    const text = (d && d.error) || I18N.t("Не получилось.");
+    return d && d.code ? `${d.code} · ${text}` : text;
+  }
+
+  // trackLine — «Артист — Название»; без артиста только название, без
+  // одинокого тире впереди. Повторяет trackLine из commands.go.
+  function trackLine(artist, title) {
+    return artist ? `${artist} — ${title || ""}` : (title || "");
+  }
+
   // art рисует обложку с запасным вариантом.
   //
   // onerror обязателен: адрес обложки может протухнуть, склад ответить
@@ -55,11 +68,13 @@
   };
 
   const hhmm = (iso) =>
-    new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    new Date(iso).toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" });
 
   // Склонение — мелочь, но «5 треков» и «2 трека» стоят рядом с числами,
   // и «5 трек» читается как недоделка.
-  const plural = (n, one, few, many) => {
+  // В английском — две последние формы: plural(n, "трек", "трека", "треков", "track", "tracks").
+  const plural = (n, one, few, many, en1, enN) => {
+    if (I18N.lang() === "en" && en1 !== undefined) return Math.abs(n) === 1 ? en1 : enN;
     const a = Math.abs(n) % 100;
     const b = a % 10;
     if (a > 10 && a < 20) return many;
@@ -70,7 +85,7 @@
 
   const minutesLeft = (ms) => {
     const m = Math.round(ms / 60000);
-    return m < 1 ? "меньше минуты" : `${m} ${plural(m, "минута", "минуты", "минут")}`;
+    return m < 1 ? I18N.t("меньше минуты") : `${m} ${plural(m, "минута", "минуты", "минут", "minute", "minutes")}`;
   };
 
   // draw перерисовывает блок только при изменении: сравниваем подпись данных.
@@ -102,7 +117,7 @@
     };
     socket.onmessage = (e) => render(JSON.parse(e.data));
     socket.onclose = () => {
-      say("Приложение не отвечает. Проверь, запущено ли оно.", true);
+      say(I18N.t("Приложение не отвечает. Проверь, запущено ли оно."), true);
       // Приглушаем всю страницу: показанное на ней уже неактуально, и это
       // должно быть видно, а не выглядеть как живые данные.
       document.body.classList.add("stale");
@@ -150,12 +165,12 @@
             body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        say(d.code ? `${d.code} · ${d.error}` : "Не получилось", true);
+        say(errLine(d), true);
         return null;
       }
       return d;
     } catch {
-      say("Приложение не отвечает", true);
+      say(I18N.t("Приложение не отвечает"), true);
       return null;
     } finally {
       if (btn) btn.disabled = false;
@@ -184,10 +199,10 @@
     btn.classList.toggle("bad", broken.length > 0);
     btn.classList.toggle("idle", broken.length === 0 && idle.length > 0);
     btn.title = broken.length
-      ? "Не работает: " + broken.map((c) => c.name).join(", ")
+      ? I18N.t("Не работает: {list}", { list: broken.map((c) => c.name).join(", ") })
       : idle.length
-        ? "Не настроено: " + idle.map((c) => c.name).join(", ")
-        : "Всё подключено";
+        ? I18N.t("Не настроено: {list}", { list: idle.map((c) => c.name).join(", ") })
+        : I18N.t("Всё подключено");
 
     $("version").textContent = s.version;
   }
@@ -221,31 +236,31 @@
 
     const spotifyStep = () => {
       if (!sp.has_client_id) {
-        return { state: "todo", value: "Client ID не вставлен",
-                 hint: "Нажми «Провести по шагам» — мастер покажет, где его взять",
-                 button: `<button class="act key small" data-open-settings>Открыть настройки</button>` };
+        return { state: "todo", value: I18N.t("Client ID не вставлен"),
+                 hint: I18N.t("Нажми «Провести по шагам» — мастер покажет, где его взять"),
+                 button: `<button class="act key small" data-open-settings>${I18N.t("Открыть настройки")}</button>` };
       }
       if (!sp.connected) {
-        return { state: "todo", value: "Вход не выполнен",
-                 hint: "Разреши доступ на странице Spotify",
-                 button: `<button class="act key small" data-do="login">Подключить Spotify</button>` };
+        return { state: "todo", value: I18N.t("Вход не выполнен"),
+                 hint: I18N.t("Разреши доступ на странице Spotify"),
+                 button: `<button class="act key small" data-do="login">${I18N.t("Подключить Spotify")}</button>` };
       }
       const paused = pauseLeft(sp);
       if (paused) {
-        const at = paused.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-        return { state: "fail", value: "Spotify просит паузу",
-                 hint: `Ограничил приложение до ${at}: ${pausedParts[sp.paused_part] || "часть возможностей не работает"}`,
-                 button: `<button class="act small" data-do="check">Проверить связь</button>` };
+        const at = paused.toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" });
+        return { state: "fail", value: I18N.t("Spotify просит паузу"),
+                 hint: I18N.t("Ограничил приложение до {at}: {what}", { at, what: I18N.t(pausedParts[sp.paused_part] || "часть возможностей не работает") }),
+                 button: `<button class="act small" data-do="check">${I18N.t("Проверить связь")}</button>` };
       }
       if (!sp.account) {
-        return { state: "fail", value: "Spotify не отвечает",
-                 hint: "Проверь интернет; если пользуешься VPN — включи его",
-                 button: `<button class="act small" data-do="check">Проверить связь</button>` };
+        return { state: "fail", value: I18N.t("Spotify не отвечает"),
+                 hint: I18N.t("Проверь интернет; если пользуешься VPN — включи его"),
+                 button: `<button class="act small" data-do="check">${I18N.t("Проверить связь")}</button>` };
       }
       if (sp.plan === "free") {
-        return { state: "fail", value: `${sp.account} · без Premium`,
-                 hint: "Управлять музыкой Spotify разрешает только с подпиской",
-                 button: `<button class="act small" data-open-settings>Посмотреть аккаунт</button>` };
+        return { state: "fail", value: I18N.t("{account} · без Premium", { account: sp.account }),
+                 hint: I18N.t("Управлять музыкой Spotify разрешает только с подпиской"),
+                 button: `<button class="act small" data-open-settings>${I18N.t("Посмотреть аккаунт")}</button>` };
       }
       return {
         state: sp.plan === "unknown" ? "warn" : "done",
@@ -256,59 +271,59 @@
 
     const twitchStep = () => {
       if (!tw.has_client_id) {
-        return { state: "todo", value: "Client ID не вставлен",
-                 hint: "Нажми «Провести по шагам» — мастер покажет, где его взять",
-                 button: `<button class="act key small" data-open-settings>Открыть настройки</button>` };
+        return { state: "todo", value: I18N.t("Client ID не вставлен"),
+                 hint: I18N.t("Нажми «Провести по шагам» — мастер покажет, где его взять"),
+                 button: `<button class="act key small" data-open-settings>${I18N.t("Открыть настройки")}</button>` };
       }
       if (!tw.connected) {
-        return { state: "todo", value: "Вход не выполнен",
-                 hint: "Приложение покажет короткий код",
-                 button: `<button class="act key small" data-do="twitch-login">Подключить Twitch</button>` };
+        return { state: "todo", value: I18N.t("Вход не выполнен"),
+                 hint: I18N.t("Приложение покажет короткий код"),
+                 button: `<button class="act key small" data-do="twitch-login">${I18N.t("Подключить Twitch")}</button>` };
       }
       if (!tw.channel) {
-        return { state: "fail", value: "Twitch не отвечает", hint: "Канал пока неизвестен" };
+        return { state: "fail", value: I18N.t("Twitch не отвечает"), hint: I18N.t("Канал пока неизвестен") };
       }
       return { state: "done", value: tw.channel, hint: tw.channel_type };
     };
 
     const rewardStep = () => {
-      if (!tw.connected) return { state: "wait", value: "—", hint: "после подключения Twitch" };
+      if (!tw.connected) return { state: "wait", value: "—", hint: I18N.t("после подключения Twitch") };
       if (!tw.has_points) {
-        return { state: "off", value: "Баллов на канале нет",
-                 hint: "Награда бывает только у аффилиатов и партнёров" };
+        return { state: "off", value: I18N.t("Баллов на канале нет"),
+                 hint: I18N.t("Награда бывает только у аффилиатов и партнёров") };
       }
       if (!tw.reward_ready) {
-        return { state: "fail", value: "Не создана",
-                 hint: tw.note || "Приложение не смогло создать награду" };
+        return { state: "fail", value: I18N.t("Не создана"),
+                 hint: tw.note || I18N.t("Приложение не смогло создать награду") };
       }
       return {
         state: "done",
         value: `«${tw.reward_title}»`, // шаблон списка экранирует сам
-        hint: `${tw.reward_cost} ${plural(tw.reward_cost, "балл", "балла", "баллов")} за заказ`,
+        hint: I18N.t("{n} {points} за заказ", { n: tw.reward_cost, points: plural(tw.reward_cost, "балл", "балла", "баллов", "point", "points") }),
       };
     };
 
     const snapshotStep = () => {
-      if (!sp.connected || !sp.account) return { state: "wait", value: "—", hint: "после подключения Spotify" };
+      if (!sp.connected || !sp.account) return { state: "wait", value: "—", hint: I18N.t("после подключения Spotify") };
       if (!sp.snapshot_text) {
-        return { state: "todo", value: "Не запомнено",
-                 hint: "Включи музыку и нажми — приложение вернётся сюда после заказов",
-                 button: `<button class="act key small" data-do="snapshot">Запомнить состояние</button>` };
+        return { state: "todo", value: I18N.t("Не запомнено"),
+                 hint: I18N.t("Включи музыку и нажми — приложение вернётся сюда после заказов"),
+                 button: `<button class="act key small" data-do="snapshot">${I18N.t("Запомнить состояние")}</button>` };
       }
       return {
         state: "done",
         value: sp.snapshot_text, // экранируется в шаблоне списка
-        hint: `запомнено в ${hhmm(sp.snapshot_at)}`,
-        button: `<button class="act small" data-do="restore">Вернуть сейчас</button>
-                 <button class="act small" data-do="snapshot">Запомнить заново</button>`,
+        hint: I18N.t("запомнено в {time}", { time: hhmm(sp.snapshot_at) }),
+        button: `<button class="act small" data-do="restore">${I18N.t("Вернуть сейчас")}</button>
+                 <button class="act small" data-do="snapshot">${I18N.t("Запомнить заново")}</button>`,
       };
     };
 
     return [
       { name: "Spotify", ...spotifyStep() },
       { name: "Twitch", ...twitchStep() },
-      { name: "Награда", ...rewardStep() },
-      { name: "Точка возврата", ...snapshotStep() },
+      { name: I18N.t("Награда"), ...rewardStep() },
+      { name: I18N.t("Точка возврата"), ...snapshotStep() },
     ];
   }
 
@@ -348,8 +363,8 @@
     }
 
     const marks = [];
-    if (l.requester) marks.push("заказал " + l.requester);
-    else if (l.source === "own") marks.push("твоя музыка");
+    if (l.requester) marks.push(I18N.t("заказал {who}", { who: l.requester }));
+    else if (l.source === "own") marks.push(I18N.t("твоя музыка"));
     if (l.provider === "youtube") marks.push(l.via ? "YouTube · " + l.via : "YouTube");
     if (l.at) marks.push(when(l.at));
 
@@ -390,32 +405,33 @@
         <div class="eyebrow">
           <i class="live"></i> В эфире
           <span class="sep">/</span>
-          <span class="where">${now.provider === "youtube" ? "YouTube" : "Spotify"}${
+          <span class="where">${now.provider === "youtube" ? "YouTube"
+              : now.provider === "spotify" ? "Spotify" : I18N.t("Музыка на компьютере")}${
             now.via ? " · " + esc(now.via) : ""}${
-            own ? " · твоя музыка" : ""}${
-            now.uncertain ? " · неточное совпадение" : ""}</span>
+            own ? " · " + I18N.t("твоя музыка") : ""}${
+            now.uncertain ? " · " + I18N.t("неточное совпадение") : ""}</span>
         </div>
         <div class="stage-row">
           ${art(now.cover_url, "art")}
           <div class="stage-text">
             <h1 class="headline">${esc(now.title)}</h1>
             <div class="subhead">${esc(now.artist)}</div>
-            ${now.requester ? `<div class="credit">${icon("user")}заказал <b>${esc(now.requester)}</b></div>` : ""}
+            ${now.requester ? `<div class="credit">${icon("user")}${I18N.t("заказал")} <b>${esc(now.requester)}</b></div>` : ""}
             ${now.duration_ms > 0 ? `
             <div class="meter${own ? "" : " seekable"}">
               <span class="t" id="at">${mmss(now.position_ms)}</span>
               <span class="bar" id="at-seek"><i id="at-bar"></i></span>
-              <span class="t">${mmss(now.duration_ms)}</span>
+              <span class="t">${now.duration_ms > 0 ? mmss(now.duration_ms) : "—"}</span>
             </div>` : ""}
           </div>
         </div>
         <div class="player">
           <button class="pbtn" data-play="prev"
-                  title="${own ? "Предыдущий трек" : "В начало трека"}">${icon("skip-back")}</button>
+                  title="${own ? I18N.t("Предыдущий трек") : I18N.t("В начало трека")}">${icon("skip-back")}</button>
           <button class="pbtn key" data-play="${now.paused ? "play" : "pause"}"
-                  title="${now.paused ? "Продолжить" : "Пауза"}">${icon(now.paused ? "play" : "pause")}</button>
+                  title="${now.paused ? I18N.t("Продолжить") : I18N.t("Пауза")}">${icon(now.paused ? "play" : "pause")}</button>
           <button class="pbtn" data-play="next"
-                  title="${own ? "Следующий трек" : "Следующий заказ"}">${icon("skip-forward")}</button>
+                  title="${own ? I18N.t("Следующий трек") : I18N.t("Следующий заказ")}">${icon("skip-forward")}</button>
           ${own ? "" : `
           <span class="pvol">
             <button class="pbtn" data-play="mute" title="Заглушить">${icon("volume-2")}</button>
@@ -424,9 +440,7 @@
           </span>`}
         </div>
         <div class="acts">${own ? `
-          <span class="hint" style="margin:0">Это твоя музыка, а не заказ.
-            Пауза и переключение работают, а громкость и перемотка живут
-            в самом Spotify — приложение туда не лезет.</span>` : `
+          <span class="hint" style="margin:0">${I18N.t("Это твоя музыка, а не заказ. Пауза и переключение работают, а громкость и перемотка живут в самом Spotify — приложение туда не лезет.")}</span>` : `
           <button class="act key" data-do="skip">${icon("skip-forward")}Скипнуть</button>
           <button class="act" data-do="restore">${icon("rotate-cw")}Вернуть Spotify</button>`}
         </div>
@@ -454,18 +468,18 @@
     let brow, mark, sub;
     if (broken) {
       brow = `<div class="eyebrow alarm"><i class="live"></i> Нужно вмешаться</div>`;
-      mark = "Что-то отвалилось";
-      sub = "Ниже видно, что именно. Заказы пока не принимаются.";
+      mark = I18N.t("Что-то отвалилось");
+      sub = I18N.t("Ниже видно, что именно. Заказы пока не принимаются.");
     } else if (ready) {
       brow = `<div class="eyebrow"><i class="live"></i> Готов принимать заказы</div>`;
-      mark = "Всё настроено";
-      sub = `Зрители заказывают трек за ${s.twitch.reward_cost} ${
-        plural(s.twitch.reward_cost, "балл", "балла", "баллов")}. Как только заказ придёт, он появится здесь.`;
+      mark = I18N.t("Всё настроено");
+      sub = I18N.t("Зрители заказывают трек за {n} {points}. Как только заказ придёт, он появится здесь.", {
+        n: s.twitch.reward_cost,
+        points: plural(s.twitch.reward_cost, "балл", "балла", "баллов", "point", "points") });
     } else {
-      brow = `<div class="eyebrow quiet"><i class="live"></i> Настройка · ${done} из ${list.length}</div>`;
-      mark = "Ещё не всё готово";
-      sub = "Пройди шаги ниже — это делается один раз. " +
-        "Или нажми «Провести по шагам»: мастер сделает то же самое, но с картинками и по одному шагу за раз.";
+      brow = `<div class="eyebrow quiet"><i class="live"></i> ${I18N.t("Настройка · {done} из {total}", { done, total: list.length })}</div>`;
+      mark = I18N.t("Ещё не всё готово");
+      sub = I18N.t("Пройди шаги ниже — это делается один раз. Или нажми «Провести по шагам»: мастер сделает то же самое, но с картинками и по одному шагу за раз.");
     }
 
     swap($("stage"), `
@@ -567,9 +581,9 @@
       });
       if (r.ok) return true;
       const data = await r.json().catch(() => ({}));
-      say(data.error || "Не получилось", true);
+      say(data.error || I18N.t("Не получилось"), true);
     } catch {
-      say("Приложение не ответило", true);
+      say(I18N.t("Приложение не ответило"), true);
     }
     return false;
   }
@@ -607,7 +621,7 @@
     // Верхняя полоса.
     top.hidden = !u.available;
     if (u.available) {
-      top.innerHTML = `${icon("download")}${busy ? "обновляю…" : "обновить до " + esc(u.version)}`;
+      top.innerHTML = `${icon("download")}${busy ? I18N.t("обновляю…") : I18N.t("обновить до {v}", { v: esc(u.version) })}`;
       top.disabled = busy;
     }
 
@@ -616,12 +630,12 @@
     if (repo && document.activeElement !== repo) repo.value = u.repo || "";
 
     $("upd-check").disabled = !!u.checking || busy;
-    $("upd-check").textContent = u.checking ? "Проверяю…" : "Проверить обновления";
+    $("upd-check").textContent = u.checking ? I18N.t("Проверяю…") : I18N.t("Проверить обновления");
 
     const install = $("upd-install");
     install.hidden = !u.available;
     install.disabled = busy;
-    install.textContent = busy ? "Обновляю…" : "Обновить до " + (u.version || "");
+    install.textContent = busy ? I18N.t("Обновляю…") : I18N.t("Обновить до {v}", { v: u.version || "" });
 
     const page = $("upd-page");
     page.hidden = !u.page;
@@ -633,19 +647,19 @@
     if (u.available) {
       rows.push(`<div class="sum-row good"><span>Вышла версия</span><b>${esc(u.version)}</b></div>`);
       if (u.size > 0) {
-        rows.push(`<div class="sum-row"><span>Размер</span><b>${Math.round(u.size / (1 << 20))} МБ</b></div>`);
+        rows.push(`<div class="sum-row"><span>Размер</span><b>${I18N.t("{n} МБ", { n: Math.round(u.size / (1 << 20)) })}</b></div>`);
       }
     }
     if (u.note) {
       rows.push(`<div class="sum-row ${u.note_code ? "bad" : ""}">
-        <span>${u.note_code ? esc(u.note_code) : "Последняя проверка"}</span>
+        <span>${u.note_code ? esc(u.note_code) : I18N.t("Последняя проверка")}</span>
         <b>${esc(u.note)}</b></div>`);
     }
     $("upd-sum").innerHTML = rows.join("");
 
     // Что изменилось — отдельным текстом под сводкой: в строку сводки это не
     // влезает, а читать его человек будет ровно один раз перед нажатием.
-    const notes = u.available && u.notes ? u.notes.trim() : "";
+    const notes = u.available && u.notes ? plainNotes(u.notes) : "";
     let box = $("upd-notes");
     if (!box) {
       box = document.createElement("div");
@@ -657,19 +671,38 @@
     box.textContent = notes.length > 600 ? notes.slice(0, 600) + "…" : notes;
   }
 
+  // plainNotes превращает описание релиза с GitHub (Markdown) в обычный
+  // текст: без решёток, звёздочек и ссылок, пункты списка — с «• », без
+  // строки «Full Changelog» со служебной ссылкой.
+  function plainNotes(md) {
+    return String(md)
+      .split(/\r?\n/)
+      .filter((line) => !/full changelog/i.test(line))
+      .map((line) =>
+        line
+          .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+          .replace(/^\s*#{1,6}\s*/, "")
+          .replace(/^(\s*)[-*+]\s+/, "$1• ")
+          .replace(/\*\*|__|`/g, "")
+          .replace(/<[^>]+>/g, "")
+          .trimEnd())
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
   // Обновление — единственное место, где панель просит подтверждения у
   // необратимого действия: программа заменит себя и закроется. Посреди стрима
   // это надо делать осознанно.
   async function installUpdate(btn) {
     const u = (lastState && lastState.update) || {};
-    if (!confirm(`Обновить до версии ${u.version}?\n\n` +
-        "Программа скачает новую сборку, заменит себя и запустится заново. " +
-        "Музыка на это время прервётся. Настройки, очередь и входы останутся на месте.")) {
+    if (!confirm(I18N.t("Обновить до версии {v}?", { v: u.version }) + "\n\n" +
+        I18N.t("Программа скачает новую сборку, заменит себя и запустится заново. Музыка на это время прервётся. Настройки, очередь и входы останутся на месте."))) {
       return;
     }
     const d = await post("/api/update/install", btn);
     if (d && d.ok) {
-      say("Обновился до " + d.version + ", перезапускаюсь…");
+      say(I18N.t("Обновился до {v}, перезапускаюсь…", { v: d.version }));
       // Дальше приложение закроется само, и сокет оборвётся. Панель это уже
       // умеет: покажет «приложение не отвечает» и будет ждать возвращения.
     }
@@ -701,17 +734,17 @@
       ${list.map((p) => {
         const shown = p.tracks || [];
         const more = p.total > shown.length
-          ? `<span class="pl-more">из ${p.total} в плейлисте</span>` : "";
+          ? `<span class="pl-more">${I18N.t("из {n} в плейлисте", { n: p.total })}</span>` : "";
         return `
         <div class="pl">
           <div class="pl-head">
             <div>
-              <div class="pl-title">${esc(p.title || "Плейлист")}</div>
+              <div class="pl-title">${esc(p.title || I18N.t("Плейлист"))}</div>
               <div class="pl-sub">
-                ${icon("user")}заказал <b>${esc(p.requester)}</b>
+                ${icon("user")}${I18N.t("заказал")} <b>${esc(p.requester)}</b>
                 <span class="sep">/</span> ${esc(p.source)}
                 <span class="sep">/</span> ${shown.length} ${
-                  plural(shown.length, "трек", "трека", "треков")} ${more}
+                  plural(shown.length, "трек", "трека", "треков", "track", "tracks")} ${more}
               </div>
             </div>
             <div class="pl-time">${minutesLeft(p.length_ms)}</div>
@@ -753,10 +786,10 @@
         <div class="pl">
           <div class="pl-head">
             <div>
-              <div class="pl-title">${esc(a.artist ? a.artist + " — " + a.title : a.title)}</div>
+              <div class="pl-title">${esc(trackLine(a.artist, a.title))}</div>
               <div class="pl-sub">
-                ${icon("user")}заказал <b>${esc(a.requester)}</b>
-                <span class="sep">/</span> написал «${esc(a.request)}»
+                ${icon("user")}${I18N.t("заказал")} <b>${esc(a.requester)}</b>
+                <span class="sep">/</span> ${I18N.t("написал «{text}»", { text: esc(a.request) })}
                 <span class="sep">/</span> <a href="${esc(a.url)}" target="_blank" rel="noopener">открыть ролик</a>
               </div>
             </div>
@@ -781,12 +814,12 @@
     document.querySelectorAll("#ytasks .yt-left").forEach((el) => {
       const until = Date.parse(el.dataset.until);
       if (!until || until < Date.UTC(2000, 0, 1)) {
-        el.textContent = "ждёт, пока не решишь";
+        el.textContent = I18N.t("ждёт, пока не решишь");
         return;
       }
       const left = Math.max(0, Math.round((until - Date.now()) / 1000));
-      const then = el.dataset.else === "play" ? "включится сам" : "пропустится";
-      el.textContent = `через ${left} с ${then}`;
+      const then = el.dataset.else === "play" ? I18N.t("включится сам") : I18N.t("пропустится");
+      el.textContent = I18N.t("через {n} с {then}", { n: left, then });
     });
   }
   setInterval(tickYouTubeAsks, 1000);
@@ -802,7 +835,7 @@
       return;
     }
     box.innerHTML = `<ol class="pl-tracks">${list.map((r) => `
-      <li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.artist ? r.artist + " — " + r.title : r.title)}</a>
+      <li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(trackLine(r.artist, r.title))}</a>
         <span class="hint" style="margin:0">— ${esc(r.requester)}: «${esc(r.request)}»</span></li>`).join("")}</ol>`;
   }
 
@@ -823,9 +856,9 @@
     $("orders-count").classList.toggle("zero", list.length === 0);
 
     const left = list.reduce((sum, i) => sum + i.duration_ms, 0);
-    $("queue-rest").textContent = list.length ? `ещё ${minutesLeft(left)}` : "";
+    $("queue-rest").textContent = list.length ? I18N.t("ещё {time}", { time: minutesLeft(left) }) : "";
 
-    $("queue-pause").textContent = s.paused ? "возобновить заказы" : "остановить заказы";
+    $("queue-pause").textContent = s.paused ? I18N.t("возобновить заказы") : I18N.t("остановить заказы");
     $("queue-pause").classList.toggle("on", s.paused);
     $("queue-clear").hidden = list.length === 0;
 
@@ -837,8 +870,7 @@
             <div class="preview-cost">${s.twitch.reward_cost}</div>
             <div class="preview-text">
               <div class="preview-title">${esc(s.twitch.reward_title)}</div>
-              <div class="preview-prompt">Напиши артиста и название или ссылку.
-                Если трек не найдётся — баллы вернутся.</div>
+              <div class="preview-prompt">${I18N.t("Напиши артиста и название или ссылку. Если трек не найдётся — баллы вернутся.")}</div>
             </div>
           </div>
         </div>` : `
@@ -866,14 +898,14 @@
           <span class="grip">${icon("clock")}</span>
           <span class="idx">${String(i + 1).padStart(2, "0")}</span>
           <span class="body">
-            <span class="ttl">${esc(r.artist)} — ${esc(r.title)}</span>
+            <span class="ttl">${esc(trackLine(r.artist, r.title))}</span>
             <span class="sub">
               ${r.provider === "youtube" ? `<span class="tag miss">YouTube</span>` : ""}
               ${esc(r.requester)}
               <span class="tag">заиграет сразу после трека стримера</span>
             </span>
           </span>
-          <span class="len">${mmss(r.duration_ms)}</span>
+          <span class="len">${r.duration_ms > 0 ? mmss(r.duration_ms) : "—"}</span>
           <span class="deal"></span>
         </li>`;
       }
@@ -881,7 +913,7 @@
         <span class="grip" title="перетащи, чтобы поменять порядок">${icon("grip-vertical")}</span>
         <span class="idx">${String(i + 1).padStart(2, "0")}</span>
         <span class="body">
-          <span class="ttl">${esc(r.artist)} — ${esc(r.title)}</span>
+          <span class="ttl">${esc(trackLine(r.artist, r.title))}</span>
           <span class="sub">
             ${r.source === "donation" ? `<span class="chip money">донат</span>` : ""}
             ${r.uncertain ? `<span class="tag doubt" title="совпадение неточное">неточно</span>` : ""}
@@ -890,7 +922,7 @@
             ${r.raw_request ? `<span class="asked" title="${esc(r.raw_request)}">${esc(r.raw_request)}</span>` : ""}
           </span>
         </span>
-        <span class="len">${mmss(r.duration_ms)}</span>
+        <span class="len">${r.duration_ms > 0 ? mmss(r.duration_ms) : "—"}</span>
         <span class="deal">
           <button class="icon-btn" data-queue="${r.id}" data-act="fix" title="Не тот трек — выбрать правильный">${icon("search")}</button>
           <button class="icon-btn" data-queue="${r.id}" data-act="top" title="Наверх">${icon("arrow-up")}</button>
@@ -995,8 +1027,8 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(ids.map(Number)),
         })
-          .then((r) => { if (!r.ok) say("Не смог поменять порядок", true); })
-          .catch(() => say("Не смог поменять порядок", true));
+          .then((r) => { if (!r.ok) say(I18N.t("Не смог поменять порядок"), true); })
+          .catch(() => say(I18N.t("Не смог поменять порядок"), true));
       };
     });
   }
@@ -1039,14 +1071,14 @@
     const btn = e.currentTarget;
     // Подтверждение должно называть последствие: баллы вернутся всем, и это
     // не то же самое, что «удалить из очереди» построчно.
-    confirmThen(btn, "очистить и вернуть баллы?",
+    confirmThen(btn, I18N.t("очистить и вернуть баллы?"),
       () => post("/api/queue/clear?refund=1", btn));
   };
 
   $("ban-add").onclick = (e) => {
     const login = $("ban-login").value.trim().replace(/^@/, "");
     if (!login) return;
-    confirmThen(e.currentTarget, `закрыть заказы для ${login}?`, async () => {
+    confirmThen(e.currentTarget, I18N.t("закрыть заказы для {login}?", { login }), async () => {
       if (await post(`/api/bans?login=${encodeURIComponent(login)}`)) {
         $("ban-login").value = "";
       }
@@ -1073,17 +1105,17 @@
     const ses = s.session;
     const minutes = Math.max(0, Math.round((Date.now() - new Date(ses.started_at)) / 60000));
     const uptime = minutes < 60
-      ? `${minutes} ${plural(minutes, "минута", "минуты", "минут")}`
-      : `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
+      ? `${minutes} ${plural(minutes, "минута", "минуты", "минут", "min", "min")}`
+      : I18N.t("{h} ч {m} мин", { h: Math.floor(minutes / 60), m: minutes % 60 });
 
     const cell = (value, label) =>
       `<div class="cell"><div class="num">${value}</div><div class="lab">${label}</div></div>`;
 
     $("tally").innerHTML =
-      cell(ses.orders, "заказов") +
-      cell(ses.accepted, "принято") +
-      cell(ses.refunded, "возвращено") +
-      cell(uptime, "в работе");
+      cell(ses.orders, I18N.t("заказов")) +
+      cell(ses.accepted, I18N.t("принято")) +
+      cell(ses.refunded, I18N.t("возвращено")) +
+      cell(uptime, I18N.t("в работе"));
   }
 
   // ── хроника ────────────────────────────────────────────────────────
@@ -1122,8 +1154,8 @@
     const hidden = all.length - FEED_SHORT;
     more.hidden = hidden <= 0;
     more.textContent = feedOpen
-      ? "свернуть"
-      : `ещё ${hidden} ${plural(hidden, "запись", "записи", "записей")}`;
+      ? I18N.t("свернуть")
+      : I18N.t("ещё {n} {entries}", { n: hidden, entries: plural(hidden, "запись", "записи", "записей", "entry", "entries") });
   }
 
   $("feed-more").onclick = () => {
@@ -1146,8 +1178,8 @@
 
     banner.hidden = false;
     banner.innerHTML = `
-      <div class="what">Открой <a href="${esc(safeURL(tw.pending_url))}" target="_blank"
-        rel="noopener">${esc(tw.pending_url)}</a> на любом устройстве и введи код:</div>
+      <div class="what">${I18N.t("Открой")} <a href="${esc(safeURL(tw.pending_url))}" target="_blank"
+        rel="noopener">${esc(tw.pending_url)}</a> ${I18N.t("на любом устройстве и введи код:")}</div>
       <div class="code">${esc(tw.pending_code)}</div>
       <div class="left" id="code-left"></div>`;
 
@@ -1158,11 +1190,11 @@
       if (!el) return;
       const left = new Date(tw.pending_expires) - Date.now();
       if (left <= 0) {
-        el.textContent = "код истёк — нажми «Подключить Twitch» ещё раз";
+        el.textContent = I18N.t("код истёк — нажми «Подключить Twitch» ещё раз");
         clearInterval(bannerTimer);
         return;
       }
-      el.textContent = `код действует ещё ${minutesLeft(left)}`;
+      el.textContent = I18N.t("код действует ещё {time}", { time: minutesLeft(left) });
     };
     tick();
     bannerTimer = setInterval(tick, 20000);
@@ -1174,11 +1206,11 @@
   // дату всегда, а не только перед концом: тогда это не сюрприз.
   function renewLine(tw) {
     if (!tw.renew_at) return "";
-    const when = new Date(tw.renew_at).toLocaleDateString("ru-RU",
+    const when = new Date(tw.renew_at).toLocaleDateString(I18N.locale(),
       { day: "numeric", month: "long" });
     return tw.renew_soon
-      ? `<div class="note"><b>TW-04</b> Доступ кончается ${when} — нажми «Подключить Twitch» ещё раз.</div>`
-      : `<div class="plan">доступ действует до ${when}</div>`;
+      ? `<div class="note"><b>TW-04</b> ${I18N.t("Доступ кончается {when} — нажми «Подключить Twitch» ещё раз.", { when })}</div>`
+      : `<div class="plan">${I18N.t("доступ действует до {when}", { when })}</div>`;
   }
 
   const note = (code, text) =>
@@ -1209,11 +1241,11 @@
   function pauseNote(sp) {
     const until = pauseLeft(sp);
     if (!until) return "";
-    const at = until.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-    const what = pausedParts[sp.paused_part] || "часть возможностей пока не работает";
-    return note("SP-08", `Spotify ограничил приложение до ${at}: ${what}. ` +
-      `Это не поломка и не обход блокировок — Spotify снимет ограничение сам. ` +
-      `Кнопка «Проверить связь» пробует ещё раз.`);
+    const at = until.toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" });
+    const what = I18N.t(pausedParts[sp.paused_part] || "часть возможностей пока не работает");
+    return note("SP-08", I18N.t("Spotify ограничил приложение до {at}: {what}. ", { at, what }) +
+      I18N.t("Это не поломка и не обход блокировок — Spotify снимет ограничение сам. ") +
+      I18N.t("Кнопка «Проверить связь» пробует ещё раз."));
   }
 
   function renderSpotifyCard(sp) {
@@ -1235,11 +1267,11 @@
     if (sp.country_note) box.className = "account bad";
     else box.className = "account " + (sp.plan === "free" ? "bad" : sp.plan === "unknown" ? "iffy" : "ok");
     box.innerHTML = `
-      <div class="who">${esc(sp.account || "аккаунт без имени")}</div>
+      <div class="who">${esc(sp.account || I18N.t("аккаунт без имени"))}</div>
       ${sp.email ? `<div class="mail">${esc(sp.email)}</div>` : ""}
-      ${sp.proxy ? `<div class="mail">через ${esc(sp.proxy)}</div>` : ""}
+      ${sp.proxy ? `<div class="mail">${I18N.t("через {proxy}", { proxy: esc(sp.proxy) })}</div>` : ""}
       <div class="plan">${esc(sp.plan_label)}${
-        sp.country ? ` · страна аккаунта ${esc(sp.country)}` : ""}</div>
+        sp.country ? " · " + I18N.t("страна аккаунта {c}", { c: esc(sp.country) }) : ""}</div>
       ${pauseNote(sp)}
       ${sp.country_note ? note("SP-16", sp.country_note) : ""}
       ${sp.plan_note ? note(sp.plan_note_code, sp.plan_note) : ""}`;
@@ -1257,8 +1289,8 @@
     const field = $("tunnel-key");
     if (field && !field.value) {
       field.placeholder = t.has_key
-        ? `ключ сохранён (${t.hint}) — вставлять заново не надо`
-        : "vless://… , trojan://… , ss://… или https://…";
+        ? I18N.t("ключ сохранён ({hint}) — вставлять заново не надо", { hint: t.hint })
+        : I18N.t("vless://… , trojan://… , ss://… или https://…");
     }
 
     if (!t.has_key) {
@@ -1281,7 +1313,8 @@
       down:         ["Обход недоступен", "bad"],
       off:          ["Обход выключен", "iffy"],
     };
-    const [word, mood] = look[t.phase] || look.off;
+    const [wordRu, mood] = look[t.phase] || look.off;
+    const word = I18N.t(wordRu);
 
     // Три шага подключения галочками и одна строчка «что это значит».
     //
@@ -1291,21 +1324,22 @@
     const step = (done, text) =>
       `<div class="plan">${done ? "✓" : "…"} ${text}</div>`;
     const live = t.phase === "connected";
-    const meaning = {
+    const meaningRu = {
       connected: "Spotify идёт через обход. Остальной интернет — напрямую, как обычно.",
       connecting: "Ищу рабочий сервер из твоего ключа. Первый раз — до пары минут.",
       reconnecting: "Сервер отвалился, ищу другой. Заказы подождут.",
       standby: "Spotify сейчас отвечает и без обхода. Перестанет — включу сам.",
       down: "Что сделать: нажми «Проверить обход». Не помогло — ключ устарел, вставь новый.",
       off: "Нажми «Включить обход».",
-    }[t.phase] || "";
+    }[t.phase];
+    const meaning = meaningRu ? I18N.t(meaningRu) : "";
 
     box.className = "account " + mood;
     box.innerHTML = `
       <div class="who">${word}</div>
-      ${step(true, "ключ сохранён · " + esc(t.hint))}
-      ${step(live && t.server, live && t.server ? "сервер: " + esc(t.server) : "сервер ещё не выбран")}
-      ${step(live, live ? "Spotify отвечает через обход" : "Spotify через обход ещё не проверен")}
+      ${step(true, I18N.t("ключ сохранён · ") + esc(t.hint))}
+      ${step(live && t.server, live && t.server ? I18N.t("сервер: ") + esc(t.server) : I18N.t("сервер ещё не выбран"))}
+      ${step(live, live ? I18N.t("Spotify отвечает через обход") : I18N.t("Spotify через обход ещё не проверен"))}
       ${t.from_cache ? `<div class="plan">список серверов взят из памяти — сервис подписки не ответил</div>` : ""}
       ${meaning ? `<div class="plan"><b>${meaning}</b></div>` : ""}
       ${t.note ? `<div class="plan">${esc(t.note)}</div>` : ""}`;
@@ -1327,11 +1361,12 @@
     // Канал без баллов — не поломка, поэтому нейтральный вид, а не красный.
     box.className = "account " + (tw.reward_ready ? "ok" : "iffy");
     box.innerHTML = `
-      <div class="who">${esc(tw.channel || "канал")}</div>
+      <div class="who">${esc(tw.channel || I18N.t("канал"))}</div>
       <div class="mail">${esc(tw.channel_type)}</div>
       <div class="plan">${tw.reward_ready
-        ? `награда «${esc(tw.reward_title)}» · ${tw.reward_cost} ${plural(tw.reward_cost, "балл", "балла", "баллов")}`
-        : tw.has_points ? "награда не создана" : "заказы за баллы недоступны"}</div>
+        ? I18N.t("награда «{title}» · {n} {points}", { title: esc(tw.reward_title), n: tw.reward_cost,
+            points: plural(tw.reward_cost, "балл", "балла", "баллов", "point", "points") })
+        : tw.has_points ? I18N.t("награда не создана") : I18N.t("заказы за баллы недоступны")}</div>
       ${renewLine(tw)}
       ${tw.note ? note(tw.note_code, tw.note) : ""}`;
   }
@@ -1349,8 +1384,8 @@
 
     const select = $("yt-device");
     if (y.devices && y.devices.length && select.options.length <= 1) {
-      select.innerHTML = `<option value="">системное устройство</option>` +
-        y.devices.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join("");
+      select.innerHTML = `<option value="">${I18N.t("системное устройство")}</option>` +
+        y.devices.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join("");
     }
     // Что выбрано — знает конфиг. Поле y.device сервер заполняет один раз при
     // старте и только если yt-dlp с mpv на месте: без этого стример выбирал
@@ -1361,13 +1396,13 @@
 
   $("yt-browser").onchange = async (e) => {
     if (await saveConfig({ youtube_browser: e.target.value })) {
-      say("Сохранено. Применится к следующему заказу с YouTube.");
+      say(I18N.t("Сохранено. Применится к следующему заказу с YouTube."));
     }
   };
 
   $("yt-device").onchange = async (e) => {
     if (await saveConfig({ audio_device: e.target.value })) {
-      say("Устройство сохранено. Оно применится к следующему заказу с YouTube.");
+      say(I18N.t("Устройство сохранено. Оно применится к следующему заказу с YouTube."));
     }
   };
 
@@ -1410,7 +1445,7 @@
   // «панель виджета на экране, значит перерисуй кадр») работает как работал и
   // про меню ничего не знает.
 
-  const MENU_SECTIONS = ["settings", "youtube", "widget", "log"];
+  const MENU_SECTIONS = ["settings", "youtube", "widget", "language", "log"];
 
   // Меню гаснет плавно, и до конца исчезновения прятать его нельзя — иначе
   // вместо ухода будет рывок. Отсюда таймер и обязательная его отмена, если
@@ -1499,7 +1534,7 @@
       $("mods-text").textContent = text;
       modsLoaded = true;
     } catch {
-      $("mods-text").textContent = "Не смог прочитать справочник";
+      $("mods-text").textContent = I18N.t("Не смог прочитать справочник");
     }
   }
 
@@ -1549,6 +1584,7 @@
   async function loadConfig() {
     try {
       config = await (await fetch("/api/config")).json();
+      if (config.language && config.language !== I18N.lang()) I18N.setLang(config.language);
       $("client-id").value = config.spotify_client_id || "";
       $("proxy").value = config.spotify_proxy || "";
       $("twitch-id").value = config.twitch_client_id || "";
@@ -1579,7 +1615,7 @@
       refreshModeHints();
       if (!$("widget").hidden) drawWidget();
     } catch {
-      say("Не смог прочитать настройки", true);
+      say(I18N.t("Не смог прочитать настройки"), true);
     }
   }
 
@@ -1597,12 +1633,12 @@
     const row = document.querySelector('input[value="playlist"]').closest(".mode");
     row.classList.toggle("broken", broken);
     row.querySelector(".why").textContent = broken
-      ? "Плейлист не выбран — пока работает как «ничего не включать»."
-      : "Самый предсказуемый вариант: заранее знаешь, что заиграет.";
+      ? I18N.t("Плейлист не выбран — пока работает как «ничего не включать».")
+      : I18N.t("Самый предсказуемый вариант: заранее знаешь, что заиграет.");
 
     const hint = $("playlist-hint");
     hint.className = broken ? "hint warn" : "hint";
-    hint.textContent = broken ? "Выбери плейлист, иначе режим не сработает." : "";
+    hint.textContent = broken ? I18N.t("Выбери плейлист, иначе режим не сработает.") : "";
   }
 
   // Поле, которое сохраняется само, обязано об этом сказать. Иначе человек
@@ -1640,7 +1676,7 @@
       if ($("pl-sum")) drawPlaylistSum();
       return true;
     } catch {
-      say("Не смог сохранить настройки", true);
+      say(I18N.t("Не смог сохранить настройки"), true);
       return false;
     }
   }
@@ -1659,12 +1695,12 @@
     }
     const rows = d.probes.map((p) => {
       const ok = p.http >= 200 && p.http < 300;
-      const what = p.error ? esc(p.error) : `${p.http || "нет ответа"}`;
+      const what = p.error ? esc(p.error) : `${p.http || I18N.t("нет ответа")}`;
       return `<div>${ok ? "✅" : "❌"} ${esc(p.way)} — <b>${what}</b>` +
-        `${ok ? `, нашлось ${p.found}` : ""}</div>`;
+        `${ok ? I18N.t(", нашлось {n}", { n: p.found }) : ""}</div>`;
     }).join("");
-    box.innerHTML = `<b>Проверка поиска: прошло ${d.ok} из ${d.total}.</b>` +
-      `${rows}<br>Теперь нажми «Сохранить лог и историю» и пришли архив.`;
+    box.innerHTML = `<b>${I18N.t("Проверка поиска: прошло {ok} из {total}.", { ok: d.ok, total: d.total })}</b>` +
+      `${rows}<br>${I18N.t("Теперь нажми «Сохранить лог и историю» и пришли архив.")}`;
   }
 
   async function loadPlaylists() {
@@ -1676,7 +1712,7 @@
       const list = await r.json();
       if (!r.ok) {
         $("playlist-hint").className = "hint warn";
-        $("playlist-hint").textContent = `${list.code} · ${list.error}`;
+        $("playlist-hint").textContent = errLine(list);
         // Не повторяем без спроса: раньше при отвалившемся Spotify панель
         // молотила этот запрос на каждом состоянии, то есть каждые несколько
         // секунд весь стрим. Но и «навсегда» не годится: стример чинит связь,
@@ -1687,18 +1723,18 @@
         return;
       }
       const chosen = config ? config.fallback_playlist_id : "";
-      $("playlist").innerHTML = '<option value="">— не выбран —</option>' +
+      $("playlist").innerHTML = `<option value="">${I18N.t("— не выбран —")}</option>` +
         list.map((p) => `<option value="${esc(p.id)}" data-name="${esc(p.name)}"${
           p.id === chosen ? " selected" : ""}>${esc(p.name)}${
           // Ноль здесь чаще значит «Spotify не сказал», чем «пусто»: писать
           // «0 треков» у плейлиста, который стример сам же и слушает, — врать.
           p.tracks > 0
-            ? ` · ${p.tracks} ${plural(p.tracks, "трек", "трека", "треков")}`
+            ? ` · ${p.tracks} ${plural(p.tracks, "трек", "трека", "треков", "track", "tracks")}`
             : ""}</option>`).join("");
       playlistsLoaded = true;
       refreshModeHints();
     } catch {
-      say("Не смог получить список плейлистов", true);
+      say(I18N.t("Не смог получить список плейлистов"), true);
     }
   }
 
@@ -1725,8 +1761,8 @@
       // standby — приложение проверило и решило, что обход сейчас не нужен:
       // Spotify отвечает и без него. Ключ при этом сохранён.
       say(d.standby
-        ? "Spotify отвечает и без обхода — держу обход наготове"
-        : `Обход работает: ${d.server}`);
+        ? I18N.t("Spotify отвечает и без обхода — держу обход наготове")
+        : I18N.t("Обход работает: {server}", { server: d.server }));
     }
     return d;
   }
@@ -1737,7 +1773,7 @@
       if (!d) return;
       // Показываем адрес возврата: если вход не пройдёт, первым делом сверяют
       // именно эту строку с тем, что вписано в настройках Spotify.
-      $("redirect").textContent = `Адрес возврата: ${d.redirect_uri}`;
+      $("redirect").textContent = I18N.t("Адрес возврата: {uri}", { uri: d.redirect_uri });
       // in_app означает, что приложение уже открыло вход в своём окне — так
       // бывает, когда работает обход. Открыть ту же страницу ещё и в браузере
       // значит показать человеку два входа сразу, причём браузерный из России
@@ -1755,10 +1791,10 @@
     // Ответ нужен и здесь: без него внизу оставалась надпись от прошлой
     // кнопки, и казалось, что «Выключить» не сработало.
     "tunnel-off": (btn) => post("/api/tunnel/off", btn).then((d) => {
-      if (d) say("Обход выключен. Spotify идёт напрямую.");
+      if (d) say(I18N.t("Обход выключен. Spotify идёт напрямую."));
     }),
     "tunnel-forget": (btn) => new Promise((done) => {
-      confirmThen(btn, "забыть ключ?", async () => {
+      confirmThen(btn, I18N.t("забыть ключ?"), async () => {
         $("tunnel-key").value = "";
         done(await post("/api/tunnel/forget", btn));
       });
@@ -1783,11 +1819,10 @@
       // спрашивает.
       const until = lastState && lastState.spotify && lastState.spotify.paused_until;
       if (until && new Date(until) > new Date()) {
-        const at = new Date(until).toLocaleString("ru-RU",
+        const at = new Date(until).toLocaleString(I18N.locale(),
           { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-        const ask = "Spotify ограничил приложение и просит подождать до " + at + ".\n\n" +
-          "Каждая проверка сейчас может продлить ограничение. " +
-          "Само оно снимется, ничего делать не надо.\n\nВсё равно проверить?";
+        const ask = I18N.t("Spotify ограничил приложение и просит подождать до {at}.", { at }) + "\n\n" +
+          I18N.t("Каждая проверка сейчас может продлить ограничение. Само оно снимется, ничего делать не надо.") + "\n\n" + I18N.t("Всё равно проверить?");
         if (!confirm(ask)) return Promise.resolve(null);
       }
       return post("/api/spotify/check", btn).then((d) => {
@@ -1811,7 +1846,7 @@
     // Короткий сигнал на устройство заказов с YouTube: услышать, куда оно
     // ведёт, до того как на стриме заиграет настоящий заказ.
     "yt-test": (btn) => post("/api/youtube/test-sound", btn).then((d) => {
-      if (d && d.ok) say("Сигнал отправлен. Не услышал — выбери другое устройство.");
+      if (d && d.ok) say(I18N.t("Сигнал отправлен. Не услышал — выбери другое устройство."));
     }),
     restore: (btn) => post("/api/spotify/restore", btn),
     "twitch-login": (btn) => saveThenConnect("twitch-id", "twitch_client_id",
@@ -1916,7 +1951,7 @@
 
     fixOrder = item;
     $("fix-asked").textContent = item.raw_request || "—";
-    $("fix-was").textContent = `${item.artist} — ${item.title}`;
+    $("fix-was").textContent = trackLine(item.artist, item.title);
     $("fix-results").innerHTML = "";
     $("fix-note").textContent = "";
     $("fix").hidden = false;
@@ -1940,7 +1975,7 @@
     if (!query) return;
 
     const mine = ++fixSeq;
-    $("fix-note").textContent = "Ищу…";
+    $("fix-note").textContent = I18N.t("Ищу…");
 
     try {
       const r = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
@@ -1949,11 +1984,11 @@
       if (mine !== fixSeq) return;
 
       if (!r.ok) {
-        $("fix-note").textContent = `${data.code} · ${data.error}`;
+        $("fix-note").textContent = errLine(data);
         return;
       }
       if (!data.length) {
-        $("fix-note").textContent = "Ничего не нашлось. Попробуй иначе или вставь ссылку Spotify.";
+        $("fix-note").textContent = I18N.t("Ничего не нашлось. Попробуй иначе или вставь ссылку Spotify.");
         $("fix-results").innerHTML = "";
         return;
       }
@@ -1968,11 +2003,11 @@
               <span class="pick-title">${esc(t.title)}</span>
               <span class="pick-sub">${esc(t.artist)}${t.album ? " · " + esc(t.album) : ""}</span>
             </span>
-            <span class="pick-len">${mmss(t.duration_ms)}</span>
+            <span class="pick-len">${t.duration_ms > 0 ? mmss(t.duration_ms) : "—"}</span>
           </button>
         </li>`).join("");
     } catch {
-      if (mine === fixSeq) $("fix-note").textContent = "Поиск не ответил";
+      if (mine === fixSeq) $("fix-note").textContent = I18N.t("Поиск не ответил");
     }
   }
 
@@ -1987,14 +2022,14 @@
       });
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
-        $("fix-note").textContent = data.error || "Не получилось заменить трек";
+        $("fix-note").textContent = data.error || I18N.t("Не получилось заменить трек");
         btn.disabled = false;
         return;
       }
       closeFix();
-      say("Трек заменён. Такой же заказ впредь найдётся сразу.");
+      say(I18N.t("Трек заменён. Такой же заказ впредь найдётся сразу."));
     } catch {
-      $("fix-note").textContent = "Приложение не ответило";
+      $("fix-note").textContent = I18N.t("Приложение не ответило");
       btn.disabled = false;
     }
   }
@@ -2042,19 +2077,19 @@
       if (!rows.length) {
         $("hist").innerHTML = "";
         $("hist-note").textContent = q
-          ? "По этому запросу ничего нет."
-          : "Пока пусто. Здесь окажется всё, что заказывали.";
+          ? I18N.t("По этому запросу ничего нет.")
+          : I18N.t("Пока пусто. Здесь окажется всё, что заказывали.");
         return;
       }
       $("hist-note").textContent = "";
       $("hist").innerHTML = rows.map((h) => {
         const [word, tone] = outcomeWord[h.outcome] || [h.outcome, ""];
-        const name = h.artist || h.title ? `${esc(h.artist)} — ${esc(h.title)}` : esc(h.raw);
+        const name = h.artist || h.title ? esc(trackLine(h.artist, h.title)) : esc(h.raw);
         return `<li>
           <span class="body">
             <span class="ttl">${name}</span>
             <span class="sub">
-              <span class="tag ${tone}">${esc(word)}</span>
+              <span class="tag ${tone}">${esc(I18N.t(word))}</span>
               ${esc(h.requester)}
               ${h.reason ? `<span class="asked">${esc(h.reason)}</span>` : ""}
             </span>
@@ -2063,7 +2098,7 @@
         </li>`;
       }).join("");
     } catch {
-      $("hist-note").textContent = "Не смог прочитать хронику";
+      $("hist-note").textContent = I18N.t("Не смог прочитать хронику");
     }
   }
 
@@ -2089,12 +2124,12 @@
   function when(iso) {
     const d = new Date(iso);
     if (isNaN(d)) return "";
-    const time = d.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+    const time = d.toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" });
     const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
     const diff = (day(new Date()) - day(d)) / 86400000;
     if (diff === 0) return time;
-    if (diff === 1) return "вчера " + time;
-    return d.toLocaleDateString("ru", { day: "numeric", month: "short" }) + " " + time;
+    if (diff === 1) return I18N.t("вчера {time}", { time });
+    return d.toLocaleDateString(I18N.locale(), { day: "numeric", month: "short" }) + " " + time;
   }
 
   $("log-toggle").onclick = () => toggleLog();
@@ -2161,7 +2196,7 @@
       // заново, иначе стример отправит модераторам старый.
       modsLoaded = false;
       loadMods();
-      say("Знак команд теперь «" + prefix + "»");
+      say(I18N.t("Знак команд теперь «{p}»", { p: prefix }));
     }
   };
 
@@ -2169,18 +2204,18 @@
     // Пустое поле не сохраняем: раньше на это отвечало «сохранён» —
     // и человек шёл дальше, уверенный, что всё вставил.
     if (!$("client-id").value.trim()) {
-      say("Поле пустое — сначала вставь Client ID Spotify.", true);
+      say(I18N.t("Поле пустое — сначала вставь Client ID Spotify."), true);
       return;
     }
     if (await saveConfig({ spotify_client_id: $("client-id").value.trim() })) {
-      say("Client ID сохранён. Теперь нажми «Подключить Spotify».");
+      say(I18N.t("Client ID сохранён. Теперь нажми «Подключить Spotify»."));
     }
   };
   $("save-proxy").onclick = async () => {
     if (await saveConfig({ spotify_proxy: $("proxy").value.trim() }, "?proxy=1")) {
       say($("proxy").value.trim()
-        ? "Прокси включён. Самой программе Spotify он не нужен — нажми «Проверить связь»."
-        : "Прокси убран, Spotify идёт напрямую.");
+        ? I18N.t("Прокси включён. Самой программе Spotify он не нужен — нажми «Проверить связь».")
+        : I18N.t("Прокси убран, Spotify идёт напрямую."));
     }
   };
 
@@ -2188,34 +2223,34 @@
     // Пустое поле не сохраняем: раньше на это отвечало «сохранён» —
     // и человек шёл дальше, уверенный, что всё вставил.
     if (!$("da-id").value.trim()) {
-      say("Поле пустое — сначала вставь Client ID DonationAlerts.", true);
+      say(I18N.t("Поле пустое — сначала вставь Client ID DonationAlerts."), true);
       return;
     }
     if (await saveConfig({ donationalerts_client_id: $("da-id").value.trim() })) {
-      say("Сохранено. Теперь нажми «Подключить DonationAlerts».");
+      say(I18N.t("Сохранено. Теперь нажми «Подключить DonationAlerts»."));
     }
   };
   $("save-dp-key").onclick = async () => {
     if (await saveConfig({ donatepay_key: $("dp-key").value.trim() })) {
       // Пустое поле — это «убрать ключ», и сказать надо именно так.
       say($("dp-key").value.trim()
-        ? "Ключ DonatePay сохранён. Перезапусти приложение, чтобы он заработал."
-        : "Ключ DonatePay убран.");
+        ? I18N.t("Ключ DonatePay сохранён. Перезапусти приложение, чтобы он заработал.")
+        : I18N.t("Ключ DonatePay убран."));
     }
   };
   $("save-dx-key").onclick = async () => {
     if (await saveConfig({ donatex_key: $("dx-key").value.trim() })) {
       // Пустое поле — это «убрать ключ», и сказать надо именно так.
       say($("dx-key").value.trim()
-        ? "Ключ DonateX сохранён. Перезапусти приложение, чтобы он заработал."
-        : "Ключ DonateX убран.");
+        ? I18N.t("Ключ DonateX сохранён. Перезапусти приложение, чтобы он заработал.")
+        : I18N.t("Ключ DonateX убран."));
     }
   };
 
   $("donation-min").onchange = async (e) => {
     const value = parseFloat(e.target.value.replace(",", "."));
     if (!isFinite(value) || value < 0) {
-      say("Сумма должна быть числом", true);
+      say(I18N.t("Сумма должна быть числом"), true);
       // Возвращаем то, что сохранено: иначе на экране остаётся мусор, а
       // человек уходит уверенным, что порог изменён.
       e.target.value = config.donation_min ?? "";
@@ -2228,11 +2263,11 @@
     // Пустое поле не сохраняем: раньше на это отвечало «сохранён» —
     // и человек шёл дальше, уверенный, что всё вставил.
     if (!$("twitch-id").value.trim()) {
-      say("Поле пустое — сначала вставь Client ID Twitch.", true);
+      say(I18N.t("Поле пустое — сначала вставь Client ID Twitch."), true);
       return;
     }
     if (await saveConfig({ twitch_client_id: $("twitch-id").value.trim() })) {
-      say("Client ID Twitch сохранён. Теперь нажми «Подключить Twitch».");
+      say(I18N.t("Client ID Twitch сохранён. Теперь нажми «Подключить Twitch»."));
     }
   };
 
@@ -2240,17 +2275,17 @@
     radio.onchange = async () => {
       $("yt-ask-opts").hidden = radio.value !== "ask";
       if (await saveConfig({ youtube_mode: radio.value })) {
-        say({ ask: "Буду спрашивать про каждый заказ с YouTube.",
+        say(I18N.t({ ask: "Буду спрашивать про каждый заказ с YouTube.",
               auto: "Заказы с YouTube будут включаться сами.",
-              off: "С YouTube больше не играем — такие заказы отклоняются." }[radio.value]);
+              off: "С YouTube больше не играем — такие заказы отклоняются." }[radio.value]));
       }
     };
   });
   $("verbose-log").onchange = async (e) => {
     if (await saveConfig({ verbose_log: e.target.checked })) {
       say(e.target.checked
-        ? "Подробный журнал включён. Первые цифры о компьютере — через полминуты."
-        : "Подробный журнал выключен.");
+        ? I18N.t("Подробный журнал включён. Первые цифры о компьютере — через полминуты.")
+        : I18N.t("Подробный журнал выключен."));
     }
   };
   $("yt-ask-seconds").onchange = async (e) => {
@@ -2290,7 +2325,7 @@
       }
       const value = parseInt(raw, 10);
       if (!isFinite(value) || value < min || value > max) {
-        say(`Нужно число от ${min} до ${max}`, true);
+        say(I18N.t("Нужно число от {min} до {max}", { min, max }), true);
         e.target.value = Math.round((config[key] || 0) / scale) || "";
         return;
       }
@@ -2356,12 +2391,12 @@
 
     $("pl-sum").innerHTML = `
       <div class="sum-row"><span>Плейлист целиком</span><b>${price} ${
-        plural(price, "балл", "балла", "баллов")}</b></div>
+        plural(price, "балл", "балла", "баллов", "point", "points")}</b></div>
       <div class="sum-row"><span>Это за трек</span><b>${each}</b></div>
-      <div class="sum-row"><span>Те же ${count} ${
-        plural(count, "трек", "трека", "треков")} поштучно</span><b>${full}</b></div>
+      <div class="sum-row"><span>${I18N.t("Те же {n} {tracks} поштучно", { n: count,
+        tracks: plural(count, "трек", "трека", "треков", "track", "tracks") })}</span><b>${full}</b></div>
       <div class="sum-row ${save > 0 ? "good" : "bad"}">
-        <span>${save > 0 ? "Зрителю выгоднее на" : "Выгоды нет"}</span>
+        <span>${save > 0 ? I18N.t("Зрителю выгоднее на") : I18N.t("Выгоды нет")}</span>
         <b>${save > 0 ? save + "%" : "—"}</b>
       </div>`;
   }
@@ -2538,7 +2573,8 @@
     const [h, v] = String(pos || "left-bottom").split("-");
     const across = { left: "слева", center: "по центру", right: "справа" }[h] || "слева";
     const down = { top: "сверху", middle: "посередине", bottom: "снизу" }[v] || "снизу";
-    if (h === "center" && v === "middle") return "ровно посередине";
+    if (h === "center" && v === "middle") return I18N.t("ровно посередине");
+    if (I18N.lang() === "en") return I18N.t(down) + " " + I18N.t(across);
     return across + " " + down;
   }
 
@@ -2584,8 +2620,8 @@
     $("wx-gapx").disabled = ticker;
     $("wx-gapy").disabled = ticker;
     $("wx-pos-hint").textContent = ticker
-      ? "Тикер занимает всю ширину кадра: остаётся только выбрать верх или низ."
-      : "Плашку можно просто перетащить мышью прямо по кадру — точка привязки и отступы подставятся сами.";
+      ? I18N.t("Тикер занимает всю ширину кадра: остаётся только выбрать верх или низ.")
+      : I18N.t("Плашку можно просто перетащить мышью прямо по кадру — точка привязки и отступы подставятся сами.");
 
     const percent = Math.round((w.scale || 1) * 100);
     $("wx-scale").value = percent;
@@ -2625,18 +2661,18 @@
     $("wx-mode").value = flash ? "flash" : "always";
     $("wx-flash").hidden = !flash;
     $("wx-mode-hint").textContent = flash
-      ? "Плашка появляется, висит сколько сказано и уходит."
-      : "Плашка стоит в кадре, пока играет музыка.";
+      ? I18N.t("Плашка появляется, висит сколько сказано и уходит.")
+      : I18N.t("Плашка стоит в кадре, пока играет музыка.");
 
     $("wx-hold").value = flash ? hold : 15;
-    $("wx-hold-val").textContent = (flash ? hold : 15) + " с";
+    $("wx-hold-val").textContent = I18N.t("{n} с", { n: flash ? hold : 15 });
     $("wx-onchange").checked = w.show_on_change !== false;
 
     const everyMin = Math.round((w.show_every || 0) / 60);
     $("wx-every").value = everyMin;
     $("wx-every-val").textContent = everyMin
-      ? "каждые " + everyMin + " " + plural(everyMin, "минуту", "минуты", "минут")
-      : "не напоминать";
+      ? I18N.t("каждые {n} {min}", { n: everyMin, min: plural(everyMin, "минуту", "минуты", "минут", "minute", "minutes") })
+      : I18N.t("не напоминать");
 
     const url = location.origin + "/widget";
     $("wx-url").value = url;
@@ -2707,7 +2743,7 @@
       const set = tweaks[t.key] !== undefined;
       const now = (tweaks[t.key] || computed.getPropertyValue(t.key) || "").trim();
       const off = set
-        ? `<button class="tweak-off" data-clear="${t.key}" title="вернуть как в наборе">×</button>`
+        ? `<button class="tweak-off" data-clear="${t.key}" title="${I18N.t("вернуть как в наборе")}">×</button>`
         : "";
 
       if (t.kind === "color") {
@@ -2771,8 +2807,8 @@
     const d = await post("/api/update/check", e.currentTarget);
     if (!d) return;
     say(d.available
-      ? "Вышла версия " + d.version + " — кнопка «Обновить» рядом"
-      : "У тебя последняя версия: " + d.current);
+      ? I18N.t("Вышла версия {v} — кнопка «Обновить» рядом", { v: d.version })
+      : I18N.t("У тебя последняя версия: {v}", { v: d.current }));
   };
 
   $("upd-repo").onchange = async (e) => {
@@ -2878,8 +2914,8 @@
     // Человек должен видеть, что он настраивает, а не только куда ткнул.
     function hintDrag(p) {
       const parts = [posName(p.position)];
-      if (p.gap_x !== undefined) parts.push("отступ сбоку " + p.gap_x + " px");
-      if (p.gap_y !== undefined) parts.push("сверху-снизу " + p.gap_y + " px");
+      if (p.gap_x !== undefined) parts.push(I18N.t("отступ сбоку {n} px", { n: p.gap_x }));
+      if (p.gap_y !== undefined) parts.push(I18N.t("сверху-снизу {n} px", { n: p.gap_y }));
       $("wx-pos-hint").textContent = parts.join(", ");
     }
   })();
@@ -2893,9 +2929,9 @@
 
   // Ровно та же строка, что рисует настоящий виджет.
   function wxByLine(w) {
-    if (wxSource === "own") return "музыка канала";
-    if (w.show_requester !== false) return "заказал " + WX_TRACKS[wxTrack][2];
-    return "заказ зрителя";
+    if (wxSource === "own") return I18N.t("музыка канала");
+    if (w.show_requester !== false) return I18N.t("заказал {who}", { who: WX_TRACKS[wxTrack][2] });
+    return I18N.t("заказ зрителя");
   }
 
   $("wx-source-pick").onclick = (e) => {
@@ -2942,13 +2978,13 @@
   $("wx-onchange").onchange = (e) => saveWidget({ show_on_change: e.target.checked });
 
   live($("wx-hold"), (v) => {
-    $("wx-hold-val").textContent = v + " с";
+    $("wx-hold-val").textContent = I18N.t("{n} с", { n: v });
   }, (v) => saveWidget({ hold_seconds: v }));
 
   live($("wx-every"), (v) => {
     $("wx-every-val").textContent = v
-      ? "каждые " + v + " " + plural(v, "минуту", "минуты", "минут")
-      : "не напоминать";
+      ? I18N.t("каждые {n} {min}", { n: v, min: plural(v, "минуту", "минуты", "минут", "minute", "minutes") })
+      : I18N.t("не напоминать");
   }, (v) => saveWidget({ show_every: v * 60 }));
 
   // «Показать, как это выглядит» — появление, ожидание, уход, всё подряд.
@@ -3031,11 +3067,11 @@
   $("wx-copy").onclick = async () => {
     try {
       await navigator.clipboard.writeText($("wx-url").value);
-      say("Адрес скопирован — вставь его в источник «Браузер» в OBS.");
+      say(I18N.t("Адрес скопирован — вставь его в источник «Браузер» в OBS."));
     } catch {
       // Буфер обмена доступен не везде; выделенный текст скопируется вручную.
       $("wx-url").select();
-      say("Скопируй выделенный адрес: Ctrl+C", true);
+      say(I18N.t("Скопируй выделенный адрес: Ctrl+C"), true);
     }
   };
 
@@ -3049,7 +3085,7 @@
   if (again) {
     again.onclick = () => {
       if (window.srSetupOpen) window.srSetupOpen();
-      else say("Мастер настройки не загрузился — перезапусти приложение", true);
+      else say(I18N.t("Мастер настройки не загрузился — перезапусти приложение"), true);
     };
   }
 
@@ -3059,6 +3095,12 @@
 
   function render(s) {
     lastState = s;
+    // Язык сменили в другом окне или в мастере — догоняем. setLang сам
+    // вызовет перерисовку через onChange.
+    if (s.lang && s.lang !== I18N.lang()) {
+      I18N.setLang(s.lang);
+      return;
+    }
     document.body.classList.remove("stale");
 
     const sig = JSON.stringify;
@@ -3104,15 +3146,49 @@
     // В своей полосе заголовка окна пишем, что играет: панель бывает
     // прокручена, а полоса на виду всегда.
     const tb = $("titlebar-now");
-    if (tb) tb.textContent = s.now ? `${s.now.artist} — ${s.now.title}` : "";
+    if (tb) tb.textContent = s.now ? trackLine(s.now.artist, s.now.title) : "";
 
     // Заголовок вкладки — тоже часть панели: стример держит её в фоне.
     document.title = s.now
-      ? `${s.now.artist} — ${s.now.title}`
+      ? trackLine(s.now.artist, s.now.title)
       : s.queue.length > 0
-        ? `${s.queue.length} в очереди · Заказ музыки`
-        : "Заказ музыки";
+        ? I18N.t("{n} в очереди · Заказ музыки", { n: s.queue.length })
+        : I18N.t("Заказ музыки");
   }
+
+  // ── язык ───────────────────────────────────────────────────────────
+  //
+  // Выбор хранится в настройках приложения (поле language) и приходит в
+  // снимке состояния (lang). Подписи кнопок не переводятся: каждая на своём языке.
+  function drawLangPick() {
+    const box = $("lang-pick");
+    if (!box) return;
+    box.querySelectorAll("[data-lang]").forEach((b) => {
+      b.textContent = b.dataset.lang === "en" ? "English" : "Русский";
+      b.classList.toggle("on", b.dataset.lang === I18N.lang());
+    });
+  }
+  drawLangPick();
+  if ($("lang-pick")) {
+    $("lang-pick").onclick = async (e) => {
+      const b = e.target.closest("[data-lang]");
+      if (!b || b.dataset.lang === I18N.lang()) return;
+      I18N.setLang(b.dataset.lang);
+      await saveConfig({ language: b.dataset.lang });
+    };
+  }
+  // Смена языка — полная перерисовка: draw() иначе не тронет блоки, у которых
+  // данные не поменялись.
+  I18N.onChange(() => {
+    drawn.clear();
+    drawLangPick();
+    modsLoaded = false;
+    if (!$("settings").hidden && settingsTab === "orders") loadMods();
+    if (lastState) render(lastState);
+    if (config) { refreshModeHints(); if (!$("widget").hidden) drawWidget(); }
+    if (!$("log").hidden) { loadHistory(); loadModLog(); }
+    if (playlistsLoaded && !playlistsFailed) { playlistsLoaded = false; loadPlaylists(); }
+  });
 
   fetch("/static/icons/sprite.svg")
     .then((r) => r.text())

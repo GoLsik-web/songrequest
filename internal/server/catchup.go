@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"songrequest/internal/i18n"
 )
 
 // Подхват пропущенных заказов.
@@ -78,7 +79,8 @@ func (s *Server) catchUpRedemptions(ctx context.Context, rewardIDs []string) {
 			if !r.RedeemedAt.IsZero() && time.Since(r.RedeemedAt) > staleRedemption {
 				s.log.Info("старый невыполненный заказ — возвращаю баллы",
 					"зритель", r.UserLogin, "текст", r.UserInput, "когда", r.RedeemedAt)
-				s.rejectRedemption(ctx, r, "заказ пролежал, пока приложение было выключено")
+				s.rejectRedemption(ctx, r, i18n.T("заказ пролежал, пока приложение было выключено"))
+
 				continue
 			}
 			s.log.Info("подхватил заказ, сделанный пока приложение не слушало",
@@ -87,4 +89,3 @@ func (s *Server) catchUpRedemptions(ctx context.Context, rewardIDs []string) {
 		}
 	}
 }
-

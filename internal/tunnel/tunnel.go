@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,8 +16,8 @@ import (
 	"time"
 
 	"songrequest/internal/errs"
-	"songrequest/internal/procjob"
 	"songrequest/internal/logx"
+	"songrequest/internal/procjob"
 )
 
 const (
@@ -104,14 +105,14 @@ type Tunnel struct {
 	log *logx.Logger
 	dir string // папка для xray.exe
 
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	addr   string // socks5://127.0.0.1:порт
+	mu   sync.Mutex
+	cmd  *exec.Cmd
+	addr string // socks5://127.0.0.1:порт
 	// httpAddr — тот же выход, но HTTP-посредником (для mpv, см. buildConfig).
 	httpAddr string
 	// Probe — чем проверять, что через сервер можно работать. Пусто —
 	// проверяем Spotify; обходу для YouTube нужна своя проверка.
-	Probe func(ctx context.Context, addr string) error
+	Probe  func(ctx context.Context, addr string) error
 	server string // подпись рабочего сервера, для панели
 	onDown func() // кому сказать, что обход отвалился сам
 
@@ -554,14 +555,15 @@ func (t *Tunnel) fetchSubscription(ctx context.Context, url, agent string) ([]by
 		// тестера sub.vpnvpn.best отвечал 502 на любой запрос, а текст «проверь
 		// ссылку» отправлял человека искать ошибку у себя. Говорим как есть и
 		// даём обходной путь: отдельный ключ сервера работает без сервиса.
+		t.log.Warn("сервис подписки отвечает ошибкой", "код_http", resp.StatusCode)
 		return nil, true, errs.New(errs.TunnelSubscription,
-			fmt.Sprintf("Сервис подписки не отдал список серверов (ответ %d). Похоже, сломано у них, ключ в порядке. "+
+			"Сервис подписки временно сбоит и не отдал список серверов. Похоже, сломано у них, ключ в порядке. "+
 				"Пока он не починится: открой своё VPN-приложение, скопируй ключ одного сервера "+
-				"(начинается с vless://, trojan:// или ss://) и вставь его сюда вместо ссылки.", resp.StatusCode))
+				"(начинается с vless://, trojan:// или ss://) и вставь его сюда вместо ссылки.")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, errs.New(errs.TunnelSubscription,
-			fmt.Sprintf("Сервис подписки ответил %d. Проверь ссылку и не кончилась ли подписка.", resp.StatusCode))
+		return nil, false, errs.Newf(errs.TunnelSubscription,
+			"Сервис подписки ответил %d. Проверь ссылку и не кончилась ли подписка.", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -761,8 +763,8 @@ func CheckSpotify(ctx context.Context, addr string) error {
 		return errs.New(errs.TunnelCountry,
 			"Через этот сервер Spotify не работает: он считает страну сервера неподходящей.")
 	case resp.StatusCode >= 500:
-		return errs.New(errs.TunnelCheck,
-			fmt.Sprintf("Через этот сервер Spotify отвечает ошибкой %d.", resp.StatusCode))
+		return errs.Newf(errs.TunnelCheck,
+			"Через этот сервер Spotify отвечает ошибкой %d.", resp.StatusCode)
 	}
 	return nil
 }
@@ -905,7 +907,8 @@ func CheckYouTube(ctx context.Context, addr string) error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return errs.New(errs.TunnelCheck, fmt.Sprintf("Через этот сервер YouTube отвечает ошибкой %d.", resp.StatusCode))
+		slog.Warn("через сервер обхода YouTube отвечает ошибкой", "код_http", resp.StatusCode)
+		return errs.New(errs.TunnelCheck, "Через этот сервер YouTube не открывается — возьму другой.")
 	}
 	return nil
 }

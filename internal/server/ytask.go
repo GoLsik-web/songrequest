@@ -8,6 +8,7 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/links"
 	"songrequest/internal/queue"
 	"songrequest/internal/twitch"
@@ -58,7 +59,7 @@ func (s *Server) youtubeOff() bool { return s.youtubeMode() == "off" }
 // offerYouTube решает судьбу найденного на YouTube заказа по настройке.
 func (s *Server) offerYouTube(ctx context.Context, r twitch.Redemption, item queue.Item, note string) {
 	if s.youtubeMode() != "ask" {
-		s.state.Notify("info", "Нет в Spotify — играет с YouTube: «"+trackLine(item)+"» ("+item.Via+")")
+		s.state.Notify("info", i18n.F("Нет в Spotify — играет с YouTube: «%s» (%s)", trackLine(item), item.Via))
 		s.acceptYouTube(ctx, r, item, note)
 		return
 	}
@@ -91,12 +92,10 @@ func (s *Server) offerYouTube(ctx context.Context, r twitch.Redemption, item que
 	s.state.SetOrderMatch(r.ID, app.OrderMatch{
 		State: app.MatchFound, URI: item.URI, Title: item.Title, Artist: item.Artist,
 		CoverURL: item.CoverURL, Duration: item.DurationMs,
-		Note: "Ждёт решения: играть ли с YouTube",
+		Note: i18n.T("Ждёт решения: играть ли с YouTube"),
 	})
-	s.state.Notify("info", "Нет в Spotify. Нашёл на YouTube: «"+trackLine(item)+
-		"» — включить или отклонить, решайте в панели.")
-	s.say(ctx, "@"+r.UserName+", в Spotify такого нет. Нашёл на YouTube: "+trackLine(item)+
-		" — стример решает, включать ли.")
+	s.state.Notify("info", i18n.F("Нет в Spotify. Нашёл на YouTube: «%s» — включить или отклонить, решайте в панели.", trackLine(item)))
+	s.say(ctx, i18n.F("@%s, в Spotify такого нет. Нашёл на YouTube: %s — стример решает, включать ли.", r.UserName, trackLine(item)))
 
 	// Срок ожидания. Решение по сроку идёт тем же путём, что и кнопка, — но
 	// только если заказ ещё ждёт: стример мог успеть нажать сам.
@@ -141,10 +140,10 @@ func (s *Server) decideYouTube(ctx context.Context, id string, play bool, actor 
 	}
 
 	s.modLog(actor, "не стал включать с YouTube", what+" от "+ask.r.UserName)
-	s.state.SetOrderMatch(ask.r.ID, app.OrderMatch{State: app.MatchFailed, Note: "С YouTube не включили"})
-	reason := "стример не стал включать трек с YouTube"
+	s.state.SetOrderMatch(ask.r.ID, app.OrderMatch{State: app.MatchFailed, Note: i18n.T("С YouTube не включили")})
+	reason := i18n.T("стример не стал включать трек с YouTube")
 	if actor == "время вышло" {
-		reason = "стример не успел решить, включать ли трек с YouTube"
+		reason = i18n.T("стример не успел решить, включать ли трек с YouTube")
 	}
 	s.rejectRedemption(ctx, ask.r, reason)
 	return ask, nil
@@ -190,7 +189,8 @@ func (s *Server) rememberYouTube(r twitch.Redemption, item queue.Item) {
 // youtubeOffReason — что сказать зрителю, когда трека нет в Spotify, а
 // играть мимо него стример запретил.
 func youtubeOffReason() string {
-	return "этого трека нет в Spotify, а с YouTube на этом канале не играют"
+	return i18n.T("этого трека нет в Spotify, а с YouTube на этом канале не играют")
+
 }
 
 // isElsewhereLink — ссылка, которую играть можно только мимо Spotify.

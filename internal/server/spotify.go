@@ -14,7 +14,9 @@ import (
 	"songrequest/internal/config"
 	"songrequest/internal/diag"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/spotify"
+	"songrequest/internal/tunnel"
 )
 
 // redirectURI собирается из адреса, который мы реально слушаем. Он обязан
@@ -53,8 +55,8 @@ func (s *Server) handleSpotifyCallback(w http.ResponseWriter, r *http.Request) {
 	if reason := q.Get("error"); reason != "" {
 		s.log.Warn("вход в Spotify отклонён", "причина", reason)
 		s.state.NotifyCode("error", string(errs.SpotifyAuthDenied),
-			"Вход в Spotify не завершён: доступ не выдан.")
-		s.callbackPage(w, "Доступ не выдан", "Вернись в панель и попробуй ещё раз.")
+			i18n.T("Вход в Spotify не завершён: доступ не выдан."))
+		s.callbackPage(w, i18n.T("Доступ не выдан"), i18n.T("Вернись в панель и попробуй ещё раз."))
 		return
 	}
 
@@ -65,7 +67,7 @@ func (s *Server) handleSpotifyCallback(w http.ResponseWriter, r *http.Request) {
 		s.state.NotifyError(err)
 		code, text := errs.Describe(err)
 		s.log.Error("не завершил вход в Spotify", "код", code, "ошибка", err)
-		s.callbackPage(w, "Не получилось", text)
+		s.callbackPage(w, i18n.T("Не получилось"), text)
 		return
 	}
 
@@ -74,25 +76,25 @@ func (s *Server) handleSpotifyCallback(w http.ResponseWriter, r *http.Request) {
 		s.state.NotifyError(err)
 		s.syncSpotifyInfo()
 		_, text := errs.Describe(err)
-		s.callbackPage(w, "Вход выполнен, но есть проблема", text)
+		s.callbackPage(w, i18n.T("Вход выполнен, но есть проблема"), text)
 		return
 	}
 
 	s.syncSpotifyInfo()
-	s.state.Notify("info", "Spotify подключён: "+me.DisplayName+" · "+me.PlanLabel())
+	s.state.Notify("info", i18n.F("Spotify подключён: %s · %s", me.DisplayName, me.PlanLabel()))
 
 	if problem := s.spotify.PlanProblem(me); problem != nil {
 		s.reportPlanProblem(problem)
-		s.callbackPage(w, "Вход выполнен", problem.Message)
+		s.callbackPage(w, i18n.T("Вход выполнен"), problem.Text())
 		return
 	}
-	s.callbackPage(w, "Готово", "Spotify подключён. Возвращайся в панель — эта страница больше не нужна.")
+	s.callbackPage(w, i18n.T("Готово"), i18n.T("Spotify подключён. Возвращайся в панель — эта страница больше не нужна."))
 }
 
 func (s *Server) handleSpotifyLogout(w http.ResponseWriter, r *http.Request) {
 	s.spotify.Logout()
 	s.syncSpotifyInfo()
-	s.state.Notify("info", "Spotify отключён")
+	s.state.Notify("info", i18n.T("Spotify отключён"))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -115,7 +117,7 @@ func (s *Server) handleSpotifyCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.state.Notify("info", "Spotify на связи: "+me.DisplayName+" · "+me.PlanLabel())
+	s.state.Notify("info", i18n.F("Spotify на связи: %s · %s", me.DisplayName, me.PlanLabel()))
 	if problem := s.spotify.PlanProblem(me); problem != nil {
 		s.reportPlanProblem(problem)
 	}
@@ -161,7 +163,7 @@ func (s *Server) handleSpotifyProbe(w http.ResponseWriter, r *http.Request) {
 	if ok == 0 {
 		level = "error"
 	}
-	s.state.Notify(level, fmt.Sprintf(
+	s.state.Notify(level, i18n.F(
 		"Проверка поиска: удачных проб %d из %d. Выгрузи лог и пришли его.", ok, len(probes)))
 
 	writeJSON(w, map[string]any{"probes": probes, "ok": ok, "total": len(probes)})
@@ -192,8 +194,7 @@ func (s *Server) autoProbeSearch(query string) {
 				"запрос", query)
 			s.spotify.ProbeSearch(ctx, query, s.cfg.Get().FallbackPlaylistID)
 			s.state.Notify("error",
-				"Поиск в Spotify отказал. Приложение проверило его само — нажми "+
-					"«Сохранить лог и историю» и пришли архив.")
+				i18n.T("Поиск в Spotify отказал. Приложение проверило его само — нажми «Сохранить лог и историю» и пришли архив."))
 		}()
 	})
 }
@@ -227,7 +228,7 @@ func (s *Server) handleSpotifySnapshot(w http.ResponseWriter, r *http.Request) {
 		info.SnapshotText = snap.Describe()
 		info.SnapshotAt = &at
 	})
-	s.state.Notify("info", "Запомнил: "+snap.Describe())
+	s.state.Notify("info", i18n.F("Запомнил: %s", snap.Describe()))
 	writeJSON(w, snap)
 }
 
@@ -305,8 +306,8 @@ func (s *Server) handleProxyDetect(w http.ResponseWriter, r *http.Request) {
 			}
 			s.applyProxy()
 		}
-		s.state.Notify("info", "Прокси не нужен — до Spotify доходит напрямую.")
-		writeJSON(w, map[string]string{"address": "", "note": "прямое соединение работает"})
+		s.state.Notify("info", i18n.T("Прокси не нужен — до Spotify доходит напрямую."))
+		writeJSON(w, map[string]string{"address": "", "note": i18n.T("прямое соединение работает")})
 		return
 	}
 
@@ -322,7 +323,7 @@ func (s *Server) handleProxyDetect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.applyProxy()
-	s.state.Notify("info", "Прокси найден и включён: "+found.Address+" ("+found.Who+")")
+	s.state.Notify("info", i18n.F("Прокси найден и включён: %s (%s)", found.Address, found.Who))
 	writeJSON(w, map[string]string{"address": found.Address, "who": found.Who})
 }
 
@@ -338,9 +339,9 @@ func (s *Server) handleProxyDetect(w http.ResponseWriter, r *http.Request) {
 func (s *Server) applyProxy() {
 	if s.tunnel != nil {
 		if st := s.tunnel.Status(); st.On {
-			label := "обход внутри приложения"
+			label := i18n.T("обход внутри приложения")
 			if st.Server != "" {
-				label += " · " + st.Server
+				label += " · " + tunnel.DisplayName(st.Server)
 			}
 			if err := s.spotify.SetTunnel(st.Addr, label); err != nil {
 				s.log.Error("не смог направить Spotify через обход", "ошибка", err)
@@ -405,7 +406,7 @@ func (s *Server) syncSpotifyInfo() {
 		info.PlanLabel = me.PlanLabel()
 
 		if problem := s.spotify.PlanProblem(me); problem != nil {
-			info.PlanNote = problem.Message
+			info.PlanNote = problem.Text()
 			info.PlanNoteCode = string(problem.Code)
 		}
 	}
@@ -431,25 +432,28 @@ func (s *Server) syncSpotifyInfo() {
 	// подписка — повод предупредить, а не повод объявить всё сломанным.
 	switch {
 	case !info.HasClientID:
-		s.state.SetConnIdle("Spotify", "Не настроено")
+		s.state.SetConnIdle("Spotify", i18n.T("Не настроено"))
 	case !info.Connected:
-		s.state.SetConnIdle("Spotify", "Не подключён")
+		s.state.SetConnIdle("Spotify", i18n.T("Не подключён"))
 	case me == nil:
 		// Красная лампочка без кода — тупик: человек может сказать мне только
 		// «не работает». Поэтому называем настоящую причину, а пока проверка
 		// ещё идёт, вообще не пугаем красным.
 		if done, err := s.spotify.LastCheck(); done && err != nil {
 			code, text := errs.Describe(err)
-			s.state.SetConnFail("Spotify", string(code)+" · "+text)
+			if code != "" {
+				text = string(code) + " · " + text
+			}
+			s.state.SetConnFail("Spotify", text)
 		} else if done {
-			s.state.SetConnFail("Spotify", "Вход есть, а данных нет. Нажми «Проверить связь».")
+			s.state.SetConnFail("Spotify", i18n.T("Вход есть, а данных нет. Нажми «Проверить связь»."))
 		} else {
-			s.state.SetConnIdle("Spotify", "Проверяю связь…")
+			s.state.SetConnIdle("Spotify", i18n.T("Проверяю связь…"))
 		}
 	case me.Plan() == spotify.PlanFree:
-		s.state.SetConnFail("Spotify", string(errs.SpotifyNoPremium)+" · нет Premium")
+		s.state.SetConnFail("Spotify", i18n.F("%s · нет Premium", string(errs.SpotifyNoPremium)))
 	case me.Plan() == spotify.PlanUnknown:
-		s.state.SetConnOK("Spotify", me.DisplayName+" · подписка не определена")
+		s.state.SetConnOK("Spotify", i18n.F("%s · подписка не определена", me.DisplayName))
 	default:
 		s.state.SetConnOK("Spotify", me.DisplayName+" · Premium")
 	}
@@ -463,7 +467,7 @@ func (s *Server) reportPlanProblem(problem *errs.Error) {
 		s.state.NotifyError(problem)
 		return
 	}
-	s.state.NotifyWarn(problem.Code, problem.Message)
+	s.state.NotifyWarn(problem.Code, problem.Text())
 }
 
 // handleSpotifyPlaylists отдаёт плейлисты стримера для выпадающего списка.
@@ -537,7 +541,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 
 func (s *Server) callbackPage(w http.ResponseWriter, title, text string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+	fmt.Fprintf(w, `<!doctype html><html lang="`+i18n.Lang()+`"><head><meta charset="utf-8">
 <title>%s</title><style>
 body{background:#0e1013;color:#e7eaf0;font:16px/1.5 "Segoe UI",system-ui,sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
@@ -562,7 +566,7 @@ func (s *Server) WarnIfPortChanged() {
 		return
 	}
 
-	text := fmt.Sprintf(
+	text := i18n.F(
 		"Порт %d был занят, панель работает на %s. В настройках приложения Spotify адрес для возврата должен быть ровно %s",
 		want, actual, s.redirectURI())
 	s.log.Warn("панель на другом порту", "ожидали", want, "получили", actual)

@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -89,8 +88,8 @@ func download(ctx context.Context, url, dest string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return errs.New(errs.TunnelNoTool,
-			fmt.Sprintf("Не получилось скачать программу обхода (ответ %d).", resp.StatusCode))
+		return errs.Newf(errs.TunnelNoTool,
+			"Не получилось скачать программу обхода (ответ %d).", resp.StatusCode)
 	}
 
 	// Читаем архив в память, а не на диск: распаковщику нужен произвольный

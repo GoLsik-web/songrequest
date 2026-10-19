@@ -95,7 +95,7 @@ func Build(dataDir, configPath string, red *logx.Redactor, info Info, extra map[
 			continue
 		}
 		if err := add(name, []byte(red.Clean(string(extra[name])))); err != nil {
-			return nil, "", errs.Wrap(errs.DiagExport, "Не смог упаковать "+name+".", err)
+			return nil, "", errs.Wrapf(errs.DiagExport, err, "Не смог упаковать %s.", name)
 		}
 	}
 

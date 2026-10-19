@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -258,7 +257,7 @@ func (c *Client) postToken(ctx context.Context, form url.Values) (*tokenResponse
 			return nil, errs.New(errs.SpotifyUnreachable,
 				"У Spotify временные неполадки со входом. Попробуй ещё раз.")
 		}
-		return nil, errs.New(errs.SpotifyAuthToken, tokenErrorText(body))
+		return nil, tokenError(body)
 	}
 
 	var tr tokenResponse
@@ -274,8 +273,8 @@ func (c *Client) postToken(ctx context.Context, form url.Values) (*tokenResponse
 	return &tr, nil
 }
 
-// tokenErrorText переводит ошибку авторизации на человеческий язык.
-func tokenErrorText(body []byte) string {
+// tokenError переводит ошибку авторизации на человеческий язык.
+func tokenError(body []byte) *errs.Error {
 	var e struct {
 		Error     string `json:"error"`
 		ErrorDesc string `json:"error_description"`
@@ -284,13 +283,17 @@ func tokenErrorText(body []byte) string {
 
 	switch e.Error {
 	case "invalid_client":
-		return "Spotify не узнал Client ID. Проверь, что он вставлен целиком и без пробелов."
+		return errs.New(errs.SpotifyAuthToken, "Spotify не узнал Client ID. Проверь, что он вставлен целиком и без пробелов.")
 	case "invalid_grant":
-		return "Spotify отклонил вход. Чаще всего это значит, что адрес в настройках приложения Spotify отличается от нужного хотя бы одним символом."
+		return errs.New(errs.SpotifyAuthToken, "Spotify отклонил вход. Чаще всего это значит, что адрес в настройках приложения Spotify отличается от нужного хотя бы одним символом.")
 	case "invalid_request":
-		return fmt.Sprintf("Spotify не принял запрос на вход (%s).", firstNonEmpty(e.ErrorDesc, "без объяснения"))
+		var why any = errs.Phrase("без объяснения")
+		if e.ErrorDesc != "" {
+			why = e.ErrorDesc
+		}
+		return errs.Newf(errs.SpotifyAuthToken, "Spotify не принял запрос на вход (%s).", why)
 	}
-	return "Не удалось завершить вход в Spotify. Попробуй ещё раз, а если не выйдет — выгрузи лог."
+	return errs.New(errs.SpotifyAuthToken, "Не удалось завершить вход в Spotify. Попробуй ещё раз, а если не выйдет — выгрузи лог.")
 }
 
 // saveTokens кладёт токены в память и в хранилище учётных данных.

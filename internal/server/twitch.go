@@ -2,15 +2,14 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/twitch"
 )
 
@@ -43,7 +42,7 @@ func (s *Server) handleTwitchLogin(w http.ResponseWriter, r *http.Request) {
 		t.Note = ""
 		t.NoteCode = ""
 	})
-	s.state.Notify("info", "Открой "+login.VerifyURL+" и введи код "+login.UserCode)
+	s.state.Notify("info", i18n.F("Открой %s и введи код %s", login.VerifyURL, login.UserCode))
 
 	// Ждём подтверждения в фоне: стример вводит код на телефоне, а панель
 	// в это время должна оставаться живой.
@@ -68,7 +67,7 @@ func (s *Server) awaitTwitchLogin() {
 	}
 
 	s.clearPendingCode()
-	s.state.Notify("info", "Twitch подключён")
+	s.state.Notify("info", i18n.T("Twitch подключён"))
 	s.startTwitch(s.baseContext())
 }
 
@@ -100,11 +99,11 @@ func (s *Server) startTwitch(ctx context.Context) {
 	if !user.HasChannelPoints() {
 		problem := errs.New(errs.TwitchNoAffiliate,
 			"Канал подключён, но баллов на нём нет — они бывают только у аффилиатов и партнёров Twitch. Приложение исправно, просто заказывать за баллы не получится. Донаты будут работать.")
-		s.state.NotifyWarn(problem.Code, problem.Message)
+		s.state.NotifyWarn(problem.Code, problem.Text())
 		s.log.Info("на канале нет баллов, награду не создаём",
 			"канал", user.Login, "тип_канала", user.Type)
 		s.state.UpdateTwitch(func(t *app.TwitchInfo) {
-			t.Note = problem.Message
+			t.Note = problem.Text()
 			t.NoteCode = string(problem.Code)
 		})
 
@@ -146,7 +145,7 @@ func (s *Server) startTwitch(ctx context.Context) {
 		t.Note = ""
 		t.NoteCode = ""
 	})
-	s.state.Notify("info", "Награда «"+reward.Title+"» готова, стоит "+strconv.Itoa(reward.Cost)+" баллов")
+	s.state.Notify("info", i18n.F("Награда «%s» готова, стоит %d баллов", reward.Title, reward.Cost))
 
 	// Вторая награда — за плейлист. Её может не быть вовсе: это отдельная
 	// галочка в настройках, и включают её не все.
@@ -160,9 +159,9 @@ func (s *Server) startTwitch(ctx context.Context) {
 	// момент, чтобы это выяснить.
 	if at, soon := s.twitch.RefreshExpiry(); soon {
 		days := int(time.Until(at).Hours() / 24)
-		s.state.NotifyWarn(errs.TwitchAuthExpired, fmt.Sprintf(
+		s.state.NotifyWarn(errs.TwitchAuthExpired, i18n.F(
 			"Доступ к Twitch кончается через %d %s — нажми «Подключить Twitch» ещё раз, это займёт минуту.",
-			days, plural(days, "день", "дня", "дней")))
+			days, i18n.Plural(days, [3]string{"день", "дня", "дней"}, [2]string{"day", "days"})))
 	}
 
 	s.startEventSub(ctx, []string{reward.ID, playlistID})
@@ -188,13 +187,12 @@ func (s *Server) warnAboutScopes() {
 	}
 	s.log.Warn("вход в Twitch выдан без части прав", "чего_не хватает", missing)
 
-	what := "часть возможностей"
+	what := i18n.T("часть возможностей")
 	if slices.Contains(missing, "user:read:chat") {
-		what = "команды в чате"
+		what = i18n.T("команды в чате")
 	}
-	s.state.NotifyCode("warn", string(errs.TwitchScopes),
-		"Вход в Twitch выдан без всех прав, поэтому "+what+" работать не будут. "+
-			"Нажми «Подключить Twitch» ещё раз — это займёт минуту.")
+	s.state.NotifyCode("warn", string(errs.TwitchScopes), i18n.F(
+		"Вход в Twitch выдан без всех прав, поэтому %s работать не будут. Нажми «Подключить Twitch» ещё раз — это займёт минуту.", what))
 }
 
 // startEventSub поднимает подписку на заказы, если она ещё не поднята.
@@ -283,7 +281,7 @@ func (s *Server) handleRedemption(r twitch.Redemption) {
 		Status:   app.OrderNew,
 		Match:    app.OrderMatch{State: app.MatchSearching},
 	})
-	s.state.Notify("info", "Заказ от "+r.UserName+": "+r.UserInput)
+	s.state.Notify("info", i18n.F("Заказ от %s: %s", r.UserName, r.UserInput))
 
 	// Наград две, и заказы у них разные: за трек ищем один трек, за плейлист
 	// читаем пачку и кладём её ждать одобрения. Разбираемся здесь, по номеру
@@ -350,9 +348,9 @@ func (s *Server) handleRedemptionAction(w http.ResponseWriter, r *http.Request) 
 
 	s.state.SetRedemptionStatus(id, status)
 	if status == app.OrderRefunded {
-		s.state.Notify("info", "Баллы за заказ возвращены")
+		s.state.Notify("info", i18n.T("Баллы за заказ возвращены"))
 	} else {
-		s.state.Notify("info", "Заказ принят, баллы не возвращаются")
+		s.state.Notify("info", i18n.T("Заказ принят, баллы не возвращаются"))
 	}
 	writeJSON(w, map[string]string{"status": status})
 }
@@ -361,7 +359,7 @@ func (s *Server) handleTwitchLogout(w http.ResponseWriter, r *http.Request) {
 	s.twitch.Logout()
 	s.clearPendingCode()
 	s.syncTwitchInfo()
-	s.state.Notify("info", "Twitch отключён")
+	s.state.Notify("info", i18n.T("Twitch отключён"))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -406,24 +404,24 @@ func (s *Server) syncTwitchInfo() {
 	info := s.state.Snapshot().Twitch
 	switch {
 	case !info.HasClientID:
-		s.state.SetConnIdle("Twitch", "Не настроено")
+		s.state.SetConnIdle("Twitch", i18n.T("Не настроено"))
 	case !info.Connected:
-		s.state.SetConnIdle("Twitch", "Не подключён")
+		s.state.SetConnIdle("Twitch", i18n.T("Не подключён"))
 	case user == nil:
 		if done, err := s.twitch.LastCheck(); done && err != nil {
 			code, text := errs.Describe(err)
 			s.state.SetConnFail("Twitch", string(code)+" · "+text)
 		} else if done {
-			s.state.SetConnFail("Twitch", "Вход есть, а данных нет. Отключи и подключи заново.")
+			s.state.SetConnFail("Twitch", i18n.T("Вход есть, а данных нет. Отключи и подключи заново."))
 		} else {
-			s.state.SetConnIdle("Twitch", "Проверяю связь…")
+			s.state.SetConnIdle("Twitch", i18n.T("Проверяю связь…"))
 		}
 	case !info.HasPoints:
 		// Не ошибка, а свойство канала: чинить нечего, красный цвет тут
 		// сказал бы «приложение сломалось», и человек бросил бы установку.
-		s.state.SetConnIdle("Twitch", user.Login+" · баллов на канале нет")
+		s.state.SetConnIdle("Twitch", i18n.F("%s · баллов на канале нет", user.Login))
 	case !info.RewardReady:
-		s.state.SetConnFail("Twitch", user.Login+" · награда не создана")
+		s.state.SetConnFail("Twitch", i18n.F("%s · награда не создана", user.Login))
 	default:
 		s.state.SetConnOK("Twitch", user.Login)
 	}
@@ -475,7 +473,7 @@ func (s *Server) pushReward() {
 	}
 
 	s.syncTwitchInfo()
-	s.state.Notify("info", fmt.Sprintf("Награда на канале обновлена: «%s», %d",
+	s.state.Notify("info", i18n.F("Награда на канале обновлена: «%s», %d",
 		reward.Title, reward.Cost))
 }
 
@@ -557,7 +555,7 @@ func (s *Server) ensurePlaylistReward(ctx context.Context) string {
 	if err != nil {
 		code, text := errs.Describe(err)
 		s.log.Warn("не создал награду за плейлист", "код", code, "ошибка", err)
-		s.state.NotifyWarn(code, "Награда за плейлист: "+text)
+		s.state.NotifyWarn(code, i18n.F("Награда за плейлист: %s", text))
 		s.state.UpdateTwitch(func(t *app.TwitchInfo) { t.PlaylistReady = false })
 		return ""
 	}
@@ -577,9 +575,8 @@ func (s *Server) ensurePlaylistReward(ctx context.Context) string {
 		t.PlaylistCost = reward.Cost
 	})
 	if changed {
-		s.state.Notify("info", "Награда «"+reward.Title+"» готова, стоит "+
-			strconv.Itoa(reward.Cost)+" баллов за "+
-			strconv.Itoa(s.cfg.Get().PlaylistTrackCount())+" треков")
+		s.state.Notify("info", i18n.F("Награда «%s» готова, стоит %d баллов за %d треков",
+			reward.Title, reward.Cost, s.cfg.Get().PlaylistTrackCount()))
 	}
 	return reward.ID
 }

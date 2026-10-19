@@ -186,8 +186,8 @@ func outbound(s Server) (xrayOutbound, error) {
 		}, nil
 	}
 
-	return xrayOutbound{}, errs.New(errs.TunnelBadKey,
-		"Ключ вида «"+s.Kind+"» приложение не поддерживает.")
+	return xrayOutbound{}, errs.Newf(errs.TunnelBadKey,
+		"Ключ вида «%s» приложение не поддерживает.", s.Kind)
 }
 
 // streamSettings описывает, как идёт соединение до сервера: шифрование и

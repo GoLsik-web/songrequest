@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"songrequest/internal/i18n"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,10 +87,10 @@ type Server struct {
 	// ytTunnel — отдельный обход только для YouTube (см. yttunnel.go).
 	ytTunnel   *tunnel.Tunnel
 	ytTunnelMu sync.Mutex
-	youtube *youtube.Player
-	yandex  *links.YandexReader
-	dataDir string
-	version string
+	youtube    *youtube.Player
+	yandex     *links.YandexReader
+	dataDir    string
+	version    string
 
 	http *http.Server
 	ln   net.Listener
@@ -443,7 +444,7 @@ func (s *Server) Serve(ctx context.Context) error {
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !localHost(r.Host) {
-			http.Error(w, "запрос не с этого компьютера", http.StatusForbidden)
+			http.Error(w, i18n.T("запрос не с этого компьютера"), http.StatusForbidden)
 			return
 		}
 
@@ -466,7 +467,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if origin := r.Header.Get("Origin"); origin != "" && !localOrigin(origin) {
 				s.log.Warn("запрос с чужого сайта отклонён", "origin", origin, "путь", r.URL.Path)
-				http.Error(w, "запрос с чужого сайта", http.StatusForbidden)
+				http.Error(w, i18n.T("запрос с чужого сайта"), http.StatusForbidden)
 				return
 			}
 		}
@@ -501,7 +502,7 @@ func (s *Server) page(sub fs.FS, name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data, err := fs.ReadFile(sub, name)
 		if err != nil {
-			http.Error(w, "страница не найдена", http.StatusNotFound)
+			http.Error(w, i18n.T("страница не найдена"), http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -528,7 +529,7 @@ func (s *Server) OnOpenAuth(f func(url string) error) { s.openAuth.Store(&f) }
 func (s *Server) handleShowWindow(w http.ResponseWriter, r *http.Request) {
 	show := s.showWindow.Load()
 	if show == nil {
-		http.Error(w, "окна нет, панель открыта в браузере", http.StatusServiceUnavailable)
+		http.Error(w, i18n.T("окна нет, панель открыта в браузере"), http.StatusServiceUnavailable)
 		return
 	}
 	(*show)()
@@ -553,7 +554,7 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	current := s.cfg.Get()
 	incoming := current
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&incoming); err != nil {
-		http.Error(w, "не разобрал настройки", http.StatusBadRequest)
+		http.Error(w, i18n.T("не разобрал настройки"), http.StatusBadRequest)
 		return
 	}
 
@@ -576,6 +577,7 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		incoming.SpotifyProxy = current.SpotifyProxy
 	}
 	incoming.Widget.Normalize()
+	incoming.NormalizeLanguage()
 
 	// Прокси мог измениться — переключаем сразу, не дожидаясь перезапуска.
 	proxyChanged := incoming.SpotifyProxy != current.SpotifyProxy
@@ -591,7 +593,7 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.cfg.Update(func(c *config.Config) { *c = incoming }); err != nil {
 		s.log.Error("сохранение настроек", "ошибка", err)
-		http.Error(w, "не смог сохранить настройки", http.StatusInternalServerError)
+		http.Error(w, i18n.T("не смог сохранить настройки"), http.StatusInternalServerError)
 		return
 	}
 	// Обе карточки: сохранили Client ID Twitch — лампочка Twitch обязана
@@ -621,8 +623,10 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	s.syncTwitchInfo()
 	// Оформление виджета едет в OBS через то же состояние: правка в панели
 	// видна на сцене сразу, перезагружать источник не нужно.
+	// Язык — сразу для всего: панель, виджет, трей и ответы в чате.
+	i18n.SetLang(s.cfg.Get().Language)
 	s.state.SetWidget(s.cfg.Get().Widget)
-	s.state.Notify("info", "Настройки сохранены")
+	s.state.Notify("info", i18n.T("Настройки сохранены"))
 	writeJSON(w, s.cfg.Get())
 }
 

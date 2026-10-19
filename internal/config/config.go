@@ -30,6 +30,11 @@ type Config struct {
 	// Локальный сервер
 	Port int `json:"port"` // 0 = выбрать свободный порт
 
+	// Language — язык всего, что видят стример и зрители: панель, мастер,
+	// виджет, трей, ответы бота в чате. "ru" (по умолчанию) или "en".
+	// Журнал остаётся русским при любом выборе.
+	Language string `json:"language"`
+
 	// Window — размер и положение окна программы с прошлого запуска.
 	// Пустое (все нули) означает «открыть по умолчанию, посередине экрана».
 	Window Window `json:"window"`
@@ -202,6 +207,7 @@ type MatchWeights struct {
 func Defaults() Config {
 	return Config{
 		Port:                8977,
+		Language:            "ru",
 		RewardTitle:         "Заказ трека",
 		RewardCost:          1000,
 		CommandPrefix:       "!",
@@ -316,6 +322,7 @@ func Load(dir string) (*File, error) {
 	// рабочий вид сразу, а не когда виджет уже висит на стриме.
 	f.cfg.Widget.Normalize()
 	f.cfg.NormalizeMatching()
+	f.cfg.NormalizeLanguage()
 	return f, nil
 }
 
@@ -435,3 +442,10 @@ func (c Config) ResumeModeIncomplete() bool {
 
 // Path — путь к файлу настроек, показываем его в панели.
 func (f *File) Path() string { return f.path }
+
+// NormalizeLanguage приводит язык к "ru" или "en". Пусто и мусор — русский.
+func (c *Config) NormalizeLanguage() {
+	if c.Language != "en" {
+		c.Language = "ru"
+	}
+}

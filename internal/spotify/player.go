@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"songrequest/internal/i18n"
 	"strings"
 	"time"
 
@@ -28,10 +29,10 @@ type PlayerState struct {
 		Type string `json:"type"`
 		URI  string `json:"uri"`
 	} `json:"context"`
-	ProgressMs int  `json:"progress_ms"`
-	IsPlaying  bool `json:"is_playing"`
-	Item       *StateItem `json:"item"`
-	CurrentlyPlayingType string `json:"currently_playing_type"`
+	ProgressMs           int        `json:"progress_ms"`
+	IsPlaying            bool       `json:"is_playing"`
+	Item                 *StateItem `json:"item"`
+	CurrentlyPlayingType string     `json:"currently_playing_type"`
 }
 
 // StateItem — играющий трек в ответе Spotify. Отдельным типом, потому что
@@ -265,7 +266,7 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 	if snap == nil || snap.Empty {
 		return RestoreOutcome{
 			Code:    errs.SpotifyNothing,
-			Message: "Возвращать нечего: в момент заказа Spotify ничего не играл.",
+			Message: i18n.T("Возвращать нечего: в момент заказа Spotify ничего не играл."),
 		}, nil
 	}
 
@@ -282,7 +283,7 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 			"сейчас_играет", current.Item.Name, "ожидали", playedURI)
 		return RestoreOutcome{
 			Code:    errs.SpotifyStale,
-			Message: "Музыку переключили вручную, поэтому ничего не трогаю.",
+			Message: i18n.T("Музыку переключили вручную, поэтому ничего не трогаю."),
 		}, nil
 	}
 
@@ -381,9 +382,9 @@ func (c *Client) Restore(ctx context.Context, snap *Snapshot, playedURI string, 
 		lostContext = true
 	}
 
-	msg := fmt.Sprintf("Вернул: %s — %s с %s.", snap.ArtistName, snap.TrackName, mmss(snap.PositionMs))
+	msg := i18n.F("Вернул: %s — %s с %s.", snap.ArtistName, snap.TrackName, mmss(snap.PositionMs))
 	if lostContext {
-		msg += " Плейлист вернуть не вышло — Spotify не запоминает, откуда играла эта музыка."
+		msg += i18n.T(" Плейлист вернуть не вышло — Spotify не запоминает, откуда играла эта музыка.")
 	}
 	return RestoreOutcome{
 		Restored:    true,

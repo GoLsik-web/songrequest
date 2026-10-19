@@ -127,8 +127,8 @@ func (d *DonationAlerts) user(ctx context.Context, token string) (*daUser, error
 			"Слетела авторизация DonationAlerts. Подключи его заново.")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, errs.New(errs.DonationsUnreachable,
-			fmt.Sprintf("DonationAlerts ответил ошибкой (%d).", resp.StatusCode))
+		return nil, errs.Newf(errs.DonationsUnreachable,
+			"DonationAlerts ответил ошибкой (%d).", resp.StatusCode)
 	}
 
 	var out struct {
@@ -166,8 +166,8 @@ func (d *DonationAlerts) channelToken(ctx context.Context, token, channel, clien
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", errs.New(errs.DonationsUnreachable,
-			fmt.Sprintf("DonationAlerts не дал доступ к каналу (%d).", resp.StatusCode))
+		return "", errs.Newf(errs.DonationsUnreachable,
+			"DonationAlerts не дал доступ к каналу (%d).", resp.StatusCode)
 	}
 
 	var out struct {
@@ -287,7 +287,8 @@ func (d *DonationAlerts) connect(ctx context.Context, conn *websocket.Conn, toke
 		return "", err
 	}
 	if reply.Error != nil {
-		return "", errs.New(errs.DonationsAuth, "DonationAlerts отклонил подключение: "+reply.Error.Message)
+		d.log.Warn("DonationAlerts отклонил подключение", "ответ", reply.Error.Message)
+		return "", errs.New(errs.DonationsAuth, "DonationAlerts не принял вход — подключи DonationAlerts заново в настройках.")
 	}
 	if reply.Result.Client == "" {
 		return "", errs.New(errs.DonationsBadResponse, "DonationAlerts не выдал идентификатор подключения.")

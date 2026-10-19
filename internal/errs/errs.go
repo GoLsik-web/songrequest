@@ -5,7 +5,11 @@
 // Текст при этом пишем так, чтобы человек понял, что делать, без слова «токен».
 package errs
 
-import "fmt"
+import (
+	"fmt"
+
+	"songrequest/internal/i18n"
+)
 
 // Code — короткий код ошибки, который видно в панели.
 type Code string
@@ -134,10 +138,17 @@ const (
 )
 
 // Error — ошибка с кодом. Message показываем стримеру, cause уходит в лог.
+//
+// Message всегда русский: он же пишется в журнал. Стримеру текст уходит
+// через Text — там он переводится на язык панели. Для текстов со вставками
+// (Newf, Wrapf) храним строку формата и значения, чтобы перевести формат
+// целиком, а не склеенный результат.
 type Error struct {
 	Code    Code
 	Message string
 	cause   error
+	format  string
+	args    []any
 }
 
 // New создаёт ошибку с кодом и понятным текстом.
@@ -148,6 +159,33 @@ func New(code Code, message string) *Error {
 // Wrap оборачивает техническую ошибку в понятную.
 func Wrap(code Code, message string, cause error) *Error {
 	return &Error{Code: code, Message: message, cause: cause}
+}
+
+// Newf — New с текстом по строке формата: Newf(code, "Ответ %d.", status).
+// Строка формата — ключ перевода, поэтому собирать её на ходу нельзя.
+func Newf(code Code, format string, args ...any) *Error {
+	return &Error{Code: code, Message: fmt.Sprintf(format, args...), format: format, args: args}
+}
+
+// Wrapf — Wrap с текстом по строке формата. cause может быть nil.
+func Wrapf(code Code, cause error, format string, args ...any) *Error {
+	e := Newf(code, format, args...)
+	e.cause = cause
+	return e
+}
+
+// Phrase — вставка в Newf/Wrapf, которую тоже надо перевести
+// («без объяснения»). Переводится в момент показа.
+type Phrase string
+
+func (p Phrase) String() string { return i18n.T(string(p)) }
+
+// Text — текст для человека на языке панели.
+func (e *Error) Text() string {
+	if e.format != "" {
+		return i18n.F(e.format, e.args...)
+	}
+	return i18n.T(e.Message)
 }
 
 func (e *Error) Error() string {
@@ -162,7 +200,7 @@ func (e *Error) Unwrap() error { return e.cause }
 
 // UserText — то, что видит стример: «SP-04 · Слетела авторизация Spotify…».
 func (e *Error) UserText() string {
-	return fmt.Sprintf("%s · %s", e.Code, e.Message)
+	return fmt.Sprintf("%s · %s", e.Code, e.Text())
 }
 
 // CodeOf достаёт код из любой ошибки; если кода нет — пустая строка.
@@ -187,26 +225,60 @@ func CodeOf(err error) Code {
 func Describe(err error) (Code, string) {
 	var e *Error
 	if !As(err, &e) {
-		return "", "Непонятная ошибка. Загляни в лог приложения."
+		return "", i18n.T("Непонятная ошибка. Загляни в лог приложения.")
 	}
-	text := e.Message
-	if root := rootMessage(e); root != "" && root != e.Message {
-		text += " " + root
+	text := e.Text()
+	if root := rootError(e); root != nil && root.Message != e.Message {
+		text += " " + root.Text()
 	}
 	return e.Code, text
 }
 
-// rootMessage достаёт самое внутреннее наше объяснение. Чужие ошибки (обрыв
+// rootError достаёт самое внутреннее наше объяснение. Чужие ошибки (обрыв
 // сети, отказ библиотеки) сюда не попадают: они написаны не для людей.
-func rootMessage(e *Error) string {
-	message := ""
+func rootError(e *Error) *Error {
+	var root *Error
 	for cause := e.cause; cause != nil; {
 		var inner *Error
 		if !As(cause, &inner) {
 			break
 		}
-		message = inner.Message
+		root = inner
 		cause = inner.cause
 	}
-	return message
+	return root
+}
+
+// HTTPStatusText — понятная фраза вместо голого номера ответа сервиса.
+// Сам номер человеку ничего не говорит, его место в логе.
+// Возвращает русский текст (для журнала и склейки); стримеру — через HTTPStatus.
+func HTTPStatusText(service string, status int) string {
+	return fmt.Sprintf(httpStatusFormat(status), service)
+}
+
+// HTTPStatus — ошибка с кодом и фразой HTTPStatusText, переводимая при показе.
+func HTTPStatus(code Code, service string, status int) *Error {
+	return Newf(code, httpStatusFormat(status), service)
+}
+
+// HTTPStatusPhrase — та же фраза как вставка в Newf/Wrapf: переводится при показе.
+func HTTPStatusPhrase(service string, status int) fmt.Stringer {
+	return httpPhrase{service, status}
+}
+
+type httpPhrase struct {
+	service string
+	status  int
+}
+
+func (p httpPhrase) String() string { return i18n.F(httpStatusFormat(p.status), p.service) }
+
+func httpStatusFormat(status int) string {
+	switch {
+	case status >= 500:
+		return "%s временно сбоит. Попробуй чуть позже."
+	case status == 403 || status == 429:
+		return "%s временно не пускает. Попробуй чуть позже."
+	}
+	return "%s отказал. Подробности в логе."
 }

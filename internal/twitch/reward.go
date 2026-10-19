@@ -146,9 +146,7 @@ func (c *Client) EnsureRewardSpec(ctx context.Context, knownID string, spec Rewa
 		// Награда с таким названием уже есть — но создана не нами, а значит
 		// баллы за неё вернуть нельзя. Об этом надо сказать прямо.
 		if isDuplicateTitle(err) {
-			return nil, errs.New(errs.TwitchForeignAward, fmt.Sprintf(
-				"На канале уже есть награда «%s», созданная не этим приложением. Баллы за неё вернуть невозможно — переименуй её в настройках Twitch или задай другое название в настройках приложения.",
-				spec.Title))
+			return nil, errs.Newf(errs.TwitchForeignAward, "На канале уже есть награда «%s», созданная не этим приложением. Баллы за неё вернуть невозможно — переименуй её в настройках Twitch или задай другое название в настройках приложения.", spec.Title)
 		}
 		// 403 на этой ручке практически всегда означает одно: у канала нет
 		// баллов. Полагаться на текст сообщения Twitch нельзя — формулировку
@@ -297,7 +295,10 @@ func (c *Client) setRedemptionStatus(ctx context.Context, rewardID, redemptionID
 			what = "отметить заказ выполненным"
 		}
 		c.log.Error("не смог "+what, "заказ", redemptionID, "ошибка", err)
-		return errs.Wrap(errs.TwitchRefund, "Не получилось "+what+" — зритель остался без ответа.", err)
+		if status == "FULFILLED" {
+			return errs.Wrap(errs.TwitchRefund, "Не получилось отметить заказ выполненным — зритель остался без ответа.", err)
+		}
+		return errs.Wrap(errs.TwitchRefund, "Не получилось вернуть баллы — зритель остался без ответа.", err)
 	}
 
 	c.log.Info("статус заказа обновлён", "заказ", redemptionID, "статус", status)
@@ -310,8 +311,8 @@ func isDuplicateTitle(err error) bool {
 	if !errs.As(err, &e) {
 		return false
 	}
-	return contains(e.Message, "CREATE_CUSTOM_REWARD_DUPLICATE_REWARD") ||
-		contains(e.Message, "DUPLICATE_REWARD")
+	// Текст Twitch лежит в причине ошибки, поэтому смотрим всю строку.
+	return contains(err.Error(), "DUPLICATE_REWARD")
 }
 
 // UnfulfilledRedemptions — заказы награды, которые всё ещё ждут ответа.

@@ -90,6 +90,25 @@ func (s Server) String() string {
 	return fmt.Sprintf("%s (%s, %s:%d)", name, s.Kind, s.Host, s.Port)
 }
 
+// Name — как сервер называть человеку: подпись из ключа (там обычно страна),
+// а без неё — адрес. Ни протокола, ни порта: человеку они ничего не говорят.
+func (s Server) Name() string {
+	if s.Label != "" {
+		return s.Label
+	}
+	return s.Host
+}
+
+// DisplayName превращает строку из String() обратно в имя для человека:
+// отрезает хвост «(vless, host:port)». Хранится и сравнивается сервер по
+// полной строке, а показывается так.
+func DisplayName(server string) string {
+	if i := strings.LastIndex(server, " ("); i > 0 && strings.HasSuffix(server, ")") {
+		return server[:i]
+	}
+	return server
+}
+
 // ParseKey разбирает то, что человек вставил в поле «ключ».
 //
 // Вставляют по-разному: один ключ, десяток ключей списком или содержимое
@@ -295,7 +314,7 @@ func splitLink(line, scheme string) (link, error) {
 
 	at := strings.LastIndex(rest, "@")
 	if at < 0 {
-		return link{}, errs.New(errs.TunnelBadKey, "В ключе "+scheme+" нет адреса сервера.")
+		return link{}, errs.Newf(errs.TunnelBadKey, "В ключе %s нет адреса сервера.", scheme)
 	}
 	out.user = unescape(rest[:at])
 
@@ -502,5 +521,5 @@ func splitHostPort(hostPort string) (string, int, error) {
 }
 
 func badKey(kind string, err error) error {
-	return errs.Wrap(errs.TunnelBadKey, "Ключ "+kind+" записан непонятно.", err)
+	return errs.Wrapf(errs.TunnelBadKey, err, "Ключ %s записан непонятно.", kind)
 }

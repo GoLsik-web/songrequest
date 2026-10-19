@@ -9,6 +9,7 @@ import (
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/player"
 	"songrequest/internal/queue"
 	"songrequest/internal/spotify"
@@ -39,8 +40,8 @@ func (s *Server) setupPlayer(cfg *config.File) {
 	// панели это выглядит как «заказ принят и завис», и именно так это и
 	// описывали — «еле включается».
 	s.player.OnWaiting = func(item queue.Item, left time.Duration) {
-		s.state.Notify("info", "«"+item.Artist+" — "+item.Title+
-			"» заиграет после текущего трека, примерно через "+afterDuration(left)+".")
+		s.state.Notify("info", i18n.F("«%s» заиграет после текущего трека, примерно через %s.",
+			artistTitle(item.Artist, item.Title), afterDuration(left)))
 	}
 
 	// Заказ не удалось включить — это не «отыграл». Баллы списаны, зритель
@@ -323,8 +324,8 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 			"зритель", item.Requester, "заказ", item.RawRequest, "причина", reject.Reason)
 		s.history(item, "rejected", reject.Reason)
 		s.refund(ctx, item, reject.Reason)
-		s.state.NotifyWarn(errs.Code(""), "Отказ · "+item.Requester+": "+reject.Reason)
-		s.say(ctx, "@"+item.Requester+", заказ не принят: "+reject.Reason)
+		s.state.NotifyWarn(errs.Code(""), i18n.F("Отказ · %s: %s", item.Requester, reject.Reason))
+		s.say(ctx, i18n.F("@%s, заказ не принят: %s", item.Requester, reject.Reason))
 		return
 	}
 
@@ -336,7 +337,7 @@ func (s *Server) enqueue(ctx context.Context, item queue.Item) {
 	}
 
 	s.log.Info("заказ в очереди",
-		"позиция", added.Position, "трек", added.Artist+" — "+added.Title,
+		"позиция", added.Position, "трек", artistTitle(added.Artist, added.Title),
 		"заказал", added.Requester)
 
 	if added.Source == queue.SourceDonation {
@@ -431,7 +432,7 @@ func (s *Server) skipPlaying(actor string) (skipResult, error) {
 		if !s.player.Waiting() {
 			return skipResult{}, errs.New(errs.PlayerIdle, "Сейчас ничего не играет.")
 		}
-		s.state.Notify("info", actor+" не стал ждать конца трека — включаю заказ")
+		s.state.Notify("info", i18n.F("%s не стал ждать конца трека — включаю заказ", actor))
 		s.modLog(actor, "не стал ждать конца трека", "")
 		s.player.Skip()
 		return skipResult{Hurried: true}, nil
@@ -443,8 +444,8 @@ func (s *Server) skipPlaying(actor string) (skipResult, error) {
 	s.setSkip("скипнул "+actor, true)
 	s.rememberSkip(now.Item, actor)
 
-	s.modLog(actor, "скипнул", now.Item.Artist+" — "+now.Item.Title)
-	s.state.Notify("info", actor+" скипнул: "+now.Item.Artist+" — "+now.Item.Title)
+	s.modLog(actor, "скипнул", artistTitle(now.Item.Artist, now.Item.Title))
+	s.state.Notify("info", i18n.F("%s скипнул: %s", actor, artistTitle(now.Item.Artist, now.Item.Title)))
 	s.player.Skip()
 
 	return skipResult{Item: now.Item, Refunded: now.Item.RedemptionID != ""}, nil
@@ -530,8 +531,8 @@ func (s *Server) removeFromQueue(ctx context.Context, id int64, refund bool, act
 		return err
 	}
 	s.history(item, "removed", what)
-	s.modLog(actor, what, item.Artist+" — "+item.Title)
-	s.state.Notify("info", actor+" "+what+": "+item.Artist+" — "+item.Title)
+	s.modLog(actor, what, artistTitle(item.Artist, item.Title))
+	s.state.Notify("info", actor+" "+what+": "+artistTitle(item.Artist, item.Title))
 
 	s.syncPlayback()
 	return nil
@@ -564,13 +565,12 @@ func (s *Server) clearQueue(ctx context.Context, refund bool, actor string) erro
 		// трека, ни возврата, а узнать об этом стример может только отсюда.
 		s.log.Error("баллы вернулись не всем", "кому_не_вернулись", lost)
 		s.state.NotifyWarn(errs.TwitchRefund,
-			"Баллы вернулись не всем: "+strings.Join(lost, ", ")+
-				". Верни им вручную через награду на Twitch.")
+			i18n.F("Баллы вернулись не всем: %s. Верни им вручную через награду на Twitch.", strings.Join(lost, ", ")))
 	}
 
 	s.modLog(actor, "очистил очередь", strconv.Itoa(len(gone))+" "+plural(len(gone), "заказ", "заказа", "заказов"))
-	s.state.Notify("info", actor+" очистил очередь: "+strconv.Itoa(len(gone))+" "+
-		plural(len(gone), "заказ", "заказа", "заказов"))
+	s.state.Notify("info", i18n.F("%s очистил очередь: %s", actor, strconv.Itoa(len(gone))+" "+
+		i18n.Plural(len(gone), [3]string{"заказ", "заказа", "заказов"}, [2]string{"request", "requests"})))
 
 	s.syncPlayback()
 	return nil
@@ -640,7 +640,7 @@ func (s *Server) recoverInflight(ctx context.Context) {
 		st, ok2, err := s.spotify.State(qctx)
 		cancel()
 		if err == nil && ok2 && st != nil && st.IsPlaying && st.Item != nil && st.Item.URI == item.URI {
-			s.log.Info("заказ из прошлого запуска ещё играет — засчитываю", "трек", item.Artist+" — "+item.Title)
+			s.log.Info("заказ из прошлого запуска ещё играет — засчитываю", "трек", artistTitle(item.Artist, item.Title))
 			s.player.MarkPlayed(item.URI)
 			s.player.WaitCurrentOnce()
 			if !haveSnap {
@@ -664,6 +664,7 @@ func (s *Server) recoverInflight(ctx context.Context) {
 		s.log.Warn("не вернул в очередь заказ из прошлого запуска", "ошибка", err)
 		return
 	}
-	s.log.Info("вернул в очередь заказ, оборванный перезапуском", "трек", item.Artist+" — "+item.Title)
-	s.state.Notify("info", "Заказ «"+item.Artist+" — "+item.Title+"» оборвался перезапуском — поставил его первым.")
+	s.log.Info("вернул в очередь заказ, оборванный перезапуском", "трек", artistTitle(item.Artist, item.Title))
+	s.state.Notify("info", i18n.F("Заказ «%s» оборвался перезапуском — поставил его первым.", artistTitle(item.Artist, item.Title)))
+
 }

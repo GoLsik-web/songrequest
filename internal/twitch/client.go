@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
@@ -310,13 +309,40 @@ func apiError(statusCode int, data []byte) error {
 		return errs.New(errs.TwitchNoAffiliate,
 			"Twitch не разрешил работать с наградами. Чаще всего это значит, что на канале нет баллов — они бывают только у аффилиатов и партнёров. Заказы за баллы работать не будут, донаты — будут.")
 	case statusCode == http.StatusBadRequest:
-		return errs.New(errs.TwitchBadResponse,
-			fmt.Sprintf("Twitch не принял запрос: %s", firstNonEmpty(e.Message, "без объяснения")))
+		// Английский текст Twitch уже в логе (do пишет ответ целиком),
+		// человеку — понятная фраза по известным случаям.
+		// Оригинал храним причиной: по нему узнаём, например, «награда с
+		// таким названием уже есть» (isDuplicateTitle). В панель он не идёт.
+		return errs.Wrap(errs.TwitchBadResponse, badRequestText(e.Message), errors.New(e.Message))
 	case statusCode == http.StatusNotFound:
 		return errs.New(errs.TwitchBadResponse, "Twitch не нашёл то, что мы просили.")
 	}
-	return errs.New(errs.TwitchBadResponse,
-		fmt.Sprintf("Twitch отказал (%d). Подробности в логе.", statusCode))
+	if statusCode == http.StatusTooManyRequests {
+		return errs.New(errs.TwitchBadResponse, "Twitch временно не пускает — слишком много запросов. Попробуй чуть позже.")
+	}
+	if statusCode >= 500 {
+		return errs.New(errs.TwitchBadResponse, "Twitch временно сбоит. Попробуй чуть позже.")
+	}
+	return errs.New(errs.TwitchBadResponse, "Twitch отказал. Подробности в логе.")
+}
+
+// badRequestText переводит частые ответы Twitch «400» на русский.
+// Неизвестный текст — общая фраза, английский оригинал лежит в логе.
+func badRequestText(msg string) string {
+	m := strings.ToLower(msg)
+	switch {
+	case strings.Contains(m, "unfulfilled"):
+		return "Этот заказ уже обработан в Twitch."
+	case strings.Contains(m, "cost"):
+		return "Twitch не принял цену награды: она должна быть целым числом больше нуля."
+	case strings.Contains(m, "title") && (strings.Contains(m, "duplicate") || strings.Contains(m, "same")):
+		return "На канале уже есть награда с таким названием — придумай другое."
+	case strings.Contains(m, "title"):
+		return "Twitch не принял название награды: оно пустое или слишком длинное (до 45 символов)."
+	case strings.Contains(m, "prompt"):
+		return "Twitch не принял описание награды: оно слишком длинное."
+	}
+	return "Twitch не принял запрос. Подробности в логе."
 }
 
 // rateLimitWait читает, когда лимит обновится. Twitch присылает время в виде

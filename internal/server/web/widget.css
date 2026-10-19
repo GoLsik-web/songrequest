@@ -66,7 +66,11 @@
   align-items: center;
   gap: calc(var(--w-gap) * var(--scale, 1));
   padding: var(--w-pad);
+  /* Ширина постоянная, чтобы плашка не прыгала от трека к треку: короткое
+     название и длинный фит занимают одну и ту же плашку. */
+  width: calc(400px * var(--scale, 1));
   max-width: calc(460px * var(--scale, 1));
+  box-sizing: border-box;
 
   background: var(--w-bg);
   border-radius: var(--w-radius);
@@ -157,6 +161,25 @@
 /* Заказ и своя музыка отличаются не только словами, но и голосом строки:
    заказ — акцентом, своя музыка — тем же тихим цветом, что артист. Работает
    во всех сорока пяти наборах, потому что оба цвета есть у каждого. */
+/* Бегущая строка для названий, которые не влезли (её включает виджет).
+   Строка стоит у начала, доезжает до конца, стоит и возвращается: читать
+   удобно, и глаз не цепляется за постоянное движение. */
+.title .run, .artist .run { display: inline-block; white-space: nowrap; }
+.title.running, .artist.running {
+  text-overflow: clip; text-align: left !important;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .6em, #000 calc(100% - .6em), transparent);
+}
+.title.running .run, .artist.running .run {
+  animation: runText var(--run-time, 8s) ease-in-out infinite alternate;
+}
+@keyframes runText {
+  0%, 18%   { transform: translateX(0); }
+  82%, 100% { transform: translateX(var(--run, 0px)); }
+}
+.card[data-motion="off"] .running .run { animation: none; }
+/* У «карточки» название переносится в несколько строк — бежать ему некуда. */
+.card[data-family="card"] .title .run { display: inline; white-space: normal; }
+
 .card[data-source="own"] .by { color: var(--w-sub); }
 
 .bar {
@@ -239,6 +262,7 @@
   --w-track: .04em;
   --w-blur: 4px;
 
+  width: auto;
   max-width: none;
   align-items: center;
 }

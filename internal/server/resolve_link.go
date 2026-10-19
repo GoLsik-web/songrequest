@@ -6,6 +6,7 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/links"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
@@ -47,7 +48,7 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 		track, err := s.spotify.Track(ctx, link.ID)
 		if err != nil {
 			s.log.Warn("не смог взять трек по ссылке Spotify", "ссылка", link.URL, "ошибка", err)
-			return linkResult{Note: "Spotify не отдал трек по этой ссылке"}, false
+			return linkResult{Note: i18n.T("Spotify не отдал трек по этой ссылке")}, false
 		}
 		s.log.Info("трек взят по ссылке Spotify",
 			"трек", firstArtist(track.Artists)+" — "+track.Title)
@@ -65,7 +66,7 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 		meta, err := s.yandex.Lookup(ctx, link)
 		if err != nil {
 			s.log.Info("не узнал трек Яндекс.Музыки", "ссылка", link.URL, "ошибка", err)
-			return linkResult{Note: "не удалось узнать трек по ссылке на Яндекс.Музыку"}, false
+			return linkResult{Note: i18n.T("не удалось узнать трек по ссылке на Яндекс.Музыку")}, false
 		}
 		s.log.Info("трек по ссылке на Яндекс.Музыку",
 			"артист", meta.Artist, "название", meta.Title, "длительность_мс", meta.DurationMs)
@@ -80,7 +81,7 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 		info, err := links.ReadPage(ctx, link)
 		if err != nil {
 			s.log.Info("не прочитал страницу по ссылке", "сервис", link.Service, "ссылка", link.URL, "ошибка", err)
-			return linkResult{Note: "не удалось узнать трек по ссылке на " + link.Service}, false
+			return linkResult{Note: i18n.F("не удалось узнать трек по ссылке на %s", link.Service)}, false
 		}
 		s.log.Info("трек по ссылке на "+link.Service,
 			"название", info.Title, "артист", info.Artist, "запрос", info.Query())
@@ -116,7 +117,8 @@ func (s *Server) fromLink(ctx context.Context, text string) (linkResult, bool) {
 		}
 		if track.IsLive {
 			s.log.Info("по ссылке стрим, а не трек", "ссылка", link.URL)
-			return linkResult{Note: "по ссылке идёт стрим, а не трек — он не кончится"}, false
+			return linkResult{Note: i18n.T("по ссылке идёт стрим, а не трек — он не кончится")}, false
+
 		}
 
 		s.log.Info("метаданные по ссылке",

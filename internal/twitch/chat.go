@@ -77,15 +77,17 @@ func (c *Client) Say(ctx context.Context, text string) error {
 		return err
 	}
 	if len(out.Data) > 0 && !out.Data[0].IsSent {
-		why := "Twitch не сказал причину"
+		why, code := "Twitch не сказал причину", ""
 		if r := out.Data[0].DropReason; r != nil {
+			code = r.Code
 			why = r.Code
 			if r.Message != "" {
 				why += " · " + r.Message
 			}
 		}
+		// Английский текст Twitch — только в лог, человеку — понятная фраза.
 		c.log.Warn("Twitch не пропустил сообщение в чат", "текст", text, "причина", why)
-		return errs.New(errs.TwitchChat, "Twitch не пропустил сообщение в чат: "+why)
+		return errs.New(errs.TwitchChat, chatDropText(code))
 	}
 	return nil
 }
@@ -169,4 +171,31 @@ func (e *EventSub) handleChat(payload []byte) {
 		// стоять не должен.
 		go e.OnChat(msg)
 	}
+}
+
+// chatDropText переводит код причины, по которой Twitch не пропустил
+// сообщение, в понятную фразу. Неизвестный код — общая фраза, сам код в логе.
+func chatDropText(code string) string {
+	c := strings.ToLower(code)
+	switch {
+	case strings.Contains(c, "duplicate"):
+		return "Twitch не пропустил сообщение в чат: такое же сообщение уже было только что."
+	case strings.Contains(c, "follower"):
+		return "Twitch не пропустил сообщение в чат: в чате включён режим «только для фолловеров»."
+	case strings.Contains(c, "slow"):
+		return "Twitch не пропустил сообщение в чат: в чате включён медленный режим."
+	case strings.Contains(c, "sub"):
+		return "Twitch не пропустил сообщение в чат: в чате включён режим «только для подписчиков»."
+	case strings.Contains(c, "emote"):
+		return "Twitch не пропустил сообщение в чат: в чате включён режим «только смайлики»."
+	case strings.Contains(c, "automod"), strings.Contains(c, "rejected"), strings.Contains(c, "blocked"):
+		return "Twitch не пропустил сообщение в чат: его задержал AutoMod или фильтр слов канала."
+	case strings.Contains(c, "ban"), strings.Contains(c, "timeout"), strings.Contains(c, "suspend"):
+		return "Twitch не пропустил сообщение в чат: аккаунт бота забанен или в таймауте на канале."
+	case strings.Contains(c, "verified"), strings.Contains(c, "phone"), strings.Contains(c, "email"):
+		return "Twitch не пропустил сообщение в чат: канал требует подтверждённую почту или телефон."
+	case strings.Contains(c, "channel_settings"), strings.Contains(c, "setting"):
+		return "Twitch не пропустил сообщение в чат: мешают настройки чата канала."
+	}
+	return "Twitch не пропустил сообщение в чат."
 }

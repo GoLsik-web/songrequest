@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -421,7 +422,10 @@ func authErrorReason(status int, code, message string) error {
 			"Twitch не узнал Client ID. Проверь, что он вставлен целиком и без пробелов.")
 	}
 	if status == http.StatusBadRequest && message != "" {
-		return errs.New(errs.TwitchAuthStart, "Twitch не принял вход: "+message)
+		// Текст Twitch — английский и технический, его место в логе.
+		slog.Warn("Twitch не принял вход", "код_http", status, "код", code, "ответ", message)
+		return errs.New(errs.TwitchAuthStart,
+			"Twitch не принял вход — проверь Client ID и попробуй ещё раз.")
 	}
 	return errs.New(errs.TwitchAuthStart,
 		"Не удалось войти в Twitch. Попробуй ещё раз, а если не выйдет — выгрузи лог.")

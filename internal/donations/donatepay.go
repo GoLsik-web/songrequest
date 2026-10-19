@@ -146,8 +146,8 @@ func (d *DonatePay) subscribeToken(ctx context.Context, key string) (userID, tok
 			"DonatePay не принял ключ. Проверь, что скопировал его целиком.")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", "", errs.New(errs.DonationsUnreachable,
-			fmt.Sprintf("DonatePay ответил ошибкой (%d).", resp.StatusCode))
+		return "", "", errs.Newf(errs.DonationsUnreachable,
+			"DonatePay ответил ошибкой (%d).", resp.StatusCode)
 	}
 
 	var out struct {

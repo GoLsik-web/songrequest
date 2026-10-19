@@ -8,7 +8,6 @@ package youtube
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -135,8 +134,8 @@ func exeSuffix() string {
 func (t *Tools) download(ctx context.Context, name string) (string, error) {
 	url, ok := downloads[name]
 	if !ok || runtime.GOOS != "windows" {
-		return "", errs.New(errs.YouTubeNoTool,
-			"Не найдена программа "+name+". Установи её и укажи путь в настройках.")
+		return "", errs.Newf(errs.YouTubeNoTool,
+			"Не найдена программа %s. Установи её и укажи путь в настройках.", name)
 	}
 
 	if err := os.MkdirAll(t.dir, 0o755); err != nil {
@@ -164,42 +163,39 @@ func (t *Tools) fetch(ctx context.Context, url, path string, code errs.Code, nam
 	tmp := path + ".part"
 	out, err := os.Create(tmp)
 	if err != nil {
-		return errs.Wrap(code, "Не смог сохранить "+name+".", err)
+		return errs.Wrapf(code, err, "Не смог сохранить %s.", name)
 	}
-	fail := func(e error, text string) error {
+	fail := func(e error, format string, args ...any) error {
 		out.Close()
 		os.Remove(tmp)
-		if e == nil {
-			return errs.New(code, text)
-		}
-		return errs.Wrap(code, text, e)
+		return errs.Wrapf(code, e, format, args...)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return fail(err, "Не получилось скачать "+name+".")
+		return fail(err, "Не получилось скачать %s.", name)
 	}
 
 	// Срок щедрый: mpv весит три десятка мегабайт, а интернет бывает разный.
 	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fail(err, "Не получилось скачать "+name+". Проверь интернет.")
+		return fail(err, "Не получилось скачать %s. Проверь интернет.", name)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fail(nil, fmt.Sprintf("Не получилось скачать %s (ответ %d).", name, resp.StatusCode))
+		return fail(nil, "Не получилось скачать %s (ответ %d).", name, resp.StatusCode)
 	}
 
 	if _, err := io.Copy(out, resp.Body); err != nil {
-		return fail(err, "Загрузка "+name+" оборвалась.")
+		return fail(err, "Загрузка %s оборвалась.", name)
 	}
 	out.Close()
 
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
-		return errs.Wrap(code, "Не смог сохранить "+name+".", err)
+		return errs.Wrapf(code, err, "Не смог сохранить %s.", name)
 	}
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.log.Warn("не выставил права на файл", "путь", path, "ошибка", err)

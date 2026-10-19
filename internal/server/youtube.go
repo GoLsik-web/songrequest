@@ -5,6 +5,7 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/youtube"
 )
 
@@ -33,7 +34,7 @@ func (s *Server) setupYouTube(ctx context.Context) {
 		// человек решает, что сломалось.
 		s.state.UpdateYouTube(func(y *app.YouTubeInfo) {
 			y.Ready = false
-			y.Note = "Готовлю запасной проигрыватель: качаю yt-dlp и mpv (около 35 МБ). Это разовая загрузка."
+			y.Note = i18n.T("Готовлю запасной проигрыватель: качаю yt-dlp и mpv (около 35 МБ). Это разовая загрузка.")
 			y.NoteCode = ""
 		})
 

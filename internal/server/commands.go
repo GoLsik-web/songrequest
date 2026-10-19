@@ -2,13 +2,13 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
 	"songrequest/internal/twitch"
@@ -111,6 +111,10 @@ var chatCommands = map[string]bool{
 	"бан": true, "ban": true, "разбан": true, "unban": true, "стоп": true,
 	"stop": true, "старт": true, "start": true, "помощь": true, "help": true,
 	"команды": true,
+	// Английские синонимы — работают при любом языке.
+	"song": true, "current": true, "commands": true, "back": true,
+	"playlist": true, "deny": true, "delete": true, "del": true,
+	"bump": true, "unpause": true,
 }
 
 // isChatCommand — текст заказа на деле команда чата.
@@ -158,28 +162,28 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 	case "очередь", "queue", "q":
 		s.say(ctx, s.queueLine())
 
-	case "трек", "что", "сейчас", "now", "np":
+	case "трек", "что", "сейчас", "now", "np", "song", "current":
 		s.say(ctx, s.nowLine())
 
 	case "скип", "skip", "s":
 		s.cmdSkip(ctx, actor, args)
 
-	case "вернуть", "undo", "назад":
+	case "вернуть", "undo", "назад", "back":
 		s.cmdUndoSkip(ctx, actor)
 
-	case "плейлисты", "плейлист", "playlists", "pl":
+	case "плейлисты", "плейлист", "playlists", "pl", "playlist":
 		s.say(ctx, s.playlistsLine())
 
 	case "одобрить", "принять", "approve", "ok":
 		s.cmdApprovePlaylist(ctx, actor, args)
 
-	case "отклонить", "отказать", "reject":
+	case "отклонить", "отказать", "reject", "deny":
 		s.cmdRejectPlaylist(ctx, actor, args)
 
-	case "удалить", "remove", "rm":
+	case "удалить", "remove", "rm", "delete", "del":
 		s.cmdRemove(ctx, actor, args)
 
-	case "вверх", "поднять", "top":
+	case "вверх", "поднять", "top", "bump":
 		s.cmdTop(ctx, actor, args)
 
 	case "громкость", "volume", "vol":
@@ -188,16 +192,16 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 	case "пауза", "пауза-трека", "паузатрека", "pause":
 		s.cmdHold(ctx, actor, true)
 
-	case "продолжить", "resume", "play":
+	case "продолжить", "resume", "play", "unpause":
 		s.cmdHold(ctx, actor, false)
 
 	case "очистить", "clear":
 		if err := s.clearQueue(ctx, true, actor); err != nil {
 			s.log.Warn("не очистил очередь", "ошибка", err)
-			s.say(ctx, "@"+actor+", очередь очистить не вышло — посмотри в приложении")
+			s.say(ctx, i18n.F("@%s, очередь очистить не вышло — посмотри в приложении", actor))
 			return
 		}
-		s.say(ctx, "Очередь очищена, баллы вернулись")
+		s.say(ctx, i18n.T("Очередь очищена, баллы вернулись"))
 
 	case "бан", "ban":
 		s.cmdBan(ctx, actor, args)
@@ -211,13 +215,13 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 		// Прямо говорим, чего эта команда НЕ делает. Именно на этом месте
 		// люди спотыкались чаще всего: писали «!стоп», ожидая, что музыка
 		// замолчит, и считали приложение сломанным. Пауза музыки — «!пауза».
-		s.say(ctx, "Новые заказы больше не принимаются. Музыка играет дальше — "+
-			"остановить её это "+prefix+"пауза")
+		s.say(ctx, i18n.F("Новые заказы больше не принимаются. Музыка играет дальше — остановить её это %s",
+			prefix+cmdName("пауза", "pause")))
 
 	case "старт", "start":
 		s.setOrdersPaused(ctx, false)
 		s.modLog(actor, "возобновил приём заказов", "")
-		s.say(ctx, "Заказы снова принимаются")
+		s.say(ctx, i18n.T("Заказы снова принимаются"))
 
 	default:
 		// Знак команды угадан верно, а слово — нет. Молчим в чате (мало ли
@@ -225,42 +229,65 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 		// видно опечатки и чужие команды, которые к нам не относятся.
 		s.log.Debug("незнакомая команда", "кто", actor, "команда", cmd)
 
-	case "помощь", "help", "команды":
-		s.say(ctx, "Команды: "+prefix+"очередь, "+prefix+"трек, "+prefix+
-			"скип (можно "+prefix+"скип 2 или "+prefix+"скип название), "+
-			prefix+"вернуть, "+prefix+"удалить N, "+prefix+"вверх N, "+
-			prefix+"громкость 40, "+prefix+"пауза, "+prefix+"продолжить, "+
-			prefix+"плейлисты, "+prefix+"одобрить, "+prefix+"отклонить, "+
-			prefix+"очистить, "+prefix+"бан ник, "+prefix+"разбан ник, "+
-			prefix+"стоп, "+prefix+"старт")
+	case "помощь", "help", "команды", "commands":
+		s.say(ctx, helpLine(prefix))
 	}
+}
+
+// helpLine — список команд на текущем языке.
+func helpLine(prefix string) string {
+	if i18n.IsEN() {
+		p := prefix
+		return "Commands: " + p + "queue, " + p + "song, " + p +
+			"skip (also " + p + "skip 2 or " + p + "skip title), " +
+			p + "undo, " + p + "remove N, " + p + "top N, " +
+			p + "volume 40, " + p + "pause, " + p + "resume, " +
+			p + "playlists, " + p + "approve, " + p + "reject, " +
+			p + "clear, " + p + "ban nick, " + p + "unban nick, " +
+			p + "stop, " + p + "start"
+	}
+	return "Команды: " + prefix + "очередь, " + prefix + "трек, " + prefix +
+		"скип (можно " + prefix + "скип 2 или " + prefix + "скип название), " +
+		prefix + "вернуть, " + prefix + "удалить N, " + prefix + "вверх N, " +
+		prefix + "громкость 40, " + prefix + "пауза, " + prefix + "продолжить, " +
+		prefix + "плейлисты, " + prefix + "одобрить, " + prefix + "отклонить, " +
+		prefix + "очистить, " + prefix + "бан ник, " + prefix + "разбан ник, " +
+		prefix + "стоп, " + prefix + "старт"
+}
+
+// cmdName — имя команды для подсказок: русское или английское по языку.
+func cmdName(ru, en string) string {
+	if i18n.IsEN() {
+		return en
+	}
+	return ru
 }
 
 // queueLine — очередь одной строкой для чата.
 func (s *Server) queueLine() string {
 	items, err := s.queue.List()
 	if err != nil {
-		return "Не смог прочитать очередь"
+		return i18n.T("Не смог прочитать очередь")
 	}
 
 	now := s.player.Now()
 	if now == nil && len(items) == 0 {
-		return "Очередь пуста"
+		return i18n.T("Очередь пуста")
 	}
 
 	var b strings.Builder
 	if now != nil {
-		b.WriteString("Сейчас: " + now.Item.Artist + " — " + now.Item.Title)
+		b.WriteString(i18n.F("Сейчас: %s", artistTitle(now.Item.Artist, now.Item.Title)))
 	}
 	if len(items) == 0 {
-		b.WriteString(" · дальше ничего")
+		b.WriteString(i18n.T(" · дальше ничего"))
 		return b.String()
 	}
 
 	if now != nil {
-		b.WriteString(" · далее: ")
+		b.WriteString(i18n.T(" · далее: "))
 	} else {
-		b.WriteString("В очереди: ")
+		b.WriteString(i18n.T("В очереди: "))
 	}
 
 	// В чат влезает немного, поэтому показываем первые несколько и число
@@ -268,13 +295,13 @@ func (s *Server) queueLine() string {
 	const show = 5
 	for i, it := range items {
 		if i >= show {
-			b.WriteString(fmt.Sprintf(" … и ещё %d", len(items)-show))
+			b.WriteString(i18n.F(" … и ещё %d", len(items)-show))
 			break
 		}
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(strconv.Itoa(i+1) + ". " + it.Artist + " — " + it.Title)
+		b.WriteString(strconv.Itoa(i+1) + ". " + artistTitle(it.Artist, it.Title))
 	}
 	return b.String()
 }
@@ -285,22 +312,22 @@ func (s *Server) queueLine() string {
 // позиций в ответ на «что играет» приходится вычитывать глазами.
 func (s *Server) nowLine() string {
 	if now := s.player.Now(); now != nil {
-		line := "Сейчас: " + now.Item.Artist + " — " + now.Item.Title
+		line := i18n.F("Сейчас: %s", artistTitle(now.Item.Artist, now.Item.Title))
 		if now.Item.Requester != "" {
-			line += " · заказал " + now.Item.Requester
+			line += i18n.F(" · заказал %s", now.Item.Requester)
 		}
 		if now.Paused() {
-			line += " · на паузе"
+			line += i18n.T(" · на паузе")
 		}
 		return line
 	}
 	if s.player.Waiting() {
-		return "Заказ ждёт конца трека канала. Чтобы не ждать — скип"
+		return i18n.T("Заказ ждёт конца трека канала. Чтобы не ждать — скип")
 	}
 	if own := s.own(); own != nil {
-		return "Сейчас музыка канала: " + own.Artist + " — " + own.Title
+		return i18n.F("Сейчас музыка канала: %s", artistTitle(own.Artist, own.Title))
 	}
-	return "Сейчас ничего не играет"
+	return i18n.T("Сейчас ничего не играет")
 }
 
 // ── скип ─────────────────────────────────────────────────────────────
@@ -328,7 +355,7 @@ func (s *Server) cmdSkip(ctx context.Context, actor string, args []string) {
 	// Число — позиция в очереди из «!очередь».
 	if n, err := strconv.Atoi(arg); err == nil {
 		if n < 0 {
-			s.say(ctx, "@"+actor+", номер не бывает отрицательным. 0 — то, что играет, 1 — следующий")
+			s.say(ctx, i18n.F("@%s, номер не бывает отрицательным. 0 — то, что играет, 1 — следующий", actor))
 			return
 		}
 		s.skipAt(ctx, actor, n)
@@ -346,10 +373,10 @@ func (s *Server) skipOnAir(ctx context.Context, actor string) {
 	// этом нельзя, иначе команда выглядит сломанной.
 	if s.player.Now() == nil && !s.player.Waiting() {
 		if s.own() != nil {
-			s.say(ctx, "@"+actor+", сейчас играет музыка канала, а не заказ — скипать нечего")
+			s.say(ctx, i18n.F("@%s, сейчас играет музыка канала, а не заказ — скипать нечего", actor))
 			return
 		}
-		s.say(ctx, "@"+actor+", сейчас ничего не играет")
+		s.say(ctx, i18n.F("@%s, сейчас ничего не играет", actor))
 		return
 	}
 
@@ -359,10 +386,10 @@ func (s *Server) skipOnAir(ctx context.Context, actor string) {
 		return
 	}
 	if res.Hurried {
-		s.say(ctx, "Не жду конца трека канала, включаю заказ")
+		s.say(ctx, i18n.T("Не жду конца трека канала, включаю заказ"))
 		return
 	}
-	s.say(ctx, "Скипнул: "+trackLine(res.Item)+refundTail(res.Refunded))
+	s.say(ctx, i18n.F("Скипнул: %s", trackLine(res.Item))+refundTail(res.Refunded))
 }
 
 // skipAt убирает заказ по номеру из «!очередь».
@@ -374,11 +401,11 @@ func (s *Server) skipAt(ctx context.Context, actor string, n int) {
 
 	items, err := s.queue.List()
 	if err != nil {
-		s.say(ctx, "@"+actor+", не смог прочитать очередь")
+		s.say(ctx, i18n.F("@%s, не смог прочитать очередь", actor))
 		return
 	}
 	if n > len(items) {
-		s.say(ctx, "@"+actor+", в очереди столько нет: "+queueSize(len(items)))
+		s.say(ctx, i18n.F("@%s, в очереди столько нет: %s", actor, queueSize(len(items))))
 		return
 	}
 
@@ -394,7 +421,7 @@ func (s *Server) skipNamed(ctx context.Context, actor, name string) {
 
 	items, err := s.queue.List()
 	if err != nil {
-		s.say(ctx, "@"+actor+", не смог прочитать очередь")
+		s.say(ctx, i18n.F("@%s, не смог прочитать очередь", actor))
 		return
 	}
 
@@ -406,15 +433,15 @@ func (s *Server) skipNamed(ctx context.Context, actor, name string) {
 		if found >= 0 {
 			// Двух одинаково подходящих трогать нельзя: угадаешь не тот —
 			// и зритель лишится заказа ни за что. Пусть человек назовёт номер.
-			s.say(ctx, "@"+actor+", под «"+name+"» подходит больше одного заказа — скажи номер из "+
-				s.prefix()+"очередь")
+			s.say(ctx, i18n.F("@%s, под «%s» подходит больше одного заказа — скажи номер из %s",
+				actor, name, s.prefix()+cmdName("очередь", "queue")))
 			return
 		}
 		found = i
 	}
 
 	if found < 0 {
-		s.say(ctx, "@"+actor+", не нашёл «"+name+"» ни в эфире, ни в очереди")
+		s.say(ctx, i18n.F("@%s, не нашёл «%s» ни в эфире, ни в очереди", actor, name))
 		return
 	}
 	s.takeOutOfQueue(ctx, actor, items[found])
@@ -431,7 +458,7 @@ func (s *Server) takeOutOfQueue(ctx context.Context, actor string, item queue.It
 		s.say(ctx, "@"+actor+", "+errText(err))
 		return
 	}
-	s.say(ctx, "Убрал из очереди: "+trackLine(item)+refundTail(item.RedemptionID != ""))
+	s.say(ctx, i18n.F("Убрал из очереди: %s", trackLine(item))+refundTail(item.RedemptionID != ""))
 }
 
 // cmdUndoSkip возвращает в очередь то, что скипнули последним.
@@ -469,7 +496,7 @@ func (s *Server) cmdUndoSkip(ctx context.Context, actor string) {
 	added, err := s.queue.Add(back, false)
 	if err != nil {
 		s.log.Warn("не вернул скипнутый заказ", "ошибка", err)
-		s.say(ctx, "@"+actor+", не получилось вернуть заказ в очередь")
+		s.say(ctx, i18n.F("@%s, не получилось вернуть заказ в очередь", actor))
 		return
 	}
 	if err := s.queue.MoveTop(added.ID); err != nil {
@@ -479,27 +506,27 @@ func (s *Server) cmdUndoSkip(ctx context.Context, actor string) {
 	}
 
 	s.modLog(actor, "вернул скипнутое", trackLine(item))
-	s.state.Notify("info", actor+" вернул в очередь: "+trackLine(item))
+	s.state.Notify("info", i18n.F("%s вернул в очередь: %s", actor, trackLine(item)))
 	s.syncPlayback()
 	s.player.Nudge()
 
 	tail := ""
 	if item.RedemptionID != "" {
-		tail = " Баллы уже вернулись, так что этот раз бесплатно."
+		tail = i18n.T(" Баллы уже вернулись, так что этот раз бесплатно.")
 	}
-	s.say(ctx, "Вернул в начало очереди: "+trackLine(item)+" (скипнул "+who+")."+tail)
+	s.say(ctx, i18n.F("Вернул в начало очереди: %s (скипнул %s).", trackLine(item), who)+tail)
 }
 
 // cmdTop поднимает заказ в начало очереди.
 func (s *Server) cmdTop(ctx context.Context, actor string, args []string) {
 	if len(args) == 0 {
-		s.say(ctx, "@"+actor+", нужен номер из "+s.prefix()+"очередь: вверх 3")
+		s.say(ctx, i18n.F("@%s, нужен номер из %s: %s 3", actor, s.prefix()+cmdName("очередь", "queue"), cmdName("вверх", "top")))
 		return
 	}
 
 	items, err := s.queue.List()
 	if err != nil {
-		s.say(ctx, "@"+actor+", не смог прочитать очередь")
+		s.say(ctx, i18n.F("@%s, не смог прочитать очередь", actor))
 		return
 	}
 
@@ -508,27 +535,27 @@ func (s *Server) cmdTop(ctx context.Context, actor string, args []string) {
 		return
 	}
 	if err := s.queue.MoveTop(item.ID); err != nil {
-		s.say(ctx, "@"+actor+", не получилось поднять заказ")
+		s.say(ctx, i18n.F("@%s, не получилось поднять заказ", actor))
 		return
 	}
 
 	s.modLog(actor, "поднял заказ в начало", trackLine(item))
-	s.state.Notify("info", actor+" поднял в начало: "+trackLine(item))
+	s.state.Notify("info", i18n.F("%s поднял в начало: %s", actor, trackLine(item)))
 	s.syncPlayback()
-	s.say(ctx, "Поднял в начало очереди: "+trackLine(item))
+	s.say(ctx, i18n.F("Поднял в начало очереди: %s", trackLine(item)))
 }
 
 // pickFromQueue выбирает заказ по номеру или названию и сам объясняет отказ.
 func (s *Server) pickFromQueue(ctx context.Context, actor string, items []queue.Item, arg string) (queue.Item, bool) {
 	arg = strings.TrimSpace(arg)
 	if len(items) == 0 {
-		s.say(ctx, "@"+actor+", очередь пуста")
+		s.say(ctx, i18n.F("@%s, очередь пуста", actor))
 		return queue.Item{}, false
 	}
 
 	if n, err := strconv.Atoi(arg); err == nil {
 		if n < 1 || n > len(items) {
-			s.say(ctx, "@"+actor+", в очереди столько нет: "+queueSize(len(items)))
+			s.say(ctx, i18n.F("@%s, в очереди столько нет: %s", actor, queueSize(len(items))))
 			return queue.Item{}, false
 		}
 		return items[n-1], true
@@ -540,13 +567,13 @@ func (s *Server) pickFromQueue(ctx context.Context, actor string, items []queue.
 			continue
 		}
 		if found >= 0 {
-			s.say(ctx, "@"+actor+", под «"+arg+"» подходит больше одного заказа — скажи номер")
+			s.say(ctx, i18n.F("@%s, под «%s» подходит больше одного заказа — скажи номер", actor, arg))
 			return queue.Item{}, false
 		}
 		found = i
 	}
 	if found < 0 {
-		s.say(ctx, "@"+actor+", не нашёл «"+arg+"» в очереди")
+		s.say(ctx, i18n.F("@%s, не нашёл «%s» в очереди", actor, arg))
 		return queue.Item{}, false
 	}
 	return items[found], true
@@ -558,17 +585,17 @@ func (s *Server) pickFromQueue(ctx context.Context, actor string, items []queue.
 // команда громкости — отдельный запрос к нему.
 func (s *Server) cmdVolume(ctx context.Context, actor string, args []string) {
 	if len(args) == 0 {
-		s.say(ctx, "@"+actor+", нужно число от 0 до 100: громкость 40")
+		s.say(ctx, i18n.F("@%s, нужно число от 0 до 100: %s 40", actor, cmdName("громкость", "volume")))
 		return
 	}
 	percent, err := strconv.Atoi(strings.TrimSuffix(args[0], "%"))
 	if err != nil || percent < 0 || percent > 100 {
-		s.say(ctx, "@"+actor+", громкость — это число от 0 до 100")
+		s.say(ctx, i18n.F("@%s, громкость — это число от 0 до 100", actor))
 		return
 	}
 
 	if s.player.Now() == nil {
-		s.say(ctx, "@"+actor+", сейчас не играет ни один заказ")
+		s.say(ctx, i18n.F("@%s, сейчас не играет ни один заказ", actor))
 		return
 	}
 	if err := s.player.SetVolumeLevel(ctx, percent); err != nil {
@@ -578,7 +605,7 @@ func (s *Server) cmdVolume(ctx context.Context, actor string, args []string) {
 
 	s.modLog(actor, "поставил громкость", strconv.Itoa(percent)+"%")
 	s.syncPlayback()
-	s.say(ctx, "Громкость заказа: "+strconv.Itoa(percent)+"%")
+	s.say(ctx, i18n.F("Громкость заказа: %d%%", percent))
 }
 
 // cmdHold ставит на паузу то, что играет, и снимает с неё.
@@ -587,10 +614,10 @@ func (s *Server) cmdVolume(ctx context.Context, actor string, args []string) {
 // не в голове у модератора: он видит одну плашку «сейчас играет» и хочет её
 // остановить.
 func (s *Server) cmdHold(ctx context.Context, actor string, on bool) {
-	word := "Продолжаю"
+	word := i18n.T("Продолжаю")
 	deed := "снял с паузы"
 	if on {
-		word, deed = "Пауза", "поставил на паузу"
+		word, deed = i18n.T("Пауза"), "поставил на паузу"
 	}
 
 	if now := s.player.Now(); now != nil {
@@ -606,26 +633,26 @@ func (s *Server) cmdHold(ctx context.Context, actor string, on bool) {
 
 	own := s.own()
 	if own == nil {
-		s.say(ctx, "@"+actor+", сейчас ничего не играет")
+		s.say(ctx, i18n.F("@%s, сейчас ничего не играет", actor))
 		return
 	}
 	if err := s.holdOwn(ctx, on); err != nil {
 		s.say(ctx, "@"+actor+", "+errText(err))
 		return
 	}
-	s.modLog(actor, deed+" музыку канала", own.Artist+" — "+own.Title)
-	s.say(ctx, word+": "+own.Artist+" — "+own.Title)
+	s.modLog(actor, deed+" музыку канала", artistTitle(own.Artist, own.Title))
+	s.say(ctx, word+": "+artistTitle(own.Artist, own.Title))
 }
 
 func (s *Server) cmdRemove(ctx context.Context, actor string, args []string) {
 	if len(args) == 0 {
-		s.say(ctx, "@"+actor+", нужен номер: удалить 2")
+		s.say(ctx, i18n.F("@%s, нужен номер: %s 2", actor, cmdName("удалить", "remove")))
 		return
 	}
 
 	items, err := s.queue.List()
 	if err != nil {
-		s.say(ctx, "@"+actor+", не смог прочитать очередь")
+		s.say(ctx, i18n.F("@%s, не смог прочитать очередь", actor))
 		return
 	}
 	item, ok := s.pickFromQueue(ctx, actor, items, strings.Join(args, " "))
@@ -638,12 +665,12 @@ func (s *Server) cmdRemove(ctx context.Context, actor string, args []string) {
 		s.say(ctx, "@"+actor+", "+errText(err))
 		return
 	}
-	s.say(ctx, "Удалил: "+trackLine(item)+refundTail(item.RedemptionID != ""))
+	s.say(ctx, i18n.F("Удалил: %s", trackLine(item))+refundTail(item.RedemptionID != ""))
 }
 
 func (s *Server) cmdBan(ctx context.Context, actor string, args []string) {
 	if len(args) == 0 {
-		s.say(ctx, "@"+actor+", нужен ник: бан ник причина")
+		s.say(ctx, i18n.F("@%s, нужен ник: бан ник причина", actor))
 		return
 	}
 	login := strings.TrimPrefix(strings.ToLower(args[0]), "@")
@@ -651,46 +678,46 @@ func (s *Server) cmdBan(ctx context.Context, actor string, args []string) {
 
 	if err := s.banMusic(login, reason); err != nil {
 		s.log.Warn("не забанил", "ошибка", err)
-		s.say(ctx, "@"+actor+", не получилось закрыть заказы для "+login)
+		s.say(ctx, i18n.F("@%s, не получилось закрыть заказы для %s", actor, login))
 		return
 	}
 	s.modLog(actor, "закрыл заказы", login)
-	s.state.Notify("info", actor+" закрыл заказы для "+login)
-	s.say(ctx, login+" больше не может заказывать музыку")
+	s.state.Notify("info", i18n.F("%s закрыл заказы для %s", actor, login))
+	s.say(ctx, i18n.F("%s больше не может заказывать музыку", login))
 }
 
 func (s *Server) cmdUnban(ctx context.Context, actor string, args []string) {
 	if len(args) == 0 {
-		s.say(ctx, "@"+actor+", нужен ник: разбан ник")
+		s.say(ctx, i18n.F("@%s, нужен ник: разбан ник", actor))
 		return
 	}
 	login := strings.TrimPrefix(strings.ToLower(args[0]), "@")
 
 	if err := s.unbanMusic(login); err != nil {
 		s.log.Warn("не разбанил", "ошибка", err)
-		s.say(ctx, "@"+actor+", не получилось вернуть заказы для "+login)
+		s.say(ctx, i18n.F("@%s, не получилось вернуть заказы для %s", actor, login))
 		return
 	}
 	s.modLog(actor, "вернул заказы", login)
-	s.state.Notify("info", actor+" вернул заказы для "+login)
-	s.say(ctx, login+" снова может заказывать музыку")
+	s.state.Notify("info", i18n.F("%s вернул заказы для %s", actor, login))
+	s.say(ctx, i18n.F("%s снова может заказывать музыку", login))
 }
 
 // announceQueued говорит зрителю, что его заказ принят и когда заиграет.
 func (s *Server) announceQueued(ctx context.Context, item queue.Item, position int, wait time.Duration) {
-	where := "следующим"
+	where := i18n.T("следующим")
 	if position > 1 {
-		where = fmt.Sprintf("%d-м в очереди", position)
+		where = i18n.F("%d-м в очереди", position)
 	}
 
-	text := fmt.Sprintf("@%s, принято: %s — %s, %s", item.Requester, item.Artist, item.Title, where)
+	text := i18n.F("@%s, принято: %s, %s", item.Requester, trackLine(item), where)
 	if wait > time.Minute {
-		text += fmt.Sprintf(" (примерно через %s)", afterDuration(wait))
+		text += i18n.F(" (примерно через %s)", afterDuration(wait))
 	}
 	// Зритель должен знать, что звук пойдёт не из Spotify: иначе «почему
 	// играет какая-то запись с ютуба» — вопрос в чат через три минуты.
 	if item.Provider == "youtube" {
-		text += " — в Spotify нет, сыграет с YouTube"
+		text += i18n.T(" — в Spotify нет, сыграет с YouTube")
 	}
 	s.say(ctx, text)
 }
@@ -707,10 +734,7 @@ func (s *Server) prefix() string {
 }
 
 func trackLine(item queue.Item) string {
-	if item.Artist == "" {
-		return item.Title
-	}
-	return item.Artist + " — " + item.Title
+	return artistTitle(item.Artist, item.Title)
 }
 
 // refundTail — хвост про баллы.
@@ -720,16 +744,16 @@ func trackLine(item queue.Item) string {
 // в ту же секунду, что и «твой трек убрали».
 func refundTail(refunded bool) string {
 	if refunded {
-		return ". Баллы вернул"
+		return i18n.T(". Баллы вернул")
 	}
 	return ""
 }
 
 func queueSize(n int) string {
 	if n == 0 {
-		return "очередь пуста"
+		return i18n.T("очередь пуста")
 	}
-	return strconv.Itoa(n) + " " + plural(n, "заказ", "заказа", "заказов")
+	return strconv.Itoa(n) + " " + i18n.Plural(n, [3]string{"заказ", "заказа", "заказов"}, [2]string{"request", "requests"})
 }
 
 // errText — текст отказа для чата, без кода.
@@ -737,9 +761,10 @@ func queueSize(n int) string {
 // Код (PL-01, SP-08) нужен в панели и в логе: по нему стример находит, что
 // делать. В чате он только пугает зрителей, а модератору всё равно не поможет.
 func errText(err error) string {
-	_, text := errs.Describe(err)
-	if text == "" {
-		return "не получилось"
+	code, text := errs.Describe(err)
+	if code == "" || text == "" {
+		// Ошибка без нашего кода — техническая, зрителю её не пересказать.
+		return i18n.T("не получилось, стример посмотрит, в чём дело")
 	}
 	// С маленькой буквы: текст встаёт после «@ник, ».
 	r := []rune(text)
@@ -776,22 +801,26 @@ func trackMatches(item queue.Item, want string) bool {
 func (s *Server) playlistsLine() string {
 	list := s.pendingPlaylists()
 	if len(list) == 0 {
-		return "Сейчас ни один плейлист не ждёт решения"
+		return i18n.T("Сейчас ни один плейлист не ждёт решения")
 	}
 
 	var b strings.Builder
-	b.WriteString("Ждут решения: ")
+	b.WriteString(i18n.T("Ждут решения: "))
 	for i, p := range list {
 		if i > 0 {
 			b.WriteString(" · ")
 		}
-		b.WriteString(fmt.Sprintf("%s. «%s» от %s — %d %s, %s",
+		b.WriteString(i18n.F("%s. «%s» от %s — %d %s, %s",
 			p.ID, p.Title, p.Requester,
-			len(p.Tracks), plural(len(p.Tracks), "трек", "трека", "треков"),
+			len(p.Tracks), tracksWord(len(p.Tracks)),
 			humanDuration(time.Duration(p.TotalMs())*time.Millisecond)))
 	}
-	b.WriteString(". " + s.prefix() + "одобрить N или " + s.prefix() + "отклонить N")
+	b.WriteString(i18n.F(". %sодобрить N или %sотклонить N", s.prefix(), s.prefix()))
 	return b.String()
+}
+
+func tracksWord(n int) string {
+	return i18n.Plural(n, [3]string{"трек", "трека", "треков"}, [2]string{"track", "tracks"})
 }
 
 func (s *Server) cmdApprovePlaylist(ctx context.Context, actor string, args []string) {
@@ -806,10 +835,10 @@ func (s *Server) cmdApprovePlaylist(ctx context.Context, actor string, args []st
 	// зрителю больше, чем сыграет, нельзя.
 	tail := ""
 	if added < len(p.Tracks) {
-		tail = fmt.Sprintf(" (из %d — остальные не нашлись или слишком длинные)", len(p.Tracks))
+		tail = i18n.F(" (из %d — остальные не нашлись или слишком длинные)", len(p.Tracks))
 	}
-	s.say(ctx, fmt.Sprintf("Плейлист «%s» от %s одобрен: %d %s в очереди%s",
-		p.Title, p.Requester, added, plural(added, "трек", "трека", "треков"), tail))
+	s.say(ctx, i18n.F("Плейлист «%s» от %s одобрен: %d %s в очереди%s",
+		p.Title, p.Requester, added, tracksWord(added), tail))
 }
 
 func (s *Server) cmdRejectPlaylist(ctx context.Context, actor string, args []string) {
@@ -818,7 +847,8 @@ func (s *Server) cmdRejectPlaylist(ctx context.Context, actor string, args []str
 		s.say(ctx, "@"+actor+", "+errText(err))
 		return
 	}
-	s.say(ctx, fmt.Sprintf("@%s, плейлист «%s» не одобрили. Баллы вернул.", p.Requester, p.Title))
+	s.say(ctx, i18n.F("@%s, плейлист «%s» не одобрили. Баллы вернул.", p.Requester, p.Title))
+
 }
 
 // canCommand решает, слушать ли команду от этого человека.
@@ -849,4 +879,13 @@ func (s *Server) canCommand(ctx context.Context, msg twitch.ChatMessage) bool {
 	s.log.Info("команда принята по списку модераторов канала, значков в сообщении не было",
 		"кто", msg.Login, "значки", msg.Badges)
 	return true
+}
+
+// artistTitle — «Артист — Название», а без артиста только название: иначе в
+// чат уходило « — Название» с одиноким тире впереди.
+func artistTitle(artist, title string) string {
+	if artist == "" {
+		return title
+	}
+	return artist + " — " + title
 }

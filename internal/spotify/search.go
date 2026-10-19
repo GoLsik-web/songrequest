@@ -157,10 +157,10 @@ func (c *Client) searchTracks(ctx context.Context, query string, limit int, mark
 		for _, a := range t.Artists {
 			cand.Artists = append(cand.Artists, a.Name)
 		}
-		// Берём самую маленькую обложку: она уходит в панель и в виджет,
-		// а разглядывать её в 640 пикселей никто не будет.
+		// Берём самую крупную обложку (640 пикселей): она уходит и в виджет,
+		// а там при большом масштабе маленькая расплывается.
 		if n := len(t.Album.Images); n > 0 {
-			cand.CoverURL = t.Album.Images[n-1].URL
+			cand.CoverURL = t.Album.Images[0].URL
 		}
 		candidates = append(candidates, cand)
 	}

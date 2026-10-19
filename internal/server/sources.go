@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"songrequest/internal/i18n"
 	"songrequest/internal/links"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
@@ -126,7 +127,7 @@ func (s *Server) playElsewhere(ctx context.Context, r twitch.Redemption,
 			"трек", item.Artist+" — "+item.Title, "почему", source.via)
 
 		item.Via = source.via
-		s.offerYouTube(ctx, r, *item, "Играем с YouTube — "+source.via)
+		s.offerYouTube(ctx, r, *item, i18n.F("Играем с YouTube — %s", i18n.T(source.via)))
 		return true
 	}
 	return false
@@ -282,7 +283,6 @@ func (s *Server) rescue(ctx context.Context, item queue.Item) (queue.Item, bool)
 	s.log.Warn("заказ не заиграл — беру запасной источник",
 		"было", item.Artist+" — "+item.Title, "откуда_было", item.Provider,
 		"стало", next.Artist+" — "+next.Title, "почему", next.Via)
-	s.state.Notify("info", "«"+item.Title+"» не заиграл там, где мы его нашли — "+
-		"играю с YouTube ("+next.Via+").")
+	s.state.Notify("info", i18n.F("«%s» не заиграл там, где мы его нашли — играю с YouTube (%s).", item.Title, i18n.T(next.Via)))
 	return next, true
 }

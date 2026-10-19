@@ -3,11 +3,15 @@ package spotify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"songrequest/internal/errs"
 )
 
 // Пробник поиска.
@@ -130,21 +134,22 @@ func (c *Client) probe(ctx context.Context, way, path string) Probe {
 
 	token, err := c.token(ctx)
 	if err != nil {
-		p.Error = err.Error()
+		p.Error = probeErrorText(err)
 		c.log.Warn("проба поиска", "способ", way, "путь", path, "ошибка", err)
 		return p
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase+path, nil)
 	if err != nil {
-		p.Error = err.Error()
+		p.Error = probeErrorText(err)
+		c.log.Warn("проба поиска", "способ", way, "путь", path, "ошибка", err)
 		return p
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := c.client().Do(req)
 	if err != nil {
-		p.Error = err.Error()
+		p.Error = probeErrorText(err)
 		c.log.Warn("проба поиска", "способ", way, "путь", path, "ошибка", err)
 		return p
 	}
@@ -152,7 +157,7 @@ func (c *Client) probe(ctx context.Context, way, path string) Probe {
 
 	data, err := readBody(resp)
 	if err != nil {
-		p.Error = err.Error()
+		p.Error = probeErrorText(err)
 		c.log.Warn("проба поиска", "способ", way, "путь", path, "ошибка", err)
 		return p
 	}
@@ -211,4 +216,30 @@ func shorten(s string, limit int) string {
 		return s
 	}
 	return string(r[:limit]) + fmt.Sprintf("… (всего %d знаков)", len(r))
+}
+
+// probeErrorText — понятная причина, почему проба не дошла до Spotify.
+// Сырой текст ошибки (на английском) пишется в лог рядом.
+func probeErrorText(err error) string {
+	if code, text := errs.Describe(err); code != "" {
+		return string(code) + " · " + text
+	}
+	var dnsErr *net.DNSError
+	var netErr net.Error
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
+		return "Spotify не ответил вовремя."
+	case errors.As(err, &dnsErr):
+		return "Не нашёл адрес Spotify — похоже, нет интернета или мешает DNS."
+	case errors.Is(err, context.Canceled):
+		return "Проверку прервали."
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "refused"), strings.Contains(msg, "reset"), strings.Contains(msg, "forcibly"):
+		return "Соединение со Spotify оборвалось — проверь интернет или обход блокировок."
+	case strings.Contains(msg, "no such host"), strings.Contains(msg, "unreachable"):
+		return "Нет сети до Spotify."
+	}
+	return "Не получилось достучаться до Spotify. Подробности в логе."
 }

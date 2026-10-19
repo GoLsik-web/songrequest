@@ -3,7 +3,6 @@ package youtube
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -34,8 +33,8 @@ func OEmbed(ctx context.Context, link string) (*Track, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, errs.New(errs.YouTubeNotFound,
-			fmt.Sprintf("YouTube не знает такого ролика (ответ %d).", resp.StatusCode))
+		return nil, errs.Newf(errs.YouTubeNotFound,
+			"YouTube не знает такого ролика (ответ %d).", resp.StatusCode)
 	}
 	var out struct {
 		Title     string `json:"title"`

@@ -65,7 +65,9 @@ func (c *Client) SetProxy(raw string) (string, error) {
 		c.log.Redactor.Add(pass)
 	}
 
-	c.useProxy(u, Hide(u))
+	// В панели — только адрес, без протокола и порта: «socks5://…:1080»
+	// человеку ничего не говорит.
+	c.useProxy(u, "прокси "+u.Hostname())
 	return Hide(u), nil
 }
 
@@ -144,8 +146,7 @@ func ParseProxy(raw string) (*url.URL, error) {
 	switch scheme {
 	case "socks5", "socks5h", "http", "https":
 	default:
-		return nil, errProxy("Прокси вида «" + scheme + "» приложение не умеет. " +
-			"Подойдёт socks5, http или https.")
+		return nil, errs.Newf(errs.SpotifyProxy, "Прокси вида «%s» приложение не умеет. Подойдёт socks5, http или https.", scheme)
 	}
 
 	// Собаку ищем последнюю: она может встретиться и внутри пароля.

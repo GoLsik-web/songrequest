@@ -3,12 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 )
 
 // Управление очередью из панели. Частые действия — скип и удаление — идут
@@ -90,9 +90,9 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 	s.setOrdersPaused(r.Context(), on)
 
 	if on {
-		s.state.Notify("info", "Приём заказов остановлен")
+		s.state.Notify("info", i18n.T("Приём заказов остановлен"))
 	} else {
-		s.state.Notify("info", "Приём заказов возобновлён")
+		s.state.Notify("info", i18n.T("Приём заказов возобновлён"))
 	}
 	writeJSON(w, map[string]bool{"paused": on})
 }
@@ -111,14 +111,14 @@ func (s *Server) handleBan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.modLog(panelActor, "вернул заказы", login)
-		s.state.Notify("info", "Заказы снова открыты для "+login)
+		s.state.Notify("info", i18n.F("Заказы снова открыты для %s", login))
 	} else {
 		if err := s.banMusic(login, r.URL.Query().Get("reason")); err != nil {
 			s.fail(w, errs.Wrap(errs.Code(""), "Не получилось закрыть заказы.", err))
 			return
 		}
 		s.modLog(panelActor, "закрыл заказы", login)
-		s.state.Notify("info", "Заказы закрыты для "+login)
+		s.state.Notify("info", i18n.F("Заказы закрыты для %s", login))
 	}
 
 	s.syncExtras()
@@ -205,10 +205,10 @@ func (s *Server) handlePlaylistApprove(w http.ResponseWriter, r *http.Request) {
 
 	tail := ""
 	if added < len(p.Tracks) {
-		tail = fmt.Sprintf(" (из %d — остальные не нашлись или слишком длинные)", len(p.Tracks))
+		tail = i18n.F(" (из %d — остальные не нашлись или слишком длинные)", len(p.Tracks))
 	}
-	s.say(ctx, fmt.Sprintf("Плейлист «%s» от %s одобрен: %d %s в очереди%s",
-		p.Title, p.Requester, added, plural(added, "трек", "трека", "треков"), tail))
+	s.say(ctx, i18n.F("Плейлист «%s» от %s одобрен: %d %s в очереди%s",
+		p.Title, p.Requester, added, i18n.Plural(added, [3]string{"трек", "трека", "треков"}, [2]string{"track", "tracks"}), tail))
 
 	writeJSON(w, map[string]any{"ok": true, "added": added})
 }
@@ -235,7 +235,7 @@ func (s *Server) handlePlaylistReject(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.say(ctx, fmt.Sprintf("@%s, плейлист «%s» не одобрили. Баллы вернул.", p.Requester, p.Title))
+	s.say(ctx, i18n.F("@%s, плейлист «%s» не одобрили. Баллы вернул.", p.Requester, p.Title))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

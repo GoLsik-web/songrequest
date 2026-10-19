@@ -12,12 +12,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"songrequest/internal/i18n"
+	"strings"
 	"syscall"
 	"time"
 
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/desktop"
+	"songrequest/internal/errs"
 	"songrequest/internal/logx"
 	"songrequest/internal/secrets"
 	"songrequest/internal/server"
@@ -62,8 +65,15 @@ func defaultPort() int {
 	return 8991
 }
 
-// windowTitle — заголовок окна и подпись значка возле часов.
-var windowTitle = "Заказ музыки"
+// windowTitle — заголовок окна и подпись значка возле часов. Название
+// переводится по текущему языку, к нему добавляется пометка пробной сборки.
+func windowTitle() string {
+	t := i18n.T("Заказ музыки")
+	if flavor != "" {
+		t += " · " + flavor
+	}
+	return t
+}
 
 func main() {
 	// Окно Windows живёт в том потоке, где создано, и сообщения приходят
@@ -76,10 +86,26 @@ func main() {
 		// окном), поэтому про поломку рассказываем окном с сообщением. В
 		// консоль тоже пишем — на случай запуска из PowerShell при разборе.
 		fmt.Fprintln(os.Stderr, "Ошибка:", err)
-		desktop.ShowError(windowTitle+" — не запустилось", err.Error()+
-			"\n\nПодробности в логе:\n"+logPathHint())
+		desktop.ShowError(i18n.F("%s — не запустилось", windowTitle()),
+			i18n.F("%s\n\nПодробности в логе:\n%s", startupText(err), logPathHint()))
 		os.Exit(1)
 	}
+}
+
+// startupText — что показать в окне, если приложение не поднялось. Полная
+// цепочка ошибки (с английскими хвостами системы) уходит в stderr и лог,
+// человеку — код и наша фраза.
+func startupText(err error) string {
+	if code, text := errs.Describe(err); code != "" {
+		return string(code) + " · " + text
+	}
+	// Ошибка без кода: берём только наше начало до первого «: », дальше
+	// обычно идёт системное объяснение на английском.
+	text, _, _ := strings.Cut(err.Error(), ": ")
+	if text == "" {
+		return i18n.T("Непонятная ошибка.")
+	}
+	return text
 }
 
 func run() error {
@@ -127,11 +153,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	i18n.SetLang(cfg.Get().Language)
 
 	// Пробная сборка живёт своей жизнью: своя папка настроек, свой порт, своя
 	// подпись окна. Иначе рядом с рабочей копией её просто не запустить.
 	if flavor != "" {
-		windowTitle += " · " + flavor
+
 		if p := defaultPort(); p > 0 && cfg.Get().Port != p {
 			if err := cfg.Update(func(c *config.Config) { c.Port = p }); err != nil {
 				log.Warn("не записал свой порт пробной сборки", "ошибка", err)
@@ -165,8 +192,8 @@ func run() error {
 	if running, raised := desktop.RaiseRunning(cfg.Get().Port); running {
 		log.Info("приложение уже запущено, вторая копия не нужна", "окно_показано", raised)
 		if !raised {
-			desktop.ShowInfo(windowTitle+" уже работает",
-				"Программа уже запущена. Её значок — возле часов, справа внизу.")
+			desktop.ShowInfo(i18n.F("%s уже работает", windowTitle()),
+				i18n.T("Программа уже запущена. Её значок — возле часов, справа внизу."))
 		}
 		return nil
 	}
@@ -212,14 +239,14 @@ func run() error {
 	defer shutdown()
 
 	log.Info("приложение запущено", "версия", version, "данные", dir, "панель", srv.Addr())
-	state.Notify("info", "Приложение запущено")
+	state.Notify("info", i18n.T("Приложение запущено"))
 	srv.WarnIfPortChanged()
 
 	// Панель уходит в фон: главный поток теперь занят окном программы.
 	go func() {
 		if err := srv.Serve(ctx); err != nil {
 			log.Error("панель управления остановилась", "ошибка", err)
-			state.Notify("error", "Панель управления остановилась: "+err.Error())
+			state.Notify("error", i18n.F("Панель управления остановилась: %s", err.Error()))
 		}
 	}()
 
@@ -301,7 +328,7 @@ func authOpener(log *logx.Logger, srv *server.Server, dir string) func(string) e
 		go func() {
 			err := desktop.OpenAuth(desktop.AuthOptions{
 				URL:      url,
-				Title:    "Вход в Spotify",
+				Title:    i18n.T("Вход в Spotify"),
 				IconPath: icon,
 				// Отдельная папка обязательна: движок делит один браузер между
 				// окнами с общей папкой, и окно входа получило бы соединение
@@ -364,8 +391,7 @@ func setupUI(d uiDeps) (showPanel, quit, wait func()) {
 			// Не поломка, а редкий случай: WebView2 нет в системе. Говорим
 			// человеку, где панель, и работаем дальше как раньше.
 			d.log.Warn("окно программы не открылось, показываю панель в браузере", "причина", err)
-			d.state.Notify("info", "Окно программы открыть не удалось — панель открыта в браузере. "+
-				"Адрес: "+d.srv.Addr())
+			d.state.Notify("info", i18n.F("Окно программы открыть не удалось — панель открыта в браузере. Адрес: %s", d.srv.Addr()))
 		}
 		openPanel()
 		go desktop.RunTray(trayMenu(d, icon, openPanel, func() { d.shutdown() }))
@@ -394,7 +420,7 @@ func openWindow(d uiDeps, icon string) (*desktop.Window, error) {
 	g := d.cfg.Get().Window
 	return desktop.Open(desktop.Options{
 		URL:      d.srv.Addr(),
-		Title:    windowTitle,
+		Title:    windowTitle(),
 		IconPath: icon,
 		// Свои временные файлы WebView2 кладёт рядом с .exe, если не сказать
 		// иначе. У стримера .exe лежит в «Загрузках», и мусорить там нельзя.
@@ -437,29 +463,24 @@ func trayHint(d uiDeps) {
 	if err := d.cfg.Update(func(c *config.Config) { c.TrayHintShown = true }); err != nil {
 		d.log.Warn("не запомнил, что подсказка про трей показана", "ошибка", err)
 	}
-	desktop.ShowInfo(windowTitle+" продолжает работать",
-		"Программа свернулась к часам, справа внизу. Заказы, очередь и виджет в OBS работают дальше.\n\n"+
-			"Не видно значка — нажми стрелку рядом с часами: Windows прячет новые значки туда. "+
-			"Значок можно перетащить оттуда к остальным, тогда он будет на виду.\n\n"+
-			"Открыть окно обратно — щелчок по значку. Закрыть программу совсем — правой кнопкой "+
-			"по значку и «Выход».")
+	desktop.ShowInfo(i18n.F("%s продолжает работать", windowTitle()), i18n.T("Программа свернулась к часам, справа внизу. Заказы, очередь и виджет в OBS работают дальше.\n\nНе видно значка — нажми стрелку рядом с часами: Windows прячет новые значки туда. Значок можно перетащить оттуда к остальным, тогда он будет на виду.\n\nОткрыть окно обратно — щелчок по значку. Закрыть программу совсем — правой кнопкой по значку и «Выход»."))
 }
 
 // trayMenu собирает меню значка возле часов.
 func trayMenu(d uiDeps, icon string, onOpen, onQuit func()) desktop.TrayOptions {
 	return desktop.TrayOptions{
 		IconPath:  icon,
-		Tooltip:   windowTitle + " — работает",
+		TooltipFn: func() string { return i18n.F("%s — работает", windowTitle()) },
 		WidgetURL: d.srv.Addr() + "/widget",
 		OnOpen:    onOpen,
 		OnCopy: func(err error) {
 			if err != nil {
 				d.log.Warn("не скопировал адрес виджета", "ошибка", err)
-				d.state.Notify("error", "Не получилось скопировать адрес виджета: "+err.Error())
+				d.state.Notify("error", i18n.F("Не получилось скопировать адрес виджета: %s", err.Error()))
 				return
 			}
 			d.log.Info("адрес виджета скопирован из трея")
-			d.state.Notify("info", "Адрес виджета скопирован — вставь его в источник «Браузер» в OBS.")
+			d.state.Notify("info", i18n.T("Адрес виджета скопирован — вставь его в источник «Браузер» в OBS."))
 		},
 		OnQuit: func() {
 			d.log.Info("выход через значок возле часов")
@@ -487,7 +508,7 @@ func dataDir() (string, error) {
 func logPathHint() string {
 	base, err := os.UserConfigDir()
 	if err != nil {
-		return "папка songrequest в %APPDATA%"
+		return i18n.T("папка songrequest в %APPDATA%")
 	}
 	return filepath.Join(base, "songrequest", logx.LogFileName)
 }

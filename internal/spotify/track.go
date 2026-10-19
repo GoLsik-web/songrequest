@@ -71,7 +71,7 @@ func (c *Client) Track(ctx context.Context, id string) (match.Candidate, error) 
 		cand.Artists = append(cand.Artists, a.Name)
 	}
 	if n := len(t.Album.Images); n > 0 {
-		cand.CoverURL = t.Album.Images[n-1].URL
+		cand.CoverURL = t.Album.Images[0].URL
 	}
 	return cand, nil
 }

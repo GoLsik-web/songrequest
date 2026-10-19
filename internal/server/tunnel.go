@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/tunnel"
 )
 
@@ -97,7 +97,7 @@ func (s *Server) handleTunnelOn(w http.ResponseWriter, r *http.Request) {
 	// Пока идёт перебор, в панели должно быть написано, что происходит:
 	// первое включение занимает минуты, и молчащая карточка выглядит так,
 	// будто кнопка не сработала.
-	s.syncTunnel("Проверяю, нужен ли обход…")
+	s.syncTunnel(i18n.T("Проверяю, нужен ли обход…"))
 
 	// Сначала спрашиваем Spotify напрямую: если он отвечает и так, обход
 	// поднимать нельзя — получится туннель поверх туннеля. Ключ при этом уже
@@ -119,9 +119,8 @@ func (s *Server) handleTunnelOn(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("обход не понадобился: Spotify отвечает напрямую")
 		s.standby.Store(true)
 		s.applyProxy()
-		s.syncTunnel("Обход наготове: Spotify пока отвечает и без него.")
-		s.state.Notify("info", "Spotify отвечает и без обхода — похоже, у тебя уже включён VPN. "+
-			"Ключ сохранён, обход держу наготове: перестанет отвечать — подниму сам.")
+		s.syncTunnel(i18n.T("Обход наготове: Spotify пока отвечает и без него."))
+		s.state.Notify("info", i18n.T("Spotify отвечает и без обхода — похоже, у тебя уже включён VPN. Ключ сохранён, обход держу наготове: перестанет отвечать — подниму сам."))
 		writeJSON(w, map[string]any{"on": false, "standby": true})
 		return
 	}
@@ -129,7 +128,7 @@ func (s *Server) handleTunnelOn(w http.ResponseWriter, r *http.Request) {
 	s.standby.Store(false)
 	s.starting.Store(true)
 	defer s.starting.Store(false)
-	s.syncTunnel("Включаю обход… это может занять пару минут.")
+	s.syncTunnel(i18n.T("Включаю обход… это может занять пару минут."))
 
 	status, err := s.tunnel.Start(ctx, key, s.cfg.Get().TunnelServer, s.cfg.Get().TunnelToolPath)
 	if err != nil {
@@ -144,9 +143,9 @@ func (s *Server) handleTunnelOn(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("не запомнил рабочий сервер обхода", "ошибка", err)
 	}
 	s.applyProxy()
-	s.syncTunnel("Обход работает: " + status.Server)
-	s.state.Notify("info", "Обход включён, Spotify отвечает через "+status.Server)
-	writeJSON(w, map[string]any{"on": true, "server": status.Server})
+	s.syncTunnel(i18n.F("Обход работает: %s", tunnel.DisplayName(status.Server)))
+	s.state.Notify("info", i18n.F("Обход включён, Spotify отвечает через %s", tunnel.DisplayName(status.Server)))
+	writeJSON(w, map[string]any{"on": true, "server": tunnel.DisplayName(status.Server)})
 }
 
 // handleTunnelOff выключает обход и возвращает Spotify на прямой путь (или на
@@ -163,8 +162,8 @@ func (s *Server) handleTunnelOff(w http.ResponseWriter, r *http.Request) {
 	}
 	s.applyProxy()
 	s.standby.Store(false)
-	s.syncTunnel("Обход выключен.")
-	s.state.Notify("info", "Обход выключен.")
+	s.syncTunnel(i18n.T("Обход выключен."))
+	s.state.Notify("info", i18n.T("Обход выключен."))
 	writeJSON(w, map[string]any{"on": false})
 }
 
@@ -188,8 +187,8 @@ func (s *Server) handleTunnelForget(w http.ResponseWriter, r *http.Request) {
 	}
 	s.applyProxy()
 	s.standby.Store(false)
-	s.syncTunnel("Ключ забыт.")
-	s.state.Notify("info", "Ключ обхода забыт.")
+	s.syncTunnel(i18n.T("Ключ забыт."))
+	s.state.Notify("info", i18n.T("Ключ обхода забыт."))
 	writeJSON(w, map[string]any{"on": false, "has_key": false})
 }
 
@@ -224,7 +223,7 @@ func tunnelHint(key string) (string, error) {
 		if err != nil || u.Host == "" {
 			return "", errs.New(errs.TunnelBadKey, "Ссылка на подписку записана непонятно.")
 		}
-		return "подписка " + u.Host, nil
+		return i18n.F("подписка %s", u.Host), nil
 	}
 
 	servers, err := tunnel.ParseKey(key)
@@ -232,9 +231,9 @@ func tunnelHint(key string) (string, error) {
 		return "", err
 	}
 	if len(servers) == 1 {
-		return "ключ " + servers[0].String(), nil
+		return i18n.F("ключ %s", servers[0].Name()), nil
 	}
-	return "ключи, серверов: " + strconv.Itoa(len(servers)), nil
+	return i18n.F("ключи, серверов: %d", len(servers)), nil
 }
 
 // StartTunnel поднимает обход при запуске приложения, если он был включён.
@@ -284,7 +283,7 @@ func (s *Server) StartTunnel(ctx context.Context) {
 	}
 
 	s.starting.Store(true)
-	s.syncTunnel("Проверяю, нужен ли обход…")
+	s.syncTunnel(i18n.T("Проверяю, нужен ли обход…"))
 	go func() {
 		defer s.starting.Store(false)
 
@@ -309,9 +308,8 @@ func (s *Server) StartTunnel(ctx context.Context) {
 			s.log.Info("обход не понадобился: Spotify отвечает напрямую")
 			s.standby.Store(true)
 			s.starting.Store(false)
-			s.syncTunnel("Обход наготове: Spotify пока отвечает и без него.")
-			s.state.Notify("info", "Spotify отвечает без обхода — обход держу наготове. "+
-				"Перестанет отвечать (например, выключишь свой VPN) — подниму сам.")
+			s.syncTunnel(i18n.T("Обход наготове: Spotify пока отвечает и без него."))
+			s.state.Notify("info", i18n.T("Spotify отвечает без обхода — обход держу наготове. Перестанет отвечать (например, выключишь свой VPN) — подниму сам."))
 			return
 		}
 
@@ -333,7 +331,7 @@ func (s *Server) StartTunnel(ctx context.Context) {
 			}
 		}
 		s.applyProxy()
-		s.syncTunnel("Обход работает: " + status.Server)
+		s.syncTunnel(i18n.F("Обход работает: %s", tunnel.DisplayName(status.Server)))
 	}()
 }
 
@@ -407,17 +405,15 @@ func (s *Server) noteSpotifyError(err error) {
 		s.reselecting.Store(false)
 		s.log.Warn("Spotify отказывает через все серверы обхода — перебор остановлен")
 		s.state.NotifyCode("error", string(errs.SpotifyCountry),
-			"Spotify отказывает через все серверы обхода, которые приложение пробовало. "+
-				"Дело, скорее всего, не в них: проверь страну аккаунта Spotify "+
-				"(в неработающей стране он отказывает при любом VPN).")
+			i18n.T("Spotify отказывает через все серверы обхода, которые приложение пробовало. Дело, скорее всего, не в них: проверь страну аккаунта Spotify (в неработающей стране он отказывает при любом VPN)."))
 		return
 	}
 
 	s.log.Warn("через этот сервер обхода Spotify отказывает — беру другой", "сервер", st.Server)
 	s.tunnel.MarkBad(st.Server)
 	s.rememberBad()
-	s.state.Notify("info", "Через сервер обхода «"+st.Server+"» Spotify не работает. Беру другой сервер.")
-	s.syncTunnel("Сервер не подошёл — ищу другой…")
+	s.state.Notify("info", i18n.F("Через сервер обхода «%s» Spotify не работает. Беру другой сервер.", tunnel.DisplayName(st.Server)))
+	s.syncTunnel(i18n.T("Сервер не подошёл — ищу другой…"))
 
 	go func() {
 		defer s.reselecting.Store(false)
@@ -446,8 +442,8 @@ func (s *Server) noteSpotifyError(err error) {
 			s.log.Warn("не запомнил рабочий сервер обхода", "ошибка", err)
 		}
 		s.applyProxy()
-		s.syncTunnel("Обход работает: " + status.Server)
-		s.state.Notify("info", "Обход перешёл на "+status.Server)
+		s.syncTunnel(i18n.F("Обход работает: %s", tunnel.DisplayName(status.Server)))
+		s.state.Notify("info", i18n.F("Обход перешёл на %s", tunnel.DisplayName(status.Server)))
 	}()
 }
 
@@ -492,8 +488,8 @@ func (s *Server) reviveTunnel(reason string) bool {
 	}
 
 	s.log.Warn("поднимаю обход заново", "причина", reason)
-	s.syncTunnel("Обход отвалился — поднимаю заново…")
-	s.state.Notify("info", "Обход блокировок отвалился. Поднимаю заново, ничего нажимать не надо.")
+	s.syncTunnel(i18n.T("Обход отвалился — поднимаю заново…"))
+	s.state.Notify("info", i18n.T("Обход блокировок отвалился. Поднимаю заново, ничего нажимать не надо."))
 
 	go func() {
 		defer s.reviving.Store(false)
@@ -525,7 +521,7 @@ func (s *Server) reviveTunnel(reason string) bool {
 			cancel()
 			if err != nil {
 				s.log.Warn("обход не поднялся", "попытка", attempt+1, "ошибка", err)
-				s.syncTunnel("Обход отвалился, пробую поднять… (" + tunnelNote(err) + ")")
+				s.syncTunnel(i18n.F("Обход отвалился, пробую поднять… (%s)", tunnelNote(err)))
 				// О неудаче говорим человеку один раз, на третьей попытке:
 				// раньше — суета на ровном месте, позже — он уже сам заметил,
 				// что заказы встали, и ищет причину.
@@ -541,8 +537,8 @@ func (s *Server) reviveTunnel(reason string) bool {
 				}
 			}
 			s.applyProxy()
-			s.syncTunnel("Обход работает: " + status.Server)
-			s.state.Notify("info", "Обход поднялся сам: "+status.Server)
+			s.syncTunnel(i18n.F("Обход работает: %s", tunnel.DisplayName(status.Server)))
+			s.state.Notify("info", i18n.F("Обход поднялся сам: %s", tunnel.DisplayName(status.Server)))
 			s.log.Info("обход поднялся заново", "сервер", status.Server, "попытка", attempt+1)
 			return
 		}
@@ -784,10 +780,7 @@ func (s *Server) markTunnelNeeded() {
 func (s *Server) warnAboutOwnVPN() {
 	s.log.Warn("свой VPN стримера мешает: Spotify через него не пускает со входом")
 	s.state.Notify("error",
-		"Похоже, у тебя включён свой VPN, а Spotify через него не работает: он отказывает "+
-			"адресам таких серверов. Приложение подняло свой обход поверх твоего VPN — так всё "+
-			"работает, но медленно, и заказы могут отваливаться. Лучше выключить свой VPN: "+
-			"приложению он не нужен, обход у него свой.")
+		i18n.T("Похоже, у тебя включён свой VPN, а Spotify через него не работает: он отказывает адресам таких серверов. Приложение подняло свой обход поверх твоего VPN — так всё работает, но медленно, и заказы могут отваливаться. Лучше выключить свой VPN: приложению он не нужен, обход у него свой."))
 }
 
 // silenceLimit — сколько отказов подряд считаем поломкой дороги, а не
@@ -864,10 +857,8 @@ func (s *Server) noteSpotifySilence() {
 			s.tunnel.Stop()
 			s.standby.Store(true)
 			s.applyProxy()
-			s.syncTunnel("Обход выключен: Spotify отвечает и без него.")
-			s.state.Notify("info", "Spotify отвечает и без обхода — похоже, у тебя включён свой VPN. "+
-				"Обход выключен, чтобы не гонять запросы через два туннеля подряд. "+
-				"Выключишь VPN — приложение поднимет обход само.")
+			s.syncTunnel(i18n.T("Обход выключен: Spotify отвечает и без него."))
+			s.state.Notify("info", i18n.T("Spotify отвечает и без обхода — похоже, у тебя включён свой VPN. Обход выключен, чтобы не гонять запросы через два туннеля подряд. Выключишь VPN — приложение поднимет обход само."))
 
 		case on && !direct:
 			// Не отвечает нигде: обход лёг по-настоящему.
@@ -912,7 +903,7 @@ func (s *Server) syncTunnel(note string) {
 	if s.tunnel != nil {
 		st := s.tunnel.Status()
 		info.On = st.On
-		info.Server = st.Server
+		info.Server = tunnel.DisplayName(st.Server)
 		info.FromCache = st.FromCache
 		info.Standby = !st.On && s.standby.Load()
 	}

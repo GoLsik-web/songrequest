@@ -7,6 +7,7 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/config"
+	"songrequest/internal/i18n"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
 )
@@ -34,7 +35,7 @@ func (s *Server) check(requester string, item queue.Item, cfg config.Config) *Re
 	// заказы копятся, и стример получает десять треков подряд, как только
 	// снимет паузу.
 	if s.player != nil && s.player.Paused() {
-		return &Rejection{Reason: "стример остановил приём заказов, баллы вернул"}
+		return &Rejection{Reason: i18n.T("стример остановил приём заказов, баллы вернул")}
 	}
 
 	// Бан-лист хранит логин. Отображаемое имя может быть совсем другим —
@@ -46,9 +47,9 @@ func (s *Server) check(requester string, item queue.Item, cfg config.Config) *Re
 	}
 	if banned, reason := s.isMusicBanned(who); banned {
 		if reason != "" {
-			return &Rejection{Reason: "тебе закрыт заказ музыки: " + reason}
+			return &Rejection{Reason: i18n.F("тебе закрыт заказ музыки: %s", reason)}
 		}
-		return &Rejection{Reason: "тебе закрыт заказ музыки"}
+		return &Rejection{Reason: i18n.T("тебе закрыт заказ музыки")}
 	}
 
 	if cfg.MaxPerUser > 0 {
@@ -59,18 +60,18 @@ func (s *Server) check(requester string, item queue.Item, cfg config.Config) *Re
 		if err != nil {
 			s.log.Warn("не посчитал заказы зрителя", "ошибка", err)
 		} else if n >= cfg.MaxPerUser {
-			return &Rejection{Reason: fmt.Sprintf(
+			return &Rejection{Reason: i18n.F(
 				"у тебя уже %d %s в очереди — дождись, пока отыграют",
-				n, plural(n, "заказ", "заказа", "заказов"))}
+				n, i18n.Plural(n, [3]string{"заказ", "заказа", "заказов"}, [2]string{"request", "requests"}))}
 		}
 	}
 
 	if s.alreadyQueued(item) {
-		return &Rejection{Reason: "этот трек уже в очереди — закажи что-нибудь другое"}
+		return &Rejection{Reason: i18n.T("этот трек уже в очереди — закажи что-нибудь другое")}
 	}
 
 	if cfg.MaxTrackSeconds > 0 && item.DurationMs > cfg.MaxTrackSeconds*1000 {
-		return &Rejection{Reason: fmt.Sprintf(
+		return &Rejection{Reason: i18n.F(
 			"трек длиннее %s — такое не ставим",
 			humanDuration(time.Duration(cfg.MaxTrackSeconds)*time.Second))}
 	}
@@ -100,7 +101,7 @@ func notMusic(item queue.Item, cfg config.Config) string {
 		// Составные стоп-слова («1 hour») по-прежнему ищутся как есть: там
 		// пробел внутри, и границы слова уже заданы им самим.
 		if strings.Contains(" "+haystack+" ", " "+w+" ") {
-			return "это не похоже на музыку (" + word + ")"
+			return i18n.F("это не похоже на музыку (%s)", word)
 		}
 	}
 
@@ -115,7 +116,7 @@ func notMusic(item queue.Item, cfg config.Config) string {
 		limit = want
 	}
 	if time.Duration(item.DurationMs)*time.Millisecond > limit {
-		return "это слишком длинное для песни"
+		return i18n.T("это слишком длинное для песни")
 	}
 	return ""
 }
@@ -217,9 +218,9 @@ func afterDuration(d time.Duration) string {
 	m := int(d.Minutes())
 	if m < 1 {
 		n := int(d.Seconds())
-		return fmt.Sprintf("%d %s", n, plural(n, "секунду", "секунды", "секунд"))
+		return fmt.Sprintf("%d %s", n, i18n.Plural(n, [3]string{"секунду", "секунды", "секунд"}, [2]string{"second", "seconds"}))
 	}
-	return fmt.Sprintf("%d %s", m, plural(m, "минуту", "минуты", "минут"))
+	return fmt.Sprintf("%d %s", m, i18n.Plural(m, [3]string{"минуту", "минуты", "минут"}, [2]string{"minute", "minutes"}))
 }
 
 func humanDuration(d time.Duration) string {
@@ -228,9 +229,10 @@ func humanDuration(d time.Duration) string {
 	// читали «1 секунды» и «примерно через 3 минут».
 	m := int(d.Minutes())
 	if m < 1 {
-		return fmt.Sprintf("%d %s", int(d.Seconds()), plural(int(d.Seconds()), "секунда", "секунды", "секунд"))
+		return fmt.Sprintf("%d %s", int(d.Seconds()), i18n.Plural(int(d.Seconds()), [3]string{"секунда", "секунды", "секунд"}, [2]string{"second", "seconds"}))
 	}
-	return fmt.Sprintf("%d %s", m, plural(m, "минута", "минуты", "минут"))
+	return fmt.Sprintf("%d %s", m, i18n.Plural(m, [3]string{"минута", "минуты", "минут"}, [2]string{"minute", "minutes"}))
+
 }
 
 // alreadyQueued — тот же трек уже стоит в очереди, ждёт или играет.

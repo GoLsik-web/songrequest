@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"songrequest/internal/app"
 	"songrequest/internal/errs"
 	"songrequest/internal/logx"
 	"songrequest/internal/procjob"
@@ -668,7 +669,7 @@ func (p *Player) TestSound(ctx context.Context, device string) error {
 
 // Devices перечисляет доступные аудиоустройства mpv — чтобы стример выбрал
 // виртуальный кабель из списка, а не вписывал его имя руками.
-func (p *Player) Devices(ctx context.Context) ([]string, error) {
+func (p *Player) Devices(ctx context.Context) ([]app.AudioDevice, error) {
 	_, mpv := p.tools.Paths()
 	if mpv == "" {
 		return nil, errs.New(errs.YouTubeNoMpv, "mpv не найден.")
@@ -685,19 +686,37 @@ func (p *Player) Devices(ctx context.Context) ([]string, error) {
 		return nil, errs.Wrap(errs.YouTubePlay, "Не получилось спросить у mpv список устройств.", err)
 	}
 
-	var devices []string
-	for _, line := range strings.Split(string(out), "\n") {
+	return parseDevices(string(out)), nil
+}
+
+// parseDevices разбирает ответ mpv на --audio-device=help.
+//
+// Строки вида «  'wasapi/{1a7e…}' (Динамики (Realtek))»: в кавычках — код для
+// mpv, в скобках — имя из Windows. Раньше в списке стояли одни коды, и
+// стример гадал, какой из четырёх wasapi/{…} его кабель. «auto» и «openal»
+// выкидываем: первое — то же, что «системное устройство», второе — тот же
+// выход по умолчанию через другую библиотеку.
+func parseDevices(out string) []app.AudioDevice {
+	var devices []app.AudioDevice
+	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
-		// Строки вида «  'wasapi/{...}' (VB-Cable)».
 		if !strings.HasPrefix(line, "'") {
 			continue
 		}
-		name, _, ok := strings.Cut(strings.TrimPrefix(line, "'"), "'")
-		if ok && name != "" {
-			devices = append(devices, name)
+		id, rest, ok := strings.Cut(strings.TrimPrefix(line, "'"), "'")
+		if !ok || id == "" || id == "auto" || id == "openal" {
+			continue
 		}
+		name := strings.TrimSpace(rest)
+		if strings.HasPrefix(name, "(") && strings.HasSuffix(name, ")") {
+			name = strings.TrimSpace(name[1 : len(name)-1])
+		}
+		if name == "" {
+			name = id
+		}
+		devices = append(devices, app.AudioDevice{ID: id, Name: name})
 	}
-	return devices, nil
+	return devices
 }
 
 func firstNonEmpty(values ...string) string {

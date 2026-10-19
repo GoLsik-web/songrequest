@@ -11,6 +11,8 @@ import (
 
 	webview "github.com/jchv/go-webview2"
 	"github.com/jchv/go-webview2/webviewloader"
+
+	"songrequest/internal/i18n"
 )
 
 // Окно входа в Spotify — то самое место, где обход блокировок обязан работать
@@ -67,7 +69,7 @@ func OpenAuth(o AuthOptions) error {
 
 	title := o.Title
 	if title == "" {
-		title = "Вход"
+		title = i18n.T("Вход")
 	}
 	wv := webview.NewWithOptions(webview.WebViewOptions{
 		DataPath:  o.DataPath,

@@ -6,6 +6,7 @@
 package app
 
 import (
+	"songrequest/internal/i18n"
 	"sync"
 	"time"
 )
@@ -257,17 +258,24 @@ type OrderMatch struct {
 	Why string `json:"why"`
 }
 
+// AudioDevice — устройство звука для mpv: ID уходит в mpv и в конфиг,
+// Name — то, что видит стример («Динамики (Realtek)»), а не wasapi/{…}.
+type AudioDevice struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // YouTubeInfo — состояние запасного проигрывателя.
 type YouTubeInfo struct {
 	// Ready означает, что оба инструмента на месте и заказ, которого нет
 	// в Spotify, всё-таки заиграет.
-	Ready    bool     `json:"ready"`
-	YtDlp    string   `json:"ytdlp"`
-	Mpv      string   `json:"mpv"`
-	Device   string   `json:"device"`
-	Devices  []string `json:"devices"`
-	Note     string   `json:"note"`
-	NoteCode string   `json:"note_code"`
+	Ready    bool          `json:"ready"`
+	YtDlp    string        `json:"ytdlp"`
+	Mpv      string        `json:"mpv"`
+	Device   string        `json:"device"`
+	Devices  []AudioDevice `json:"devices"`
+	Note     string        `json:"note"`
+	NoteCode string        `json:"note_code"`
 }
 
 // Session — итоги с момента запуска. Панель на этапе, когда заказов ещё нет,
@@ -317,6 +325,9 @@ type Snapshot struct {
 	// Widget — оформление виджета. Едет вместе с состоянием, чтобы правка в
 	// панели доезжала до OBS сразу: перезагружать источник не нужно.
 	Widget any `json:"widget"`
+	// Lang — язык интерфейса ("ru"/"en"). Виджет и панель по нему
+	// переключаются сразу, без перезагрузки.
+	Lang string `json:"lang"`
 }
 
 // UpdateInfo — что известно про обновление приложения.
@@ -508,7 +519,7 @@ func New(version string) *State {
 
 	for _, name := range []string{"Spotify", "Twitch", "DonationAlerts", "DonatePay", "DonateX"} {
 		s.order = append(s.order, name)
-		s.conns[name] = ConnState{Name: name, Level: ConnIdle, Detail: "Не настроено"}
+		s.conns[name] = ConnState{Name: name, Level: ConnIdle, Detail: i18n.T("Не настроено")}
 	}
 	return s
 }
@@ -823,6 +834,7 @@ func (s *State) Snapshot() Snapshot {
 		YouTube:       s.youtube,
 		Tunnel:        s.tunnel,
 		Widget:        s.widget,
+		Lang:          i18n.Lang(),
 	}
 	for _, name := range s.order {
 		snap.Connections = append(snap.Connections, s.conns[name])

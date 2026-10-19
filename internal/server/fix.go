@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/links"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
@@ -89,7 +90,7 @@ func asFound(c match.Candidate) foundTrack {
 func (s *Server) handleQueueFix(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.Error(w, "непонятный номер заказа", http.StatusBadRequest)
+		http.Error(w, i18n.T("непонятный номер заказа"), http.StatusBadRequest)
 		return
 	}
 
@@ -98,13 +99,13 @@ func (s *Server) handleQueueFix(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil ||
 		strings.TrimSpace(body.TrackID) == "" {
-		http.Error(w, "не понял, какой трек ставить", http.StatusBadRequest)
+		http.Error(w, i18n.T("не понял, какой трек ставить"), http.StatusBadRequest)
 		return
 	}
 
 	item, err := s.queue.Get(id)
 	if err != nil {
-		http.Error(w, "этого заказа в очереди уже нет", http.StatusNotFound)
+		http.Error(w, i18n.T("этого заказа в очереди уже нет"), http.StatusNotFound)
 		return
 	}
 
@@ -129,18 +130,18 @@ func (s *Server) handleQueueFix(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.log.Error("не смог подменить трек в очереди", "заказ", id, "ошибка", err)
-		http.Error(w, "не получилось заменить трек", http.StatusInternalServerError)
+		http.Error(w, i18n.T("не получилось заменить трек"), http.StatusInternalServerError)
 		return
 	}
 
 	s.rememberFix(ctx, item, track)
 
 	s.log.Info("трек исправлен вручную",
-		"заказ", item.RawRequest, "было", item.Artist+" — "+item.Title,
-		"стало", artist+" — "+track.Title)
+		"заказ", item.RawRequest, "было", artistTitle(item.Artist, item.Title),
+		"стало", artistTitle(artist, track.Title))
 	s.modLog(panelActor, "исправил трек",
-		item.Requester+": было «"+item.Artist+" — "+item.Title+"», стало «"+artist+" — "+track.Title+"»")
-	s.state.Notify("info", "Исправлено: "+artist+" — "+track.Title)
+		item.Requester+": было «"+artistTitle(item.Artist, item.Title)+"», стало «"+artistTitle(artist, track.Title)+"»")
+	s.state.Notify("info", i18n.F("Исправлено: %s", artistTitle(artist, track.Title)))
 
 	s.syncPlayback()
 	writeJSON(w, fixed)

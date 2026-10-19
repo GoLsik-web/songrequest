@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
@@ -473,19 +472,19 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 					// человек решил, что всё сломалось.
 					group := rateGroup(path)
 					if group != "плеер" && group != "поиск" {
-						return errs.New(errs.SpotifyQuota,
-							"Spotify на время закрыл часть запросов («"+group+"») — откроет сам через "+
-								wait.Round(time.Minute).String()+". Заказы и музыка при этом работают.")
+						return errs.Newf(errs.SpotifyQuota,
+							"Spotify на время закрыл часть запросов («%s») — откроет сам через %s. Заказы и музыка при этом работают.",
+							errs.Phrase(group), wait.Round(time.Minute).String())
 					}
-					return errs.New(errs.SpotifyQuota,
-						"У приложения кончился дневной запас запросов к Spotify («"+group+"»). "+
-							"Он вернётся сам через "+wait.Round(time.Minute).String()+
-							". Заказы до тех пор играть не будут; нажимать «Проверить связь» "+
-							"бесполезно — это только продлевает срок.")
+					return errs.Newf(errs.SpotifyQuota,
+						"У приложения кончился дневной запас запросов к Spotify («%s»). "+
+							"Он вернётся сам через %s. Заказы до тех пор играть не будут; нажимать «Проверить связь» "+
+							"бесполезно — это только продлевает срок.",
+						errs.Phrase(group), wait.Round(time.Minute).String())
 				}
-				return errs.New(errs.SpotifyRateLimit,
-					"Spotify временно ограничил приложение и просит долгую паузу ("+
-						wait.Round(time.Second).String()+"). Музыка вернётся сама, когда он её снимет.")
+				return errs.Newf(errs.SpotifyRateLimit,
+					"Spotify временно ограничил приложение и просит долгую паузу (%s). Музыка вернётся сама, когда он её снимет.",
+					wait.Round(time.Second).String())
 			}
 			// Короткую паузу отсиживаем сами, но и остальным запросам ходить
 			// в это время незачем: у приложения три источника запросов
@@ -596,8 +595,7 @@ func apiError(statusCode int, path string, data []byte) error {
 		return errs.New(errs.SpotifyNothing,
 			"Spotify не нашёл того, что мы просим: плейлист или трек удалён. Выбери другой.")
 	}
-	return errs.New(errs.SpotifyBadResponse,
-		fmt.Sprintf("Spotify отказал (%d). Подробности в логе.", statusCode))
+	return errs.HTTPStatus(errs.SpotifyBadResponse, "Spotify", statusCode)
 }
 
 // isInvalidLimit узнаёт отказ «Invalid limit» среди прочих отказов Spotify.
@@ -614,13 +612,13 @@ func isInvalidLimit(err error) bool {
 // вернётся сама», и это две очень разные новости для человека.
 func pauseError(left time.Duration) error {
 	if left <= maxRateWait {
-		return errs.New(errs.SpotifyRateLimit,
-			"Spotify попросил короткую паузу (осталось "+
-				left.Round(time.Second).String()+"). Приложение подождёт само.")
+		return errs.Newf(errs.SpotifyRateLimit,
+			"Spotify попросил короткую паузу (осталось %s). Приложение подождёт само.",
+			left.Round(time.Second).String())
 	}
-	return errs.New(errs.SpotifyRateLimit,
-		"Spotify временно ограничил приложение и просит долгую паузу (осталось "+
-			left.Round(time.Second).String()+"). Музыка вернётся сама, когда он её снимет.")
+	return errs.Newf(errs.SpotifyRateLimit,
+		"Spotify временно ограничил приложение и просит долгую паузу (осталось %s). Музыка вернётся сама, когда он её снимет.",
+		left.Round(time.Second).String())
 }
 
 // rateGroup — к какой части Spotify относится путь.

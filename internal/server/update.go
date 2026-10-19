@@ -12,6 +12,7 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/update"
 )
 
@@ -78,9 +79,9 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		u.Page = update.ReleasesPage(repo)
 		u.NoteCode = ""
 		if newer {
-			u.Note = "Есть новая версия " + rel.Version
+			u.Note = i18n.F("Есть новая версия %s", rel.Version)
 		} else {
-			u.Note = "У тебя последняя версия"
+			u.Note = i18n.T("У тебя последняя версия")
 		}
 	})
 	s.log.Info("проверил обновления",
@@ -132,7 +133,7 @@ func (s *Server) handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	repo := strings.TrimSpace(s.cfg.Get().UpdateRepo)
 	s.state.UpdateSelf(func(u *app.UpdateInfo) {
 		u.Installing = true
-		u.Note, u.NoteCode = "Качаю обновление…", ""
+		u.Note, u.NoteCode = i18n.T("Качаю обновление…"), ""
 	})
 
 	ctx, cancel := context.WithTimeout(s.baseContext(), 12*time.Minute)
@@ -147,7 +148,7 @@ func (s *Server) handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 		s.state.UpdateSelf(func(u *app.UpdateInfo) {
 			u.Installing = false
 			u.Available = false
-			u.Note = "У тебя последняя версия"
+			u.Note = i18n.T("У тебя последняя версия")
 		})
 		s.fail(w, errs.New(errs.UpdateCheck, "Обновлять нечего: у тебя последняя версия."))
 		return
@@ -159,7 +160,7 @@ func (s *Server) handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.state.UpdateSelf(func(u *app.UpdateInfo) { u.Note = "Ставлю " + rel.Version + "…" })
+	s.state.UpdateSelf(func(u *app.UpdateInfo) { u.Note = i18n.F("Ставлю %s…", rel.Version) })
 	if err := update.Apply(exePath, fresh); err != nil {
 		s.failUpdate(w, err)
 		return
@@ -179,7 +180,7 @@ func (s *Server) handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("обновление поставлено, перезапускаюсь",
 		"было", s.version, "стало", rel.Version, "новый_процесс", cmd.Process.Pid)
 	s.state.UpdateSelf(func(u *app.UpdateInfo) {
-		u.Note = "Обновился до " + rel.Version + ", перезапускаюсь…"
+		u.Note = i18n.F("Обновился до %s, перезапускаюсь…", rel.Version)
 	})
 
 	writeJSON(w, map[string]any{"ok": true, "version": rel.Version})

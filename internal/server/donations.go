@@ -9,6 +9,7 @@ import (
 
 	"songrequest/internal/donations"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/links"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
@@ -68,17 +69,17 @@ func (s *Server) onDonation(d donations.Donation) {
 	if cfg.DonationMin > 0 && d.Amount < cfg.DonationMin {
 		s.log.Info("донат меньше порога заказа",
 			"от", d.Username, "сумма", d.Amount, "порог", cfg.DonationMin)
-		s.state.Notify("info", "Донат "+money+" от "+d.Username+" — меньше порога заказа")
+		s.state.Notify("info", i18n.F("Донат %s от %s — меньше порога заказа", money, d.Username))
 		return
 	}
 
 	text := strings.TrimSpace(d.Message)
 	if text == "" {
-		s.state.Notify("info", "Донат "+money+" от "+d.Username+" — без сообщения, заказа нет")
+		s.state.Notify("info", i18n.F("Донат %s от %s — без сообщения, заказа нет", money, d.Username))
 		return
 	}
 
-	s.state.Notify("info", "Донат "+money+" от "+d.Username+": "+text)
+	s.state.Notify("info", i18n.F("Донат %s от %s: %s", money, d.Username, text))
 
 	// Ссылка важнее текста — ровно так же, как в заказе за баллы.
 	//
@@ -109,7 +110,7 @@ func (s *Server) onDonation(d donations.Donation) {
 
 	req := match.Parse(search)
 	if req.Title == "" {
-		s.say(ctx, "@"+d.Username+", спасибо за донат! Не понял, что заказываешь — напиши стримеру.")
+		s.say(ctx, i18n.F("@%s, спасибо за донат! Не понял, что заказываешь — напиши стримеру.", d.Username))
 		return
 	}
 
@@ -126,13 +127,13 @@ func (s *Server) onDonation(d donations.Donation) {
 	if err != nil {
 		s.log.Error("не смог подобрать трек по донату", "ошибка", err)
 		s.state.NotifyError(err)
-		s.say(ctx, "@"+d.Username+", спасибо за донат! Трек поискать не вышло, скажи стримеру.")
+		s.say(ctx, i18n.F("@%s, спасибо за донат! Трек поискать не вышло, скажи стримеру.", d.Username))
 		return
 	}
 	if !res.Found {
 		s.log.Info("трек из доната не найден", "текст", text, "запросы", res.Attempts)
-		s.state.NotifyWarn(errs.Code(""), "По донату от "+d.Username+" трек не нашёлся: "+text)
-		s.say(ctx, "@"+d.Username+", спасибо за донат! Такого трека в Spotify не нашлось.")
+		s.state.NotifyWarn(errs.Code(""), i18n.F("По донату от %s трек не нашёлся: %s", d.Username, text))
+		s.say(ctx, i18n.F("@%s, спасибо за донат! Такого трека в Spotify не нашлось.", d.Username))
 		return
 	}
 
@@ -224,7 +225,7 @@ func (s *Server) handleDonationsToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.log.Info("DonationAlerts подключён")
-	s.state.Notify("info", "DonationAlerts подключён")
+	s.state.Notify("info", i18n.T("DonationAlerts подключён"))
 
 	// Поднимаем подключение прямо сейчас, не дожидаясь перезапуска.
 	s.restartDonationAlerts()
@@ -236,7 +237,8 @@ func (s *Server) handleDonationAlertsLogout(w http.ResponseWriter, r *http.Reque
 	s.stopDonationAlerts()
 	s.donationAlerts.Logout()
 	s.state.SetConnIdle("DonationAlerts", "Не настроено")
-	s.state.Notify("info", "DonationAlerts отключён")
+	s.state.Notify("info", i18n.T("DonationAlerts отключён"))
+
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

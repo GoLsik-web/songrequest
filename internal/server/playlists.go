@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/links"
 	"songrequest/internal/match"
 	"songrequest/internal/queue"
@@ -249,17 +249,17 @@ func (s *Server) resolvePlaylist(ctx context.Context, r twitch.Redemption) {
 			"зритель", r.UserLogin, "заказ", r.UserInput)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{
 			State: app.MatchFailed,
-			Note:  "Это не ссылка на плейлист",
+			Note:  i18n.T("Это не ссылка на плейлист"),
 		})
 		s.rejectRedemption(ctx, r,
-			"это награда за плейлист — нужна ссылка на плейлист или альбом Spotify либо Яндекс.Музыки")
+			i18n.T("это награда за плейлист — нужна ссылка на плейлист или альбом Spotify либо Яндекс.Музыки"))
 		return
 	}
 
 	// Место в списке ожидания не бесконечно.
 	if len(s.pendingPlaylists()) >= playlistKeep {
 		s.rejectRedemption(ctx, r,
-			"слишком много плейлистов ждут решения — попробуй позже, баллы вернул")
+			i18n.T("слишком много плейлистов ждут решения — попробуй позже"))
 		return
 	}
 
@@ -270,7 +270,7 @@ func (s *Server) resolvePlaylist(ctx context.Context, r twitch.Redemption) {
 		s.log.Info("плейлист не прочитался",
 			"зритель", r.UserLogin, "ссылка", link.URL, "код", code, "ошибка", err)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{State: app.MatchFailed, Note: text})
-		s.rejectRedemption(ctx, r, "не получилось прочитать плейлист: "+strings.ToLower(strings.TrimSuffix(text, ".")))
+		s.rejectRedemption(ctx, r, i18n.F("не получилось прочитать плейлист: %s", errText(err)))
 		return
 	}
 
@@ -291,7 +291,7 @@ func (s *Server) resolvePlaylist(ctx context.Context, r twitch.Redemption) {
 	s.state.SetOrderMatch(r.ID, app.OrderMatch{
 		State: app.MatchFound,
 		Title: col.Title,
-		Note:  "Плейлист ждёт одобрения",
+		Note:  i18n.T("Плейлист ждёт одобрения"),
 	})
 	s.log.Info("плейлист ждёт одобрения",
 		"зритель", r.UserLogin, "плейлист", col.Title,
@@ -301,11 +301,11 @@ func (s *Server) resolvePlaylist(ctx context.Context, r twitch.Redemption) {
 	// ничего. Без этой строки «оплатил и тишина» читается как поломка.
 	part := ""
 	if col.Total > len(col.Tracks) {
-		part = fmt.Sprintf(" (первые %d из %d)", len(col.Tracks), col.Total)
+		part = i18n.F(" (первые %d из %d)", len(col.Tracks), col.Total)
 	}
-	s.say(ctx, fmt.Sprintf("@%s, плейлист «%s»%s принят и ждёт одобрения стримера. Не одобрят — баллы вернутся.",
+	s.say(ctx, i18n.F("@%s, плейлист «%s»%s принят и ждёт одобрения стримера. Не одобрят — баллы вернутся.",
 		r.UserName, col.Title, part))
-	s.state.Notify("info", "Плейлист от "+r.UserName+": «"+col.Title+"» ждёт решения")
+	s.state.Notify("info", i18n.F("Плейлист от %s: «%s» ждёт решения", r.UserName, col.Title))
 }
 
 // playlistCollection — плейлист, приведённый к общему виду.
@@ -425,9 +425,8 @@ func (s *Server) approvePlaylist(ctx context.Context, id, actor string) (pending
 			"Из этого плейлиста не удалось поставить ни один трек. Баллы вернул.")
 	}
 
-	s.modLog(actor, "одобрил плейлист", p.Title+" ("+strconv.Itoa(added)+" треков от "+p.Requester+")")
-	s.state.Notify("info", actor+" одобрил плейлист «"+p.Title+"»: "+
-		strconv.Itoa(added)+" "+plural(added, "трек", "трека", "треков")+" в очереди")
+	s.modLog(actor, "одобрил плейлист", p.Title+" ("+strconv.Itoa(added)+" "+plural(added, "трек", "трека", "треков")+" от "+p.Requester+")")
+	s.state.Notify("info", i18n.F("%s одобрил плейлист «%s»: %d %s в очереди", actor, p.Title, added, tracksWord(added)))
 
 	// Заказ на Twitch отмечаем выполненным: плейлист сыграет, баллы
 	// потрачены не зря. Иначе он навсегда останется висеть в очереди наград.
@@ -526,7 +525,7 @@ func (s *Server) rejectPlaylist(ctx context.Context, id, actor string) (pendingP
 
 	s.refundPlaylist(ctx, p, "плейлист не одобрили")
 	s.modLog(actor, "отклонил плейлист", p.Title+" от "+p.Requester)
-	s.state.Notify("info", actor+" отклонил плейлист «"+p.Title+"», баллы вернулись")
+	s.state.Notify("info", i18n.F("%s отклонил плейлист «%s», баллы вернулись", actor, p.Title))
 	return p, nil
 }
 
@@ -555,9 +554,9 @@ func (s *Server) refundPlaylist(ctx context.Context, p pendingPlaylist, why stri
 func (s *Server) playlistRewardHint() string {
 	cfg := s.cfg.Get()
 	if !cfg.PlaylistReward || s.playlistReward() == "" {
-		return "плейлисты на этом канале не заказывают — кинь ссылку на один трек"
+		return i18n.T("плейлисты на этом канале не заказывают — кинь ссылку на один трек")
 	}
-	return fmt.Sprintf("это плейлист, а не трек — для него есть награда «%s» за %d %s",
+	return i18n.F("это плейлист, а не трек — для него есть награда «%s» за %d %s",
 		cfg.PlaylistRewardTitle, cfg.PlaylistPrice(),
-		plural(cfg.PlaylistPrice(), "балл", "балла", "баллов"))
+		i18n.Plural(cfg.PlaylistPrice(), [3]string{"балл", "балла", "баллов"}, [2]string{"point", "points"}))
 }

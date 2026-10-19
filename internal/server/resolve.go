@@ -8,6 +8,7 @@ import (
 	"songrequest/internal/app"
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/links"
 	"songrequest/internal/match"
 	"songrequest/internal/twitch"
@@ -43,7 +44,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 			"зритель", r.UserLogin, "ссылка", l.URL)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{
 			State: app.MatchFailed,
-			Note:  "Это плейлист, а не трек — нужна награда за плейлист",
+			Note:  i18n.T("Это плейлист, а не трек — нужна награда за плейлист"),
 		})
 		s.rejectRedemption(s.afterSearch(base), r, s.playlistRewardHint())
 		return
@@ -56,9 +57,9 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		s.log.Info("в награду написали команду", "зритель", r.UserLogin, "текст", r.UserInput)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{
 			State: app.MatchFailed,
-			Note:  "Это команда чата, а не трек",
+			Note:  i18n.T("Это команда чата, а не трек"),
 		})
-		s.rejectRedemption(base, r, "это команда — её пишут в чат, а в награду пиши артиста и название")
+		s.rejectRedemption(base, r, i18n.T("это команда — её пишут в чат, а в награду пиши артиста и название"))
 		return
 	}
 
@@ -66,7 +67,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 	// по названию незачем.
 	link, hasLink := s.fromLink(ctx, r.UserInput)
 	if hasLink && link.Track != nil {
-		s.acceptTrack(ctx, r, *link.Track, false, "Взято по ссылке")
+		s.acceptTrack(ctx, r, *link.Track, false, i18n.T("Взято по ссылке"))
 		return
 	}
 
@@ -87,8 +88,8 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		}
 		// Ссылка на ролик, а YouTube стример выключил.
 		if hasLink && s.youtubeOff() && isElsewhereLink(r.UserInput) {
-			s.state.SetOrderMatch(r.ID, app.OrderMatch{State: app.MatchFailed, Note: "YouTube выключен в настройках"})
-			s.rejectRedemption(s.afterSearch(base), r, "ссылки на YouTube и Яндекс.Музыку здесь не играют — закажи трек из Spotify")
+			s.state.SetOrderMatch(r.ID, app.OrderMatch{State: app.MatchFailed, Note: i18n.T("YouTube выключен в настройках")})
+			s.rejectRedemption(s.afterSearch(base), r, i18n.T("ссылки на YouTube и Яндекс.Музыку здесь не играют — закажи трек из Spotify"))
 			return
 		}
 		// Ссылка есть, а играть её нечем: запасной проигрыватель ещё не
@@ -100,10 +101,10 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 				"зритель", r.UserLogin, "заказ", r.UserInput, "код", errs.YouTubeNoMpv)
 			s.state.SetOrderMatch(r.ID, app.OrderMatch{
 				State: app.MatchFailed,
-				Note:  "Ссылка на видео, а запасной проигрыватель ещё не готов",
+				Note:  i18n.T("Ссылка на видео, а запасной проигрыватель ещё не готов"),
 			})
 			s.rejectRedemption(s.afterSearch(base), r,
-				"это ссылка на видео, а проигрыватель для него ещё не готов — попробуй позже или закажи текстом")
+				i18n.T("это ссылка на видео, а проигрыватель для него ещё не готов — попробуй позже или закажи текстом"))
 			return
 		}
 
@@ -120,19 +121,19 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 				"зритель", r.UserLogin, "заказ", r.UserInput, "причина", link.Note)
 			s.state.SetOrderMatch(r.ID, app.OrderMatch{
 				State: app.MatchFailed,
-				Note:  "Ссылку прочитать не вышло: " + link.Note,
+				Note:  i18n.F("Ссылку прочитать не вышло: %s", link.Note),
 			})
 			s.rejectRedemption(s.afterSearch(base), r,
-				"твою ссылку не удалось прочитать ("+link.Note+") — попробуй другую или напиши название текстом")
+				i18n.F("твою ссылку не удалось прочитать (%s) — попробуй другую или напиши название текстом", link.Note))
 			return
 		}
 
 		s.log.Info("заказ без текста", "зритель", r.UserLogin)
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{
 			State: app.MatchFailed,
-			Note:  "Зритель не написал, что заказывает",
+			Note:  i18n.T("Зритель не написал, что заказывает"),
 		})
-		s.rejectRedemption(s.afterSearch(base), r, "ты не написал, что заказываешь")
+		s.rejectRedemption(s.afterSearch(base), r, i18n.T("ты не написал, что заказываешь"))
 		return
 	}
 
@@ -212,7 +213,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		}
 
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{State: app.MatchFailed, Note: text})
-		s.rejectRedemption(s.afterSearch(base), r, "не получилось поискать трек, попробуй ещё раз")
+		s.rejectRedemption(s.afterSearch(base), r, i18n.T("не получилось поискать трек, попробуй ещё раз"))
 		return
 	}
 
@@ -235,12 +236,12 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		// Первое лечится другим запросом, второе — только сменой страны
 		// аккаунта, и пока об этом не сказать, стример будет думать, что
 		// сломан поиск.
-		note := "В Spotify не нашлось"
+		note := i18n.T("В Spotify не нашлось")
 		if res.AbroadOnly > 0 {
-			note = "Есть в Spotify, но не в стране аккаунта (" + opts.Market + ")"
+			note = i18n.F("Есть в Spotify, но не в стране аккаунта (%s)", opts.Market)
 			s.state.NotifyWarn(errs.SpotifyCountry,
-				"«"+req.Clean+"» есть в Spotify, но не издан в стране твоего аккаунта ("+
-					opts.Market+"). Такие треки играть нельзя — их не найдёт и поиск.")
+				i18n.F("«%s» есть в Spotify, но не издан в стране твоего аккаунта (%s). Такие треки играть нельзя — их не найдёт и поиск.",
+					req.Clean, opts.Market))
 		}
 		s.state.SetOrderMatch(r.ID, app.OrderMatch{
 			State: app.MatchMissing,
@@ -254,14 +255,14 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 		}
 		if res.AbroadOnly > 0 {
 			s.rejectRedemption(s.afterSearch(base), r,
-				"этот трек не издан в стране аккаунта стримера, Spotify его не отдаёт")
+				i18n.T("этот трек не издан в стране аккаунта стримера, Spotify его не отдаёт"))
 			return
 		}
 		if s.youtubeOff() {
 			s.rejectRedemption(s.afterSearch(base), r, youtubeOffReason())
 			return
 		}
-		s.rejectRedemption(s.afterSearch(base), r, "не нашёл такого трека ни в Spotify, ни на YouTube")
+		s.rejectRedemption(s.afterSearch(base), r, i18n.T("не нашёл такого трека ни в Spotify, ни на YouTube"))
 		return
 	}
 
@@ -307,7 +308,7 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 
 	note := ""
 	if res.Uncertain {
-		note = "Совпадение неточное — проверь, тот ли трек"
+		note = i18n.T("Совпадение неточное — проверь, тот ли трек")
 	}
 
 	s.acceptTrack(ctx, r, res.Track, res.Uncertain, note)
@@ -323,12 +324,13 @@ func (s *Server) rejectRedemption(ctx context.Context, r twitch.Redemption, reas
 			s.state.SetRedemptionStatus(r.ID, app.OrderRefunded)
 		}
 	}
-	s.say(ctx, "@"+r.UserName+", "+reason+". Баллы вернул.")
+	s.say(ctx, i18n.F("@%s, %s. Баллы вернул.", r.UserName, reason))
 }
 
 func memoryNote(manual bool) string {
 	if manual {
-		return "Из твоего исправления"
+		return i18n.T("Из твоего исправления")
+
 	}
 	return ""
 }

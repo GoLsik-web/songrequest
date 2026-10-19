@@ -18,6 +18,13 @@
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 
+  // Перевод (см. i18n.js). В русском режиме t() возвращает ключ как есть.
+  const t = (ru, vars) => (window.I18N ? window.I18N.t(ru, vars) : ru);
+  const en = () => !!(window.I18N && window.I18N.lang() === "en");
+  // tt — для многострочных кусков разметки: ключ словаря — тот же текст со
+  // схлопнутыми пробелами. По-русски отдаёт исходник байт в байт.
+  const tt = (s) => (en() ? t(s.replace(/\s+/g, " ").trim()) : s);
+
   // ── своя полоса заголовка ──────────────────────────────────────────
   //
   // Показывается только в окне программы. Проверяем не по названию браузера,
@@ -105,7 +112,7 @@
 
   // window рисует окно браузера с адресной строкой и содержимым.
   function browserArt(url, inner, h = 210) {
-    return `<svg viewBox="0 0 640 ${h}" role="img" aria-label="Схема страницы: ${esc(url)}">
+    return `<svg viewBox="0 0 640 ${h}" role="img" aria-label="${esc(t("Схема страницы: {url}", { url }))}">
       <rect x="1" y="1" width="638" height="${h - 2}" rx="12" fill="${C.bg}" stroke="${C.line}"/>
       <rect x="1" y="1" width="638" height="34" rx="12" fill="${C.raise}"/>
       <rect x="1" y="24" width="638" height="12" fill="${C.raise}"/>
@@ -124,11 +131,11 @@
     const ink = hot ? C.lime : C.dim;
     return `
       <text x="${x}" y="${y}" font-family="Manrope, sans-serif" font-size="10"
-            fill="${C.dim}" letter-spacing="1">${esc(label)}</text>
+            fill="${C.dim}" letter-spacing="1">${esc(t(label))}</text>
       <rect x="${x}" y="${y + 8}" width="${w}" height="26" rx="7"
             fill="${C.bg}" stroke="${stroke}" ${hot ? 'stroke-width="1.5"' : ""}/>
       <text x="${x + 10}" y="${y + 25}" font-family="ui-monospace, Consolas, monospace"
-            font-size="11" fill="${ink}">${esc(value)}</text>`;
+            font-size="11" fill="${ink}">${esc(t(value))}</text>`;
   }
 
   function buttonArt(x, y, w, text, hot) {
@@ -137,7 +144,7 @@
             fill="${hot ? C.lime : "none"}" stroke="${hot ? C.lime : C.line}"/>
       <text x="${x + w / 2}" y="${y + 17}" text-anchor="middle"
             font-family="Manrope, sans-serif" font-size="11" font-weight="600"
-            fill="${hot ? "#0d1204" : C.dim}">${esc(text)}</text>`;
+            fill="${hot ? "#0d1204" : C.dim}">${esc(t(text))}</text>`;
   }
 
   // ── шаги ───────────────────────────────────────────────────────────
@@ -150,15 +157,32 @@
   const widgetURL = `http://${host}/widget`;
 
   const STEPS = [
+    // Язык — самым первым: дальше весь мастер уже на выбранном.
+    {
+      id: "lang",
+      name: "Язык / Language",
+      must: false,
+      noTag: true,
+      short: "Русский · English",
+      title: "Язык / Language",
+      why: "На каком языке показывать приложение. Поменять можно в любой момент в настройках.",
+      art: null,
+      body: () => `
+        <div class="preset-pick lang-pick" data-no-i18n>
+          <button data-act="lang" data-lang="ru" class="${en() ? "" : "on"}">Русский</button>
+          <button data-act="lang" data-lang="en" class="${en() ? "on" : ""}">English</button>
+        </div>
+        <div class="check" id="su-check"></div>`,
+      check: () => ({ ok: true, text: t("Язык: русский") }),
+    },
+
     {
       id: "tunnel",
       name: "Обход блокировок",
       must: true,
       short: "ключ от VPN",
       title: "Обход блокировок",
-      why: "Spotify не отвечает приложениям из России. Вставь сюда ключ от своего VPN " +
-        "или ссылку на подписку — приложение само скачает всё нужное, переберёт серверы " +
-        "и оставит тот, через который Spotify работает. Отдельных программ запускать не надо.",
+      why: "Spotify не отвечает приложениям из России. Вставь сюда ключ от своего VPN или ссылку на подписку — приложение само скачает всё нужное, переберёт серверы и оставит тот, через который Spotify работает. Отдельных программ запускать не надо.",
       art: () => `<svg viewBox="0 0 640 150" role="img" aria-label="Схема: приложение ходит к Spotify через сервер обхода">
         <rect x="14" y="46" width="150" height="58" rx="12" fill="${C.raise}" stroke="${C.line}"/>
         <text x="89" y="72" text-anchor="middle" font-family="Manrope" font-size="12" fill="${C.ink}">Это приложение</text>
@@ -183,13 +207,13 @@
       </svg>`,
       body: () => `
         <ol class="steps-list">
-          <li>Открой личный кабинет своего VPN и найди там <b>ссылку на подписку</b>
+          <li>${tt(`Открой личный кабинет своего VPN и найди там <b>ссылку на подписку</b>
               («Subscription», «Импорт в v2rayN») или отдельный ключ вида
               <span class="quiet">vless://…</span>, <span class="quiet">trojan://…</span>,
-              <span class="quiet">ss://…</span></li>
-          <li>Скопируй её целиком и вставь в поле ниже</li>
-          <li>Нажми <b>Включить обход</b> и подожди. В первый раз приложение качает
-              программу обхода и перебирает серверы — до пары минут</li>
+              <span class="quiet">ss://…</span>`)}</li>
+          <li>${tt(`Скопируй её целиком и вставь в поле ниже`)}</li>
+          <li>${tt(`Нажми <b>Включить обход</b> и подожди. В первый раз приложение качает
+              программу обхода и перебирает серверы — до пары минут`)}</li>
         </ol>
         <label class="setup-field">
           <span>Ключ от VPN или ссылка на подписку</span>
@@ -200,19 +224,19 @@
           <button class="s-btn key" data-act="tunnel-on">Включить обход</button>
         </div>
         <div class="check" id="su-check"></div>
-        <p class="why">Ключ никому не виден: он ложится в хранилище паролей Windows.
+        <p class="why">${tt(`Ключ никому не виден: он ложится в хранилище паролей Windows.
           В настройках приложения и в архиве диагностики его нет.
-          <br>Если Spotify у тебя открывается без всякого VPN — этот шаг можно пропустить.</p>`,
+          <br>Если Spotify у тебя открывается без всякого VPN — этот шаг можно пропустить.`)}</p>`,
       check: (s) => {
-        const t = (s && s.tunnel) || {};
-        if (t.on) return { ok: true, text: "Обход работает: " + (t.server || "сервер выбран") };
+        const tn = (s && s.tunnel) || {};
+        if (tn.on) return { ok: true, text: t("Обход работает: {server}", { server: tn.server || t("сервер выбран") }) };
         // Ключ вставлен, а обход не поднят, потому что Spotify отвечает и без
         // него: шаг сдан, чинить нечего.
-        if (t.standby) {
-          return { ok: true, text: t.note || "Ключ сохранён. Обход наготове — сейчас Spotify отвечает и без него." };
+        if (tn.standby) {
+          return { ok: true, text: tn.note || t("Ключ сохранён. Обход наготове — сейчас Spotify отвечает и без него.") };
         }
-        if (t.note) return { ok: false, text: t.note };
-        return { ok: false, text: "Обход пока не включён." };
+        if (tn.note) return { ok: false, text: tn.note };
+        return { ok: false, text: t("Обход пока не включён.") };
       },
     },
 
@@ -222,9 +246,7 @@
       must: true,
       short: "Client ID",
       title: "Spotify: свой ключ приложения",
-      why: "Spotify не разрешает чужим программам управлять твоей музыкой просто так. " +
-        "Нужен собственный ключ — Client ID. Заводится один раз, бесплатно, на том же " +
-        "аккаунте, где у тебя Premium.",
+      why: "Spotify не разрешает чужим программам управлять твоей музыкой просто так. Нужен собственный ключ — Client ID. Заводится один раз, бесплатно, на том же аккаунте, где у тебя Premium.",
       art: () => browserArt("developer.spotify.com/dashboard → Create app", `
         ${fieldArt(30, 60, 260, "APP NAME", "Заказ музыки", false)}
         ${fieldArt(30, 118, 260, "APP DESCRIPTION", "музыка по заказам зрителей", false)}
@@ -236,14 +258,14 @@
       `),
       body: () => `
         <ol class="steps-list">
-          <li>Открой <b>developer.spotify.com/dashboard</b> и войди
-              <b>тем же аккаунтом Spotify</b>, на котором у тебя Premium</li>
-          <li>Нажми <b>Create app</b>. Название и описание — любые</li>
-          <li>В поле <b>Redirect URI</b> вставь строку ниже и обязательно нажми
-              <b>Add</b> справа от поля</li>
-          <li>Поставь галочку <b>Web API</b>, согласись с условиями и нажми <b>Save</b></li>
-          <li>Зайди в <b>Settings</b> приложения и скопируй <b>Client ID</b>.
-              <span class="quiet">Client secret не нужен — не показывай его никому.</span></li>
+          <li>${tt(`Открой <b>developer.spotify.com/dashboard</b> и войди
+              <b>тем же аккаунтом Spotify</b>, на котором у тебя Premium`)}</li>
+          <li>${tt(`Нажми <b>Create app</b>. Название и описание — любые`)}</li>
+          <li>${tt(`В поле <b>Redirect URI</b> вставь строку ниже и обязательно нажми
+              <b>Add</b> справа от поля`)}</li>
+          <li>${tt(`Поставь галочку <b>Web API</b>, согласись с условиями и нажми <b>Save</b>`)}</li>
+          <li>${tt(`Зайди в <b>Settings</b> приложения и скопируй <b>Client ID</b>.
+              <span class="quiet">Client secret не нужен — не показывай его никому.</span>`)}</li>
         </ol>
         <div class="copyline">
           <code>${esc(redirectURI)}</code>
@@ -260,8 +282,8 @@
         <div class="check" id="su-check"></div>`,
       fill: (cfg) => { $("su-spotify-id").value = (cfg && cfg.spotify_client_id) || ""; },
       check: (s, cfg) => cfg && cfg.spotify_client_id
-        ? { ok: true, text: "Ключ сохранён." }
-        : { ok: false, text: "Ключ пока не вставлен." },
+        ? { ok: true, text: t("Ключ сохранён.") }
+        : { ok: false, text: t("Ключ пока не вставлен.") },
     },
 
     {
@@ -270,8 +292,7 @@
       must: true,
       short: "разрешить доступ",
       title: "Spotify: вход",
-      why: "Теперь разреши приложению управлять твоим плеером. Откроется страница входа " +
-        "Spotify — если обход включён, она откроется прямо в окне программы и закроется сама.",
+      why: "Теперь разреши приложению управлять твоим плеером. Откроется страница входа Spotify — если обход включён, она откроется прямо в окне программы и закроется сама.",
       art: () => browserArt("accounts.spotify.com", `
         <text x="320" y="86" text-anchor="middle" font-family="Unbounded, Manrope" font-size="14" fill="${C.ink}">Заказ музыки хочет:</text>
         <text x="320" y="112" text-anchor="middle" font-family="Manrope" font-size="11" fill="${C.dim}">управлять воспроизведением · видеть, что играет</text>
@@ -279,20 +300,20 @@
       `, 190),
       body: () => `
         <ol class="steps-list">
-          <li>Нажми <b>Подключить Spotify</b></li>
-          <li>На странице Spotify нажми <b>Agree</b></li>
-          <li>Окно закроется само, а здесь появится твой аккаунт</li>
+          <li>${tt(`Нажми <b>Подключить Spotify</b>`)}</li>
+          <li>${tt(`На странице Spotify нажми <b>Agree</b>`)}</li>
+          <li>${tt(`Окно закроется само, а здесь появится твой аккаунт`)}</li>
         </ol>
         <div class="setup-acts">
           <button class="s-btn key" data-act="spotify-login">Подключить Spotify</button>
         </div>
         <div class="check" id="su-check"></div>
-        <p class="why">Не открылось или ругается на адрес возврата — вернись на шаг назад и
+        <p class="why">${tt(`Не открылось или ругается на адрес возврата — вернись на шаг назад и
           сверь <b>Redirect URI</b> в настройках приложения Spotify: он должен совпадать
-          до последнего знака.</p>`,
+          до последнего знака.`)}</p>`,
       check: (s) => s && s.spotify && s.spotify.connected
-        ? { ok: true, text: "Spotify подключён" + (s.spotify.account ? ": " + s.spotify.account : "") }
-        : { ok: false, text: "Вход пока не выполнен." },
+        ? { ok: true, text: t("Spotify подключён") + (s.spotify.account ? ": " + s.spotify.account : "") }
+        : { ok: false, text: t("Вход пока не выполнен.") },
     },
 
     {
@@ -301,8 +322,7 @@
       must: true,
       short: "Client ID",
       title: "Twitch: свой ключ приложения",
-      why: "То же самое, что со Spotify, только на Twitch: нужен собственный Client ID. " +
-        "Заводится на том аккаунте, с которого ты стримишь.",
+      why: "То же самое, что со Spotify, только на Twitch: нужен собственный Client ID. Заводится на том аккаунте, с которого ты стримишь.",
       art: () => browserArt("dev.twitch.tv/console/apps → Register Your Application", `
         ${fieldArt(30, 60, 260, "NAME", "Заказ музыки", false)}
         ${fieldArt(30, 118, 260, "CATEGORY", "Broadcasting Suite", false)}
@@ -313,16 +333,16 @@
       `),
       body: () => `
         <ol class="steps-list">
-          <li>Включи на аккаунте Twitch <b>двухфакторную защиту</b> — без неё Twitch не даст
-              зарегистрировать приложение. <span class="quiet">Настройки → Безопасность и приватность.</span></li>
-          <li>Открой <b>dev.twitch.tv/console/apps</b> и нажми <b>Register Your Application</b></li>
-          <li>Имя — любое, но уникальное на весь Twitch. Ругнётся «занято» — допиши свой ник</li>
-          <li>В <b>OAuth Redirect URLs</b> вставь строку ниже и нажми <b>Add</b>.
-              <span class="quiet">Приложению этот адрес не нужен, но поле обязательное.</span></li>
-          <li>Category — <b>Broadcasting Suite</b>, Client Type — <b>Public</b>, капча,
-              <b>Create</b></li>
-          <li>Нажми <b>Manage</b> у созданного приложения и скопируй <b>Client ID</b>.
-              <span class="quiet">Кнопку New Secret не трогай.</span></li>
+          <li>${tt(`Включи на аккаунте Twitch <b>двухфакторную защиту</b> — без неё Twitch не даст
+              зарегистрировать приложение. <span class="quiet">Настройки → Безопасность и приватность.</span>`)}</li>
+          <li>${tt(`Открой <b>dev.twitch.tv/console/apps</b> и нажми <b>Register Your Application</b>`)}</li>
+          <li>${tt(`Имя — любое, но уникальное на весь Twitch. Ругнётся «занято» — допиши свой ник`)}</li>
+          <li>${tt(`В <b>OAuth Redirect URLs</b> вставь строку ниже и нажми <b>Add</b>.
+              <span class="quiet">Приложению этот адрес не нужен, но поле обязательное.</span>`)}</li>
+          <li>${tt(`Category — <b>Broadcasting Suite</b>, Client Type — <b>Public</b>, капча,
+              <b>Create</b>`)}</li>
+          <li>${tt(`Нажми <b>Manage</b> у созданного приложения и скопируй <b>Client ID</b>.
+              <span class="quiet">Кнопку New Secret не трогай.</span>`)}</li>
         </ol>
         <div class="copyline">
           <code>http://localhost</code>
@@ -339,8 +359,8 @@
         <div class="check" id="su-check"></div>`,
       fill: (cfg) => { $("su-twitch-id").value = (cfg && cfg.twitch_client_id) || ""; },
       check: (s, cfg) => cfg && cfg.twitch_client_id
-        ? { ok: true, text: "Ключ сохранён." }
-        : { ok: false, text: "Ключ пока не вставлен." },
+        ? { ok: true, text: t("Ключ сохранён.") }
+        : { ok: false, text: t("Ключ пока не вставлен.") },
     },
 
     {
@@ -349,8 +369,7 @@
       must: true,
       short: "код на сайте",
       title: "Twitch: вход по коду",
-      why: "Twitch пускает по короткому коду: приложение показывает код, ты вводишь его " +
-        "на сайте Twitch — с этого же компьютера или с телефона.",
+      why: "Twitch пускает по короткому коду: приложение показывает код, ты вводишь его на сайте Twitch — с этого же компьютера или с телефона.",
       art: () => `<svg viewBox="0 0 640 150" role="img" aria-label="Схема: код для входа в Twitch">
         <rect x="1" y="1" width="638" height="148" rx="12" fill="${C.bg}" stroke="${C.line}"/>
         <text x="320" y="46" text-anchor="middle" font-family="Manrope" font-size="11" fill="${C.dim}">открой адрес и введи код</text>
@@ -360,10 +379,10 @@
       </svg>`,
       body: () => `
         <ol class="steps-list">
-          <li>Нажми <b>Подключить Twitch</b></li>
-          <li>Наверху панели появится крупный код и адрес рядом с ним</li>
-          <li>Открой адрес, введи код и нажми <b>Authorize</b></li>
-          <li>Через несколько секунд код исчезнет сам</li>
+          <li>${tt(`Нажми <b>Подключить Twitch</b>`)}</li>
+          <li>${tt(`Наверху панели появится крупный код и адрес рядом с ним`)}</li>
+          <li>${tt(`Открой адрес, введи код и нажми <b>Authorize</b>`)}</li>
+          <li>${tt(`Через несколько секунд код исчезнет сам`)}</li>
         </ol>
         <div class="setup-acts">
           <button class="s-btn key" data-act="twitch-login">Подключить Twitch</button>
@@ -372,7 +391,7 @@
       check: (s) => {
         const tw = (s && s.twitch) || {};
         if (tw.connected) {
-          return { ok: true, text: "Twitch подключён" + (tw.channel ? ": " + tw.channel : "") };
+          return { ok: true, text: t("Twitch подключён") + (tw.channel ? ": " + tw.channel : "") };
         }
         // Код Twitch обычно показан крупной полосой наверху панели — но панель
         // сейчас закрыта мастером, и человек его просто не увидит. Значит
@@ -385,7 +404,7 @@
                    и введи код <b class="code-big">${esc(tw.pending_code)}</b></span>`,
           };
         }
-        return { ok: false, text: "Вход пока не выполнен." };
+        return { ok: false, text: t("Вход пока не выполнен.") };
       },
     },
 
@@ -395,9 +414,7 @@
       must: true,
       short: "как зритель заказывает",
       title: "Награда за баллы канала",
-      why: "Приложение само создаст на твоём канале награду: зритель тратит баллы, пишет " +
-        "название трека — заказ прилетает сюда. Руками награду создавать нельзя: за чужую " +
-        "награду Twitch не даёт вернуть баллы, если трек не подошёл.",
+      why: "Приложение само создаст на твоём канале награду: зритель тратит баллы, пишет название трека — заказ прилетает сюда. Руками награду создавать нельзя: за чужую награду Twitch не даёт вернуть баллы, если трек не подошёл.",
       art: () => `<svg viewBox="0 0 640 150" role="img" aria-label="Схема: награда на канале">
         <rect x="1" y="1" width="638" height="148" rx="12" fill="${C.bg}" stroke="${C.line}"/>
         <rect x="30" y="34" width="250" height="82" rx="10" fill="${C.raise}" stroke="${C.line}"/>
@@ -425,16 +442,16 @@
           <button class="s-btn key" data-act="save-reward">Сохранить</button>
         </div>
         <div class="check" id="su-check"></div>
-        <p class="why">Баллы канала есть только у аффилиатов и партнёров Twitch.
+        <p class="why">${tt(`Баллы канала есть только у аффилиатов и партнёров Twitch.
           Если у тебя обычный канал, награду создать невозможно — это ограничение Twitch.
-          Заказы за донат при этом работают.</p>`,
+          Заказы за донат при этом работают.`)}</p>`,
       fill: (cfg) => {
-        $("su-reward-title").value = (cfg && cfg.reward_title) || "Заказ трека";
+        $("su-reward-title").value = (cfg && cfg.reward_title) || t("Заказ трека");
         $("su-reward-cost").value = (cfg && cfg.reward_cost) || 1000;
       },
       check: (s) => s && s.twitch && s.twitch.reward_ready
-        ? { ok: true, text: "Награда на канале создана." }
-        : { ok: false, text: "Награды пока нет. Она появится сразу после подключения Twitch." },
+        ? { ok: true, text: t("Награда на канале создана.") }
+        : { ok: false, text: t("Награды пока нет. Она появится сразу после подключения Twitch.") },
     },
 
     {
@@ -443,9 +460,7 @@
       must: false,
       short: "что играет в тишине",
       title: "Запасной плейлист",
-      why: "Когда очередь заказов кончилась, приложение возвращает твою музыку туда, где ты " +
-        "её остановил. Если вернуть не вышло — включит вот этот плейлист, чтобы в эфире не " +
-        "повисла тишина.",
+      why: "Когда очередь заказов кончилась, приложение возвращает твою музыку туда, где ты её остановил. Если вернуть не вышло — включит вот этот плейлист, чтобы в эфире не повисла тишина.",
       art: null,
       body: () => `
         <label class="setup-field">
@@ -456,12 +471,12 @@
           <button class="s-btn key" data-act="save-playlist">Сохранить</button>
         </div>
         <div class="check" id="su-check"></div>
-        <p class="why">Список берётся из твоего Spotify — значит шаг работает только после
-          входа. Пропустил вход — пропусти и этот шаг, потом настроишь в панели.</p>`,
+        <p class="why">${tt(`Список берётся из твоего Spotify — значит шаг работает только после
+          входа. Пропустил вход — пропусти и этот шаг, потом настроишь в панели.`)}</p>`,
       fill: (cfg) => loadPlaylists(cfg),
       check: (s, cfg) => cfg && cfg.fallback_playlist_id
-        ? { ok: true, text: "Выбран: " + (cfg.fallback_playlist_name || cfg.fallback_playlist_id) }
-        : { ok: false, text: "Плейлист не выбран — можно и потом." },
+        ? { ok: true, text: (cfg.fallback_playlist_name ? t("Выбран: {name}", { name: cfg.fallback_playlist_name }) : t("Выбран плейлист")) }
+        : { ok: false, text: t("Плейлист не выбран — можно и потом.") },
     },
 
     {
@@ -470,8 +485,7 @@
       must: false,
       short: "заказы за деньги",
       title: "Заказы за донат",
-      why: "Кроме баллов канала, заказ можно принимать за донат. Работает с DonationAlerts, " +
-        "DonatePay и DonateX — настраивай те, которыми пользуешься, остальные оставь пустыми.",
+      why: "Кроме баллов канала, заказ можно принимать за донат. Работает с DonationAlerts, DonatePay и DonateX — настраивай те, которыми пользуешься, остальные оставь пустыми.",
       art: null,
       body: () => `
         <label class="setup-field">
@@ -495,9 +509,9 @@
           <button class="s-btn" data-act="da-login">Подключить DonationAlerts</button>
         </div>
         <div class="check" id="su-check"></div>
-        <p class="why">Ключи лежат в личных кабинетах самих сервисов, в разделе
+        <p class="why">${tt(`Ключи лежат в личных кабинетах самих сервисов, в разделе
           для разработчиков. Это единственный шаг, который спокойно делается потом,
-          посреди недели.</p>`,
+          посреди недели.`)}</p>`,
       fill: (cfg) => {
         $("su-da").value = (cfg && cfg.donationalerts_client_id) || "";
         $("su-dp").value = (cfg && cfg.donatepay_key) || "";
@@ -507,8 +521,8 @@
       check: (s, cfg) => {
         const any = cfg && (cfg.donationalerts_client_id || cfg.donatepay_key || cfg.donatex_key);
         return any
-          ? { ok: true, text: "Донаты настроены." }
-          : { ok: false, text: "Ничего не настроено — заказы будут только за баллы канала." };
+          ? { ok: true, text: t("Донаты настроены.") }
+          : { ok: false, text: t("Ничего не настроено — заказы будут только за баллы канала.") };
       },
     },
 
@@ -518,8 +532,7 @@
       must: true,
       short: "плашка в кадре",
       title: "Виджет: что играет — на экране",
-      why: "Маленькая плашка в углу кадра: обложка, название, артист и кто заказал. " +
-        "Это не отдельная программа, а страница, которую отдаёт само приложение.",
+      why: "Маленькая плашка в углу кадра: обложка, название, артист и кто заказал. Это не отдельная программа, а страница, которую отдаёт само приложение.",
       art: () => `<svg viewBox="0 0 640 210" role="img" aria-label="Схема: источник «Браузер» в OBS">
         <rect x="1" y="1" width="638" height="208" rx="12" fill="${C.bg}" stroke="${C.line}"/>
         <text x="24" y="30" font-family="Manrope" font-size="11" fill="${C.dim}" letter-spacing="1">OBS · ИСТОЧНИКИ</text>
@@ -537,23 +550,23 @@
       </svg>`,
       body: () => `
         <ol class="steps-list">
-          <li>Скопируй адрес виджета</li>
-          <li>В OBS в списке <b>Источники</b> нажми <b>+</b> и выбери <b>Браузер</b></li>
-          <li>В поле <b>URL</b> вставь адрес, сотри то, что было по умолчанию</li>
-          <li>Поставь ширину <b>640</b>, высоту <b>200</b> и нажми ОК</li>
+          <li>${tt(`Скопируй адрес виджета`)}</li>
+          <li>${tt(`В OBS в списке <b>Источники</b> нажми <b>+</b> и выбери <b>Браузер</b>`)}</li>
+          <li>${tt(`В поле <b>URL</b> вставь адрес, сотри то, что было по умолчанию`)}</li>
+          <li>${tt(`Поставь ширину <b>640</b>, высоту <b>200</b> и нажми ОК`)}</li>
         </ol>
         <div class="copyline">
           <code>${esc(widgetURL)}</code>
           <button class="s-btn key" data-act="copy-widget" data-text="${esc(widgetURL)}">Скопировать адрес</button>
         </div>
         <div class="check" id="su-check"></div>
-        <p class="why">Адрес один и навсегда: оформление живёт в настройках приложения, а не в
+        <p class="why">${tt(`Адрес один и навсегда: оформление живёт в настройках приложения, а не в
           адресе. Поменял вид — в OBS он поменяется сам, переклеивать ничего не надо.
           <br>Плашка появится, когда заиграет музыка. Чтобы выставить её заранее, допиши
-          в конец адреса <b>?demo=1</b> — виджет покажет выдуманный трек. Потом убери.</p>`,
+          в конец адреса <b>?demo=1</b> — виджет покажет выдуманный трек. Потом убери.`)}</p>`,
       check: () => copiedWidget
-        ? { ok: true, text: "Адрес скопирован — вставь его в OBS." }
-        : { ok: false, text: "Скопируй адрес и добавь источник в OBS." },
+        ? { ok: true, text: t("Адрес скопирован — вставь его в OBS.") }
+        : { ok: false, text: t("Скопируй адрес и добавь источник в OBS.") },
     },
 
     {
@@ -562,8 +575,7 @@
       must: false,
       short: "как плашка выглядит",
       title: "Оформление виджета",
-      why: "Сорок пять наборов на выбор. Семейство задаёт устройство плашки, вариант — только " +
-        "краску. Меняется на лету: в OBS видно сразу, ничего перезапускать не надо.",
+      why: "Сорок пять наборов на выбор. Семейство задаёт устройство плашки, вариант — только краску. Меняется на лету: в OBS видно сразу, ничего перезапускать не надо.",
       art: null,
       body: () => `
         <div class="preset-stage" id="su-stage">
@@ -580,12 +592,12 @@
         <div class="preset-pick" id="su-families"></div>
         <div class="preset-pick" id="su-variants"></div>
         <div class="check" id="su-check"></div>
-        <p class="why">Здесь только семейства и краски. Тонкая настройка — размер, угол кадра,
-          свои цвета — живёт в панели, во вкладке <b>виджет</b>.</p>`,
+        <p class="why">${tt(`Здесь только семейства и краски. Тонкая настройка — размер, угол кадра,
+          свои цвета — живёт в панели, во вкладке <b>виджет</b>.`)}</p>`,
       fill: (cfg) => setupPresets(cfg),
       check: (s, cfg) => ({
         ok: true,
-        text: "Выбрано: " + presetName((cfg && cfg.widget && cfg.widget.preset) || "efir/lime"),
+        text: t("Выбрано: {name}", { name: presetName((cfg && cfg.widget && cfg.widget.preset) || "efir/lime") }),
       }),
     },
   ];
@@ -618,7 +630,7 @@
   async function saveConfig(patch) {
     try {
       const current = await (await fetch("/api/config")).json();
-      Object.assign(current, patch);
+      Object.assign(current, typeof patch === "function" ? patch(current) : patch);
       const r = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -643,7 +655,7 @@
     const text = await r.text();
     let data = null;
     try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
-    if (!r.ok) throw new Error((data && (data.error || data.text)) || "не получилось");
+    if (!r.ok) throw new Error((data && (data.error || data.text)) || t("не получилось"));
     return data;
   }
 
@@ -660,23 +672,23 @@
       const mark = done[st.id] ? "✓" : skipped[st.id] ? "–" : String(i + 1);
       return `<button class="${cls}" data-go="${i}">
           <span class="mark">${mark}</span>
-          <span class="who"><b>${esc(st.name)}</b><i>${esc(st.short)}</i></span>
+          <span class="who"><b>${esc(t(st.name))}</b><i>${esc(t(st.short))}</i></span>
         </button>`;
     }).join("");
   }
 
   function stepHTML(st) {
     return `
-      <span class="tag ${st.must ? "must" : ""}">${st.must ? "важный шаг" : "можно потом"}</span>
-      <h1>${esc(st.title)}</h1>
-      <p class="why">${st.why}</p>
+      ${st.noTag ? "" : `<span class="tag ${st.must ? "must" : ""}">${st.must ? t("важный шаг") : t("можно потом")}</span>`}
+      <h1>${esc(t(st.title))}</h1>
+      <p class="why">${t(st.why)}</p>
       ${st.art ? `<div class="scheme">${st.art()}</div>` : ""}
       ${st.body()}
       <div class="setup-foot">
-        ${at > 0 ? `<button class="ghost" data-act="back">← назад</button>` : ""}
+        ${at > 0 ? `<button class="ghost" data-act="back">${t("← назад")}</button>` : ""}
         <span class="spacer"></span>
-        <button class="ghost" data-act="skip">${st.must ? "пропустить (вернусь потом)" : "пропустить"}</button>
-        <button class="s-btn key" data-act="next" id="su-next">Дальше</button>
+        <button class="ghost" data-act="skip">${st.must ? t("пропустить (вернусь потом)") : t("пропустить")}</button>
+        <button class="s-btn key" data-act="next" id="su-next">${t("Дальше")}</button>
       </div>`;
   }
 
@@ -687,18 +699,18 @@
         <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor"
              stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
       </div>
-      <h1>Готово</h1>
+      <h1>${t("Готово")}</h1>
       <p>${left.length === 0
-        ? "Настроено всё. Можно включать стрим."
-        : "Осталось незакрытым: " + esc(left.map((s) => s.name).join(", ")) +
-          ". Это можно доделать в настройках или пройти мастер заново."}</p>
+        ? t("Настроено всё. Можно включать стрим.")
+        : t("Осталось незакрытым: {list}. Это можно доделать в настройках или пройти мастер заново.",
+          { list: esc(left.map((s) => t(s.name)).join(", ")) })}</p>
       <div class="copyline">
         <code>${esc(widgetURL)}</code>
-        <button class="s-btn" data-act="copy" data-text="${esc(widgetURL)}">Скопировать</button>
+        <button class="s-btn" data-act="copy" data-text="${esc(widgetURL)}">${t("Скопировать")}</button>
       </div>
       <div class="setup-acts" style="justify-content:center">
-        <button class="s-btn key" data-act="finish">Открыть панель</button>
-        ${left.length ? `<button class="s-btn" data-act="go-left">Вернуться к пропущенному</button>` : ""}
+        <button class="s-btn key" data-act="finish">${t("Открыть панель")}</button>
+        ${left.length ? `<button class="s-btn" data-act="go-left">${t("Вернуться к пропущенному")}</button>` : ""}
       </div>
     </div>`;
   }
@@ -747,7 +759,7 @@
     const next = $("su-next");
     if (next) {
       next.disabled = false;
-      next.textContent = res.ok ? "Дальше" : st.must ? "Дальше (шаг не сдан)" : "Дальше";
+      next.textContent = res.ok ? t("Дальше") : st.must ? t("Дальше (шаг не сдан)") : t("Дальше");
       next.classList.toggle("key", res.ok);
     }
     $("setup-rail-steps").innerHTML = railHTML();
@@ -827,18 +839,18 @@
 
     "tunnel-on": (btn) => busy(btn, async () => {
       const key = $("su-tunnel").value.trim();
-      say("Включаю обход… в первый раз это до пары минут.");
+      say(t("Включаю обход… в первый раз это до пары минут."));
       const d = await post("/api/tunnel/on", key ? { key } : {});
       $("su-tunnel").value = "";
       say(d.standby
-        ? "Ключ сохранён. Сейчас Spotify отвечает и без обхода — подниму его, когда понадобится."
-        : "Обход работает: " + (d.server || ""));
+        ? t("Ключ сохранён. Сейчас Spotify отвечает и без обхода — подниму его, когда понадобится.")
+        : t("Обход работает: {server}", { server: d.server || "" }));
       refresh();
     }),
 
     "save-spotify-id": (btn) => busy(btn, async () => {
       const ok = await saveConfig({ spotify_client_id: $("su-spotify-id").value.trim() });
-      say(ok ? "Ключ сохранён." : "Не смог сохранить.", !ok);
+      say(ok ? t("Ключ сохранён.") : t("Не смог сохранить."), !ok);
       refresh();
     }),
 
@@ -848,12 +860,12 @@
       // работает обход) — второй раз открывать её в браузере нельзя: из
       // России она там просто не загрузится, и человек решит, что сломалось.
       if (!d.in_app) window.open(d.url, "_blank", "noopener");
-      say("Открыл страницу входа. Нажми там Agree и вернись сюда.");
+      say(t("Открыл страницу входа. Нажми там Agree и вернись сюда."));
     }),
 
     "save-twitch-id": (btn) => busy(btn, async () => {
       const ok = await saveConfig({ twitch_client_id: $("su-twitch-id").value.trim() });
-      say(ok ? "Ключ сохранён." : "Не смог сохранить.", !ok);
+      say(ok ? t("Ключ сохранён.") : t("Не смог сохранить."), !ok);
       refresh();
     }),
 
@@ -868,10 +880,10 @@
     "save-reward": (btn) => busy(btn, async () => {
       const cost = parseInt($("su-reward-cost").value, 10);
       const ok = await saveConfig({
-        reward_title: $("su-reward-title").value.trim() || "Заказ трека",
+        reward_title: $("su-reward-title").value.trim() || t("Заказ трека"),
         reward_cost: Number.isFinite(cost) && cost > 0 ? cost : 1000,
       });
-      say(ok ? "Сохранено. Награду приложение создаст само." : "Не смог сохранить.", !ok);
+      say(ok ? t("Сохранено. Награду приложение создаст само.") : t("Не смог сохранить."), !ok);
       refresh();
     }),
 
@@ -881,7 +893,7 @@
         fallback_playlist_id: sel.value,
         fallback_playlist_name: sel.value ? sel.options[sel.selectedIndex].text : "",
       });
-      say(ok ? "Плейлист сохранён." : "Не смог сохранить.", !ok);
+      say(ok ? t("Плейлист сохранён.") : t("Не смог сохранить."), !ok);
       refresh();
     }),
 
@@ -893,14 +905,31 @@
         donatex_key: $("su-dx").value.trim(),
         donation_min: Number.isFinite(min) && min > 0 ? min : 100,
       });
-      say(ok ? "Сохранено." : "Не смог сохранить.", !ok);
+      say(ok ? t("Сохранено.") : t("Не смог сохранить."), !ok);
       refresh();
+    }),
+
+    // Язык: сохраняем в настройки и сразу перерисовываем мастер. Названия
+    // наград, оставленные по умолчанию, переводим вместе с языком.
+    lang: (btn) => busy(btn, async () => {
+      const l = btn.dataset.lang === "en" ? "en" : "ru";
+      const names = [["reward_title", "Заказ трека", "Song Request"],
+        ["playlist_reward_title", "Заказ плейлиста", "Playlist Request"]];
+      await saveConfig((cur) => {
+        const patch = { language: l };
+        for (const [k, ru, enName] of names) {
+          if (l === "en" && cur[k] === ru) patch[k] = enName;
+          if (l === "ru" && cur[k] === enName) patch[k] = ru;
+        }
+        return patch;
+      });
+      if (window.I18N && !window.I18N.setLang(l) && open) paint();
     }),
 
     "da-login": (btn) => busy(btn, async () => {
       const d = await post("/api/donations/login", {});
       if (d && d.url && !d.in_app) window.open(d.url, "_blank", "noopener");
-      say("Открыл страницу DonationAlerts.");
+      say(t("Открыл страницу DonationAlerts."));
     }),
   };
 
@@ -921,7 +950,7 @@
     } else {
       fallback();
     }
-    say("Скопировано: " + text);
+    say(t("Скопировано: {text}", { text }));
   }
 
   // ── плейлисты и оформление ─────────────────────────────────────────
@@ -934,17 +963,18 @@
       if (!r.ok) throw new Error();
       const list = await r.json();
       const items = Array.isArray(list) ? list : (list.items || []);
-      sel.innerHTML = `<option value="">— не выбран —</option>` +
+      sel.innerHTML = `<option value="">${t("— не выбран —")}</option>` +
         items.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
       sel.value = (cfg && cfg.fallback_playlist_id) || "";
     } catch {
-      sel.innerHTML = `<option value="">— список не загрузился —</option>`;
+      sel.innerHTML = `<option value="">${t("— список не загрузился —")}</option>`;
     }
   }
 
   function presetName(preset) {
     const p = window.widgetPreset ? window.widgetPreset(preset) : null;
-    return p ? `${p.family.name} · ${p.variant.name}` : preset;
+    // Неизвестный ключ (оформление из старой версии) не показываем как есть.
+    return p ? `${p.family.name} · ${p.variant.name}` : t("своё оформление");
   }
 
   function setupPresets(cfg) {
@@ -1022,6 +1052,9 @@
     copiedWidget = false;
     openWizard(0);
   };
+
+  // Язык сменился (здесь или в панели) — перерисовываем открытый мастер.
+  if (window.I18N) window.I18N.onChange(() => { if (open) paint(); });
 
   $("setup").addEventListener("click", (e) => {
     const go = e.target.closest("[data-go]");
