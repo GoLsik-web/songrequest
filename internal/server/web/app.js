@@ -2554,13 +2554,51 @@
 
   // wxRatio — во сколько раз образец меньше настоящего кадра.
   //
-  // Считаем от 1920: это ширина кадра у подавляющего большинства, а точное
-  // разрешение сцены OBS приложению неоткуда узнать. Ошибка здесь не страшна
+  // Считаем от ширины источника для выбранного формата (1920 у 16:9, 1440
+  // у 4:3…): точное разрешение сцены OBS приложению неоткуда узнать. Ошибка здесь не страшна
   // (отступ на стриме окажется чуть другим), а вот отсутствие пересчёта
   // страшно: без него ползунок отступа в образце уезжал бы вчетверо дальше.
   function wxRatio() {
     const box = $("wx-stage").getBoundingClientRect();
-    return box.width > 0 ? box.width / 1920 : 1;
+    return box.width > 0 ? box.width / wxFrame(widget())[0] : 1;
+  }
+
+  // Форматы кадра и размер источника OBS для каждого. Высота у широких
+  // форматов — 1080, как у обычного стрима: плашка в пикселях остаётся той
+  // же, меняется только сколько места вокруг. Список тот же, что в
+  // config/widget.go.
+  const WX_FRAMES = {
+    "16:9":  [1920, 1080],
+    "16:10": [1920, 1200],
+    "4:3":   [1440, 1080],
+    "5:4":   [1350, 1080],
+    "21:9":  [2560, 1080],
+    "32:9":  [3840, 1080],
+    "9:16":  [1080, 1920],
+    "1:1":   [1080, 1080],
+  };
+  const wxFrame = (w) => WX_FRAMES[w.frame] || WX_FRAMES["16:9"];
+
+  // wxDrawFrame подгоняет образец под формат и подсказывает размер
+  // источника. Без этого стример ставил источник 800×600 по умолчанию OBS,
+  // и плашка в кадре стояла не там, где он её поставил в панели.
+  function wxDrawFrame(w) {
+    const [fw, fh] = wxFrame(w);
+    const box = $("widget");
+    box.style.setProperty("--wx-ar", fw + " / " + fh);
+    box.style.setProperty("--wx-arn", (fw / fh).toFixed(4));
+    const frame = WX_FRAMES[w.frame] ? w.frame : "16:9";
+    document.querySelectorAll("#wx-frame-pick button").forEach((b) => {
+      b.classList.toggle("on", b.dataset.frame === frame);
+    });
+    $("wx-frame-hint").innerHTML = I18N.t(
+      "В OBS у источника «Браузер» поставь ширину <b>{w}</b> и высоту <b>{h}</b> " +
+      "и растяни его на весь кадр. Или просто перетащи кнопку «Перетащить в OBS» " +
+      "в окно сцены — размер подставится сам.", { w: fw, h: fh });
+    // OBS понимает эти параметры у брошенной в сцену ссылки и сразу создаёт
+    // источник нужного размера. Самому виджету они не мешают.
+    $("wx-drag").href = location.origin + "/widget?layer-name=" +
+      encodeURIComponent(I18N.t("Заказ музыки")) + "&layer-width=" + fw + "&layer-height=" + fh;
   }
 
   const wxGapX = (w) => (Number.isFinite(w.gap_x) && w.gap_x > 0 ? w.gap_x : (Number.isFinite(w.gap) ? w.gap : 40));
@@ -2594,6 +2632,8 @@
     const family = dressCard(card, w);
 
     card.style.setProperty("--scale", w.scale || 1);
+    // Формат — до расстановки: отступы пересчитываются от ширины кадра.
+    wxDrawFrame(w);
     wxPlace(w, family);
     wxAlign(w);
     $("wx-slot").style.opacity = (Number.isFinite(w.opacity) ? w.opacity : 100) / 100;
@@ -2922,6 +2962,16 @@
 
   $("wx-align").onchange = (e) => saveWidget({ align: e.target.value });
   $("wx-art-on").onchange = (e) => saveWidget({ show_art: e.target.checked });
+  $("wx-frame-pick").onclick = (e) => {
+    const b = e.target.closest("button[data-frame]");
+    if (b) saveWidget({ frame: b.dataset.frame });
+  };
+  // Щелчок по кнопке перетаскивания открыл бы виджет во вкладке — это не то,
+  // что от неё ждут. Её надо тащить мышью.
+  $("wx-drag").onclick = (e) => {
+    e.preventDefault();
+    say(I18N.t("Эту кнопку надо не нажать, а перетащить мышью в окно сцены OBS."));
+  };
   $("wx-by-on").onchange = (e) => saveWidget({ show_requester: e.target.checked });
   $("wx-bar-on").onchange = (e) => saveWidget({ show_bar: e.target.checked });
   $("wx-motion-on").onchange = (e) => saveWidget({ motion: e.target.checked });
