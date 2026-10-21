@@ -183,14 +183,17 @@ type ownWatch struct {
 	// чтении из системной панели Windows всё остальное приходит бесплатно и
 	// каждый раз заново, а обложка стоит запроса и берётся один раз на трек.
 	cover string
-	// coverTried — за обложкой этого трека уже ходили.
+	// coverTries и coverNext — сколько раз за обложкой этого трека уже
+	// ходили и когда можно сходить снова.
 	//
-	// Признак нужен отдельно от самой обложки: спросить и не получить —
-	// обычное дело (Spotify молчит, играет с телефона, кончилась норма). Без
-	// него приложение просило бы обложку на каждом опросе, то есть раз в две
-	// секунды, — ровно та утечка, ради устранения которой всё и затевалось.
-	// Поймано проверкой TestIdleSpotifyIsNotAskedOften.
-	coverTried bool
+	// Без счётчика приложение просило бы обложку на каждом опросе, то есть
+	// раз в две секунды, — ровно та утечка, ради устранения которой всё и
+	// затевалось (поймано проверкой TestIdleSpotifyIsNotAskedOften). Но и
+	// одной попытки мало: раньше была ровно одна, и если в ту секунду лежал
+	// обход, трек так и доигрывал без обложки, хотя через минуту обход
+	// поднимался. Теперь — несколько попыток с перерывом в полминуты.
+	coverTries int
+	coverNext  time.Time
 	// panelPos и panelAt — какое положение в треке панель Windows показала
 	// и когда оно у нас впервые появилось. Spotify из Microsoft Store
 	// обновляет его редко; пока число не меняется, а музыка играет,
@@ -585,9 +588,19 @@ func (s *Server) pollOwnPanel(ctx context.Context, w *ownWatch) bool {
 	// Обложка — единственное, чего в панели Windows нет в готовом виде
 	// (она отдаёт картинку потоком, а это отдельная возня с COM). Спрашиваем
 	// её у Spotify один раз на трек и запоминаем.
-	if w.cover == "" && !w.coverTried && s.wantCover() && s.spotify.Connected() {
-		w.coverTried = true
-		if url := s.fetchOwnCover(ctx, seen.Title); url != "" {
+	if w.cover == "" && w.coverTries < ownCoverTries && time.Now().After(w.coverNext) && s.wantCover() {
+		w.coverTries++
+		w.coverNext = time.Now().Add(ownCoverRetry)
+		url := ""
+		if s.spotify.Connected() {
+			url = s.fetchOwnCover(ctx, seen.Title)
+		}
+		// Spotify не ответил (лежит обход) или не знает трек — ищем
+		// обложку в открытых каталогах по названию и артисту.
+		if url == "" {
+			url = coverLookup(ctx, seen.Artist, seen.Title)
+		}
+		if url != "" {
 			w.cover = url
 			now.CoverURL = url
 		}
@@ -641,6 +654,13 @@ func (o orderPanel) Hold(on bool) error {
 	}
 	return smtc.Control(smtc.SpotifyApp, cmd)
 }
+
+// ownCoverTries и ownCoverRetry — сколько раз и как часто искать обложку
+// одного трека, если с первого раза не нашлась.
+const (
+	ownCoverTries = 4
+	ownCoverRetry = 30 * time.Second
+)
 
 // wantCover — нужна ли обложка прямо сейчас.
 //

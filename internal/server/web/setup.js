@@ -552,15 +552,15 @@
 
         <rect x="280" y="42" width="336" height="146" rx="10" fill="${C.raise}" stroke="${C.line}"/>
         ${fieldArt(298, 60, 300, "URL", widgetURL, true)}
-        ${fieldArt(298, 118, 140, "ШИРИНА", "640", false)}
-        ${fieldArt(458, 118, 140, "ВЫСОТА", "200", false)}
+        ${fieldArt(298, 118, 140, "ШИРИНА", "1920", false)}
+        ${fieldArt(458, 118, 140, "ВЫСОТА", "1080", false)}
       </svg>`,
       body: () => `
         <ol class="steps-list">
           <li>${tt(`Скопируй адрес виджета`)}</li>
           <li>${tt(`В OBS в списке <b>Источники</b> нажми <b>+</b> и выбери <b>Браузер</b>`)}</li>
           <li>${tt(`В поле <b>URL</b> вставь адрес, сотри то, что было по умолчанию`)}</li>
-          <li>${tt(`Поставь ширину <b>640</b>, высоту <b>200</b> и нажми ОК`)}</li>
+          <li>${tt(`Поставь ширину <b>1920</b>, высоту <b>1080</b>, нажми ОК и растяни источник на весь кадр`)}</li>
         </ol>
         <div class="copyline">
           <code>${esc(widgetURL)}</code>
@@ -582,17 +582,20 @@
       must: false,
       short: "как плашка выглядит",
       title: "Оформление виджета",
-      why: "Сорок пять наборов на выбор. Семейство задаёт устройство плашки, вариант — только краску. Меняется на лету: в OBS видно сразу, ничего перезапускать не надо.",
+      why: "Семнадцать стилей, у каждого несколько окрасок. Стиль задаёт устройство плашки, окраска — только цвета. Меняется на лету: в OBS видно сразу, ничего перезапускать не надо.",
       art: null,
       body: () => `
         <div class="preset-stage" id="su-stage">
           <div class="card show" id="su-card" style="left:24px; bottom:24px">
+            <div class="aura"><i></i></div>
+            <div class="fx"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
             <div class="art" id="su-art"></div>
             <div class="text">
               <div class="title">Bohemian Rhapsody</div>
               <div class="artist">Queen</div>
               <div class="by">заказал zritel</div>
               <div class="bar"><i style="width:46%"></i></div>
+              <div class="meta"><span class="eq"><i></i><i></i><i></i><i></i><i></i></span></div>
             </div>
           </div>
         </div>
@@ -1006,7 +1009,7 @@
       card.dataset.art = "on";
       card.dataset.bar = "on";
       card.dataset.motion = "off";
-      card.style.setProperty("--scale", .9);
+      card.style.zoom = .9;
 
       $("su-families").innerHTML = window.WIDGET_FAMILIES.map((f) =>
         `<button data-family="${f.id}" class="${f.id === family.id ? "on" : ""}">${esc(f.name)}</button>`).join("");

@@ -41,12 +41,16 @@ func init() {
 		"%s · награда не создана":                             "%s · reward not created",
 
 		// Ответы панели.
-		"запрос не с этого компьютера":        "request is not from this computer",
-		"запрос с чужого сайта":               "request from another website",
-		"страница не найдена":                 "page not found",
-		"окна нет, панель открыта в браузере": "there is no window, the panel is open in a browser",
-		"не разобрал настройки":               "couldn't read the settings",
-		"не смог сохранить настройки":         "couldn't save the settings",
+		"запрос не с этого компьютера":                                          "request is not from this computer",
+		"запрос с чужого сайта":                                                 "request from another website",
+		"страница не найдена":                                                   "page not found",
+		"окна нет, панель открыта в браузере":                                   "there is no window, the panel is open in a browser",
+		"не разобрал настройки":                                                 "couldn't read the settings",
+		"Файл больше 10 МБ. Сожмите его или обрежьте ролик.":                    "The file is over 10 MB. Compress it or trim the clip.",
+		"Файл не дошёл целиком, попробуйте ещё раз.":                            "The file didn't arrive in full, try again.",
+		"Это не картинка и не ролик. Подойдут GIF, WebP, PNG, JPG, WebM и MP4.": "That's not a picture or a clip. GIF, WebP, PNG, JPG, WebM and MP4 work.",
+		"Не получилось сохранить файл.":                                         "Couldn't save the file.",
+		"не смог сохранить настройки":                                           "couldn't save the settings",
 
 		// Spotify.
 		"Вход в Spotify не завершён: доступ не выдан.": "Spotify login not finished: access was not granted.",

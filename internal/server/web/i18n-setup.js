@@ -180,7 +180,7 @@ I18N.add({
   "Скопируй адрес виджета": "Copy the widget URL",
   "В OBS в списке <b>Источники</b> нажми <b>+</b> и выбери <b>Браузер</b>": "In OBS, under <b>Sources</b>, click <b>+</b> and choose <b>Browser</b>",
   "В поле <b>URL</b> вставь адрес, сотри то, что было по умолчанию": "Paste the URL into the <b>URL</b> field, replacing the default",
-  "Поставь ширину <b>640</b>, высоту <b>200</b> и нажми ОК": "Set width to <b>640</b>, height to <b>200</b> and click OK",
+  "Поставь ширину <b>1920</b>, высоту <b>1080</b>, нажми ОК и растяни источник на весь кадр": "Set width <b>1920</b>, height <b>1080</b>, click OK and stretch the source over the whole frame",
   "Адрес один и навсегда: оформление живёт в настройках приложения, а не в адресе. Поменял вид — в OBS он поменяется сам, переклеивать ничего не надо. <br>Плашка появится, когда заиграет музыка. Чтобы выставить её заранее, допиши в конец адреса <b>?demo=1</b> — виджет покажет выдуманный трек. Потом убери.": "One URL, forever: the look lives in the app settings, not in the URL. Change the style and OBS updates by itself — nothing to re-paste. <br>The card appears when music starts playing. To position it in advance, add <b>?demo=1</b> to the end of the URL — the widget shows a made-up track. Remove it afterwards.",
   "Адрес скопирован — вставь его в OBS.": "URL copied — paste it into OBS.",
   "Скопируй адрес и добавь источник в OBS.": "Copy the URL and add the source in OBS.",
@@ -188,7 +188,7 @@ I18N.add({
   // оформление
   "Оформление виджета": "Widget style",
   "как плашка выглядит": "how the card looks",
-  "Сорок пять наборов на выбор. Семейство задаёт устройство плашки, вариант — только краску. Меняется на лету: в OBS видно сразу, ничего перезапускать не надо.": "Forty-five presets to choose from. The family sets the card's layout, the variant only the colors. Changes apply live: OBS shows them right away, no restart needed.",
+  "Семнадцать стилей, у каждого несколько окрасок. Стиль задаёт устройство плашки, окраска — только цвета. Меняется на лету: в OBS видно сразу, ничего перезапускать не надо.": "Seventeen styles, each with several colorways. The style sets the card's layout, the colorway only the colors. Changes apply live: OBS shows them right away, no restart needed.",
   "заказал zritel": "requested by viewer",
   "Здесь только семейства и краски. Тонкая настройка — размер, угол кадра, свои цвета — живёт в панели, во вкладке <b>виджет</b>.": "Only families and colors here. Fine-tuning — size, corner of the frame, custom colors — lives in the panel, on the <b>widget</b> tab.",
   "Выбрано: {name}": "Selected: {name}",

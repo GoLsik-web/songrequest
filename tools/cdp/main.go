@@ -30,6 +30,16 @@ func main() {
 	if len(os.Args) > 1 {
 		expr = os.Args[1]
 	}
+	// «file:путь» — выражение лежит в файле: длинный скрипт в кавычках
+	// PowerShell передаёт программе по кускам.
+	if strings.HasPrefix(expr, "file:") {
+		b, err := os.ReadFile(strings.TrimPrefix(expr, "file:"))
+		if err != nil {
+			fmt.Println("не прочитал файл:", err)
+			os.Exit(1)
+		}
+		expr = string(b)
+	}
 
 	resp, err := http.Get("http://127.0.0.1:" + port + "/json/list")
 	if err != nil {
@@ -52,8 +62,15 @@ func main() {
 	// Первой в списке бывает служебная страница расширения, а не панель:
 	// так в обычном Chrome без окна. Берём первую страницу с адресом
 	// приложения, а если такой нет — первую как раньше.
+	//
+	// CDP_MATCH — кусок адреса нужной страницы, когда их открыто несколько:
+	// например панель и отдельно виджет, чтобы снять его в полный размер.
+	want := "http://127.0.0.1"
+	if m := os.Getenv("CDP_MATCH"); m != "" {
+		want = m
+	}
 	for i, p := range pages {
-		if strings.HasPrefix(p.URL, "http://127.0.0.1") {
+		if strings.Contains(p.URL, want) {
 			pages[0], pages[i] = pages[i], pages[0]
 			break
 		}

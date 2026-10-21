@@ -43,6 +43,15 @@ var coverHosts = map[string]bool{
 	"i.ytimg.com":                 true, // кадры роликов YouTube
 	"img.youtube.com":             true,
 	"avatars.yandex.net":          true, // обложки Яндекс.Музыки
+	// Запасные каталоги обложек своей музыки, см. coverlookup.go.
+	"is1-ssl.mzstatic.com":    true,
+	"is2-ssl.mzstatic.com":    true,
+	"is3-ssl.mzstatic.com":    true,
+	"is4-ssl.mzstatic.com":    true,
+	"is5-ssl.mzstatic.com":    true,
+	"cdn-images.dzcdn.net":    true,
+	"e-cdns-images.dzcdn.net": true,
+	"cdns-images.dzcdn.net":   true,
 }
 
 const (
