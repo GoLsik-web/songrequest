@@ -34,6 +34,13 @@ type YouTube interface {
 	SetVolumePercent(percent int)
 }
 
+// Prefetcher — проигрыватель YouTube, который умеет заранее скачать звук.
+// Отдельным интерфейсом: не всякому проигрывателю это нужно (в проверках —
+// никогда), а Play обязан работать и без предварительного скачивания.
+type Prefetcher interface {
+	Prefetch(ctx context.Context, url string) error
+}
+
 // Spotify — то, что умеет играть. Интерфейсом ради тестов.
 type Spotify interface {
 	Capture(ctx context.Context) (*spotify.Snapshot, error)
@@ -173,6 +180,13 @@ type Player struct {
 	waitingItem *queue.Item
 	// dropWaiting — ждущий заказ удалили из панели: не играть его вовсе.
 	dropWaiting bool
+	// launching — заказ запускается: снимок Spotify, скачивание звука с
+	// YouTube, сам запуск. Через обход это минуты, и раньше всё это время
+	// заказ не был виден нигде, а скип отвечал «ничего не играет».
+	launching *queue.Item
+	// launchLimit — срок запуска; ноль — launchLimit по умолчанию. Полем
+	// ради проверок.
+	launchLimit time.Duration
 	wake        chan struct{}
 	skip        chan struct{}
 	running     bool
@@ -270,7 +284,28 @@ func (p *Player) WaitingItem() *queue.Item {
 func (p *Player) Waiting() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.waiting
+	// Запуск тоже «заказ в работе, но ещё не играет»: снаружи по этому
+	// признаку решают, есть ли что скипать (команда в чате, кнопка «дальше»).
+	return p.waiting || p.launching != nil
+}
+
+// LaunchingItem — заказ, который сейчас запускается (см. Player.launching).
+// Скип в это время отменяет запуск, а не ускоряет его.
+func (p *Player) LaunchingItem() *queue.Item {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.launching == nil {
+		return nil
+	}
+	item := *p.launching
+	return &item
+}
+
+func (p *Player) setLaunching(item *queue.Item) {
+	p.mu.Lock()
+	p.launching = item
+	p.mu.Unlock()
+	p.changed()
 }
 
 // setWaitingItem запоминает, чего именно мы ждём.
@@ -469,9 +504,17 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 		}
 	}
 
+	// Дальше — запуск: снимок, скачивание, включение. Это может идти минуты
+	// (звук с YouTube через обход качается целиком), поэтому у запуска свой
+	// срок и своя отмена: скип в это время отменяет запуск. Раньше скип здесь
+	// терялся — его съедал drainSkip следующего заказа, — а панель всё это
+	// время показывала пустоту.
+	ls := p.beginLaunch(ctx, item)
+	defer func() { ls.end() }()
+
 	// Первый заказ подряд — запоминаем, куда возвращаться.
 	if p.Snapshot() == nil {
-		snap, err := p.spotify.Capture(ctx)
+		snap, err := p.spotify.Capture(ls.ctx)
 		if err != nil {
 			p.fail(err)
 			// Без снимка играть можно, но вернуться потом будет некуда —
@@ -489,17 +532,40 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 	// бы другим источником. Теперь неудача — повод спросить сервер, чем ещё это
 	// можно сыграть (см. Server.rescue), и попробовать ещё раз.
 	for attempt := 0; ; attempt++ {
-		if err := p.launch(ctx, item); err != nil {
+		err := p.launch(ls.ctx, item)
+		skipped := ls.end()
+		if ctx.Err() != nil {
+			p.stopYouTube()
+			return
+		}
+		if err != nil && skipped {
+			// Скип во время запуска — это скип, а не «не получилось»:
+			// историю и баллы решает тот, кто нажал (см. OnFinished).
+			p.log.Info("заказ скипнут во время запуска", "трек", item.Artist+" — "+item.Title)
+			p.stopYouTube()
+			p.finish(item, false)
+			return
+		}
+		if err != nil {
 			p.log.Error("не смог включить заказ",
 				"трек", item.Artist+" — "+item.Title, "откуда", item.Provider, "ошибка", err)
-			next, ok := p.callRescue(ctx, item, attempt)
+			next, ok := p.rescueLaunch(ctx, &ls, item, attempt)
 			if !ok {
+				if ls.end() {
+					p.finish(item, false)
+					return
+				}
 				p.fail(err)
 				p.dropped(item, err)
 				return
 			}
 			item = next
 			continue
+		}
+		if skipped {
+			// Скипнули, но трек успел включиться: скип возвращаем в канал,
+			// и ожидание ниже снимет трек сразу, тем же путём, что и всегда.
+			p.Skip()
 		}
 
 		p.mu.Lock()
@@ -520,11 +586,12 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 		// Проигрыватель умер посреди трека. Это не «доиграл» и не «скипнули»:
 		// зритель ничего не услышал, а баллы уже списаны.
 		if fell {
-			if next, ok := p.callRescue(ctx, item, attempt); ok {
+			if next, ok := p.rescueLaunch(ctx, &ls, item, attempt); ok {
 				p.changed()
 				item = next
 				continue
 			}
+			ls.end()
 		}
 
 		p.mu.Lock()
@@ -537,6 +604,91 @@ func (p *Player) playOne(ctx context.Context, item queue.Item) {
 
 		p.finish(item, natural)
 		return
+	}
+}
+
+// launchLimit — общий срок на запуск одного заказа: снимок, скачивание звука
+// (через обход — до двух минут, и ещё столько же со вторым сервером), сам
+// запуск. Дольше этого очередь стоять не должна, что бы ни случилось с сетью.
+const launchLimit = 5 * time.Minute
+
+// launchState — один запуск заказа: свой срок, своя отмена, свой сторож скипа.
+type launchState struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	stop   func() bool
+	done   bool
+	p      *Player
+}
+
+// beginLaunch показывает заказ как «запускается» и начинает ловить скип.
+func (p *Player) beginLaunch(ctx context.Context, item queue.Item) *launchState {
+	lctx, cancel := context.WithTimeout(ctx, p.launchTimeout())
+	shown := item
+	p.setLaunching(&shown)
+	return &launchState{ctx: lctx, cancel: cancel, stop: p.watchSkip(cancel), p: p}
+}
+
+// end заканчивает запуск. true — во время запуска нажали скип. Повторный
+// вызов ничего не делает и отдаёт false.
+func (l *launchState) end() bool {
+	if l == nil || l.done {
+		return false
+	}
+	l.done = true
+	skipped := l.stop()
+	l.cancel()
+	l.p.setLaunching(nil)
+	return skipped
+}
+
+// rescueLaunch спрашивает запасной источник уже как новый запуск: поиск тоже
+// бывает долгим, и скип в это время должен его отменять.
+func (p *Player) rescueLaunch(ctx context.Context, ls **launchState, item queue.Item, attempt int) (queue.Item, bool) {
+	if attempt > 0 || ctx.Err() != nil {
+		return queue.Item{}, false
+	}
+	*ls = p.beginLaunch(ctx, item)
+	return p.callRescue((*ls).ctx, item, attempt)
+}
+
+// watchSkip ловит скип, пока идёт запуск, и отменяет его. Отдаёт функцию
+// остановки: она дожидается конца сторожа (иначе он мог бы съесть скип,
+// предназначенный уже играющему треку) и говорит, был ли скип.
+func (p *Player) watchSkip(cancel context.CancelFunc) func() bool {
+	quit := make(chan struct{})
+	got := make(chan bool, 1)
+	go func() {
+		select {
+		case <-p.skip:
+			cancel()
+			got <- true
+		case <-quit:
+			got <- false
+		}
+	}()
+	return func() bool {
+		close(quit)
+		return <-got
+	}
+}
+
+func (p *Player) launchTimeout() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.launchLimit > 0 {
+		return p.launchLimit
+	}
+	return launchLimit
+}
+
+// stopYouTube гасит mpv, если запуск оборвали на полпути.
+func (p *Player) stopYouTube() {
+	p.mu.Lock()
+	yt := p.youtube
+	p.mu.Unlock()
+	if yt != nil {
+		yt.Stop()
 	}
 }
 
@@ -606,6 +758,15 @@ func (p *Player) playYouTube(ctx context.Context, item queue.Item) error {
 
 	if yt == nil {
 		return errs.New(errs.YouTubeNoTool, "Проигрыватель YouTube не готов.")
+	}
+
+	// Звук сначала скачиваем, и только потом ставим Spotify на паузу.
+	// Через обход скачивание идёт до пары минут, и раньше всё это время в
+	// эфире стояла тишина: Spotify уже на паузе, а mpv ещё не начал.
+	if pf, ok := yt.(Prefetcher); ok {
+		if err := pf.Prefetch(ctx, item.URI); err != nil {
+			return err
+		}
 	}
 
 	// Spotify обязательно на паузу: иначе два трека заиграют одновременно.

@@ -316,13 +316,21 @@ func (s *Server) resolveOrder(ctx context.Context, r twitch.Redemption) {
 
 // rejectRedemption возвращает баллы и объясняет зрителю, почему.
 func (s *Server) rejectRedemption(ctx context.Context, r twitch.Redemption, reason string) {
+	refunded := true
 	if r.ID != "" && r.RewardID != "" {
 		if err := s.twitch.RefundRedemption(ctx, r.RewardID, r.ID); err != nil {
 			s.log.Error("не смог вернуть баллы за неудачный заказ", "ошибка", err)
 			s.state.NotifyError(err)
+			refunded = false
 		} else {
 			s.state.SetRedemptionStatus(r.ID, app.OrderRefunded)
 		}
+	}
+	// Обещать «вернул», когда Twitch возврат не принял, нельзя: зритель
+	// ждёт баллы, которых не будет, пока стример не вернёт их сам.
+	if !refunded {
+		s.say(ctx, i18n.F("@%s, %s. Баллы вернёт стример вручную.", r.UserName, reason))
+		return
 	}
 	s.say(ctx, i18n.F("@%s, %s. Баллы вернул.", r.UserName, reason))
 }

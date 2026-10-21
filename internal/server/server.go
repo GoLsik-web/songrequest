@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -212,6 +213,10 @@ type Server struct {
 	// skipActor — кто оборвал текущий заказ. Живёт до конца этого заказа:
 	// историю пишет плеер, а имя человека знает только панель.
 	skipActor string
+	// skipItemID — к какому заказу относится skipActor. Без него метка от
+	// скипа, который не успел сработать (трек доиграл сам), доставалась
+	// следующему заказу, и тот записывался «скипнутым» с возвратом баллов.
+	skipItemID int64
 
 	// skipRefund — вернуть ли баллы за оборванный заказ.
 	//
@@ -563,8 +568,15 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	// принимал первый попавшийся трек. Починить это из панели было нельзя:
 	// полей в ней нет, а переживало оно перезапуск.
 	current := s.cfg.Get()
-	incoming := current
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&incoming); err != nil {
+	// Разбираем поверх глубокой копии: при ошибке живой конфиг не задет,
+	// а присланные карты (цвета, стили) заменяют старые, а не сливаются с ними.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, i18n.T("не разобрал настройки"), http.StatusBadRequest)
+		return
+	}
+	incoming, err := config.MergeJSON(current, body)
+	if err != nil {
 		http.Error(w, i18n.T("не разобрал настройки"), http.StatusBadRequest)
 		return
 	}

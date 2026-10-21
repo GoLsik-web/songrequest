@@ -162,7 +162,8 @@ func (d *DonateX) whoami(ctx context.Context, key string) (string, error) {
 	if name := firstFilled(out.Username, out.Name); name != "" {
 		return name, nil
 	}
-	return "подключено", nil
+	// Имени нет — панель покажет просто «Подключено».
+	return "", nil
 }
 
 // negotiate берёт у SignalR разовый идентификатор подключения.
@@ -324,9 +325,11 @@ func parseDonateX(raw json.RawMessage) (Donation, bool) {
 		return Donation{}, false
 	}
 
-	amount := p.AmountInRub
+	// Сумма и подпись валюты обязаны говорить об одном и том же: раньше
+	// бралась сумма в рублях, а подпись — валюта зрителя («5000 USD»).
+	amount, currency := p.AmountInRub, "RUB"
 	if amount == 0 {
-		amount = p.Amount
+		amount, currency = p.Amount, p.Currency
 	}
 
 	message := strings.TrimSpace(p.Message)
@@ -344,7 +347,6 @@ func parseDonateX(raw json.RawMessage) (Donation, bool) {
 		}
 	}
 
-	currency := p.Currency
 	if currency == "" {
 		currency = "RUB"
 	}

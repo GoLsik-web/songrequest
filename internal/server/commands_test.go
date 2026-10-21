@@ -154,12 +154,14 @@ func TestTrackPauseDoesNotStopOrders(t *testing.T) {
 func TestChatCommandsBanAndUnban(t *testing.T) {
 	srv := commandServer(t)
 
-	srv.onChat(fromMod("!бан Вася надоел"))
-	if !banned(t, srv, "вася") {
+	// Логин Twitch бывает только латиницей: «Вася» — отображаемое имя, его
+	// бан теперь отклоняет (см. TestBanRejectsBadLoginAndChannel).
+	srv.onChat(fromMod("!бан Vasya надоел"))
+	if !banned(t, srv, "vasya") {
 		t.Fatal("«!бан» не закрыл заказы")
 	}
-	srv.onChat(fromMod("!разбан ВАСЯ"))
-	if banned(t, srv, "вася") {
+	srv.onChat(fromMod("!разбан VASYA"))
+	if banned(t, srv, "vasya") {
 		t.Fatal("«!разбан» не вернул заказы")
 	}
 

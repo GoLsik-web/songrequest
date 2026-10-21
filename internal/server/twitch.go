@@ -127,6 +127,9 @@ func (s *Server) startTwitch(ctx context.Context) {
 			t.Note = text
 			t.NoteCode = string(code)
 		})
+		// Без награды чат всё равно нужен: команды и ответы зрителям идут
+		// через EventSub. Раньше выход здесь глушил все команды разом.
+		s.startEventSub(ctx, nil)
 		return
 	}
 
@@ -145,7 +148,7 @@ func (s *Server) startTwitch(ctx context.Context) {
 		t.Note = ""
 		t.NoteCode = ""
 	})
-	s.state.Notify("info", i18n.F("Награда «%s» готова, стоит %d баллов", reward.Title, reward.Cost))
+	s.state.Notify("info", i18n.F("Награда «%s» готова, стоит %d %s", reward.Title, reward.Cost, pointsWord(reward.Cost)))
 
 	// Вторая награда — за плейлист. Её может не быть вовсе: это отдельная
 	// галочка в настройках, и включают её не все.
@@ -301,10 +304,11 @@ func (s *Server) handleRedemptionAction(w http.ResponseWriter, r *http.Request) 
 	id := r.PathValue("id")
 	action := r.URL.Query().Get("action")
 
-	var rewardID string
+	var rewardID, user string
 	for _, item := range s.state.Snapshot().Redemptions {
 		if item.ID == id {
 			rewardID = item.RewardID
+			user = item.User
 			break
 		}
 	}
@@ -349,6 +353,11 @@ func (s *Server) handleRedemptionAction(w http.ResponseWriter, r *http.Request) 
 	s.state.SetRedemptionStatus(id, status)
 	if status == app.OrderRefunded {
 		s.state.Notify("info", i18n.T("Баллы за заказ возвращены"))
+		// Зритель не видит панель: без строки в чате заказ у него просто
+		// пропадал, и было непонятно, вернулись ли баллы.
+		if user != "" {
+			s.say(ctx, i18n.F("@%s, заказ снят, баллы вернул", user))
+		}
 	} else {
 		s.state.Notify("info", i18n.T("Заказ принят, баллы не возвращаются"))
 	}
@@ -473,8 +482,8 @@ func (s *Server) pushReward() {
 	}
 
 	s.syncTwitchInfo()
-	s.state.Notify("info", i18n.F("Награда на канале обновлена: «%s», %d",
-		reward.Title, reward.Cost))
+	s.state.Notify("info", i18n.F("Награда на канале обновлена: «%s», %d %s",
+		reward.Title, reward.Cost, pointsWord(reward.Cost)))
 }
 
 // SyncTwitch обновляет карточку Twitch снаружи (при старте).
@@ -575,8 +584,9 @@ func (s *Server) ensurePlaylistReward(ctx context.Context) string {
 		t.PlaylistCost = reward.Cost
 	})
 	if changed {
-		s.state.Notify("info", i18n.F("Награда «%s» готова, стоит %d баллов за %d треков",
-			reward.Title, reward.Cost, s.cfg.Get().PlaylistTrackCount()))
+		n := s.cfg.Get().PlaylistTrackCount()
+		s.state.Notify("info", i18n.F("Награда «%s» готова, стоит %d %s за %d %s",
+			reward.Title, reward.Cost, pointsWord(reward.Cost), n, tracksWord(n)))
 	}
 	return reward.ID
 }
@@ -586,4 +596,9 @@ func (s *Server) playlistReward() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.playlistRewardID
+}
+
+// pointsWord — «балл/балла/баллов» по числу: «стоит 1 баллов» резало глаз.
+func pointsWord(n int) string {
+	return i18n.Plural(n, [3]string{"балл", "балла", "баллов"}, [2]string{"point", "points"})
 }

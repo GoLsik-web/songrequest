@@ -116,7 +116,7 @@ func (d *DonatePay) session(ctx context.Context, onDonation func(Donation)) erro
 	}
 
 	d.log.Info("DonatePay подключён", "канал", channel)
-	d.status(true, "подключено")
+	d.status(true, "")
 
 	return d.pump(ctx, conn, onDonation)
 }

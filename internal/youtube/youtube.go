@@ -16,6 +16,7 @@ import (
 
 	"songrequest/internal/app"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/logx"
 	"songrequest/internal/procjob"
 )
@@ -64,6 +65,10 @@ type Player struct {
 	ipc string
 	// tmpFile — скачанный звук заказа (см. Play); удаляется в Stop.
 	tmpFile string
+	// preURL, preFile — звук, скачанный заранее (см. Prefetch), и для какого
+	// он ролика. Play берёт его вместо повторного скачивания.
+	preURL  string
+	preFile string
 
 	// route — через какой посредник ходить к YouTube (см. SetRoute).
 	route    func(ctx context.Context, raise bool) (socks, http string)
@@ -448,6 +453,14 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	if mpv == "" {
 		return errs.New(errs.YouTubeNoMpv, "mpv не найден — играть звук нечем.")
 	}
+	// Заранее скачанное забираем до Stop: Stop удаляет брошенное.
+	p.mu.Lock()
+	pre := ""
+	if p.preURL == url {
+		pre = p.preFile
+		p.preURL, p.preFile = "", ""
+	}
+	p.mu.Unlock()
 	p.Stop()
 
 	p.mu.Lock()
@@ -461,7 +474,7 @@ func (p *Player) Play(ctx context.Context, url string) error {
 		"--no-terminal",
 		"--really-quiet",
 		// Свой заголовок окна: если mpv всё же покажется, будет понятно, что это.
-		"--title=Заказ музыки",
+		"--title=" + i18n.T("Заказ музыки"), // заголовок окна mpv — по языку стримера
 		"--force-window=no",
 		// Без этого ключа mpv играет на сто процентов, и заказ с YouTube
 		// врывается в эфир вдвое громче музыки стримера.
@@ -479,27 +492,17 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	// («Timeout was reached», «Could not resolve proxy name») — особенно после
 	// перемотки, когда дозагружает куски. Звук трека — несколько мегабайт, через
 	// обход это секунды, зато дальше ни перемотка, ни пауза от сети не зависят.
-	socks, _ := p.via(ctx, false)
 	target := url
-	if socks != "" {
-		file, err := p.fetchAudio(ctx, socks, url)
-		if err != nil {
-			// Сервер обхода пускает на youtube.com, но узел с самим звуком
-			// через него молчит — 12.10 так было со шведским сервером. Берём
-			// другой сервер и пробуем ещё раз.
-			p.mu.Lock()
-			bad := p.routeBad
-			p.mu.Unlock()
-			if bad != nil {
-				bad()
-				if px, _ := p.via(ctx, true); px != "" {
-					file, err = p.fetchAudio(ctx, px, url)
-				}
-			}
-		}
+	if pre == "" {
+		file, _, err := p.download(ctx, url)
 		if err != nil {
 			return err
 		}
+		pre = file
+	}
+	viaTunnel := pre != ""
+	if viaTunnel {
+		file := pre
 		target = file
 		p.mu.Lock()
 		p.tmpFile = file
@@ -527,8 +530,56 @@ func (p *Player) Play(ctx context.Context, url string) error {
 	p.ipc = ipc
 	p.mu.Unlock()
 
-	p.log.Info("играю с YouTube", "адрес", url, "устройство", p.Device, "через_обход", socks != "",
+	p.log.Info("играю с YouTube", "адрес", url, "устройство", p.Device, "через_обход", viaTunnel,
 		"громкость_mpv", volume, "громкость_spotify", p.baseVolume)
+	return nil
+}
+
+// download скачивает звук, если YouTube доступен только через обход. Пусто и
+// tunnel=false — обход не нужен, mpv возьмёт ролик сам.
+func (p *Player) download(ctx context.Context, url string) (file string, tunnel bool, err error) {
+	socks, _ := p.via(ctx, false)
+	if socks == "" {
+		return "", false, nil
+	}
+	file, err = p.fetchAudio(ctx, socks, url)
+	if err != nil {
+		// Сервер обхода пускает на youtube.com, но узел с самим звуком
+		// через него молчит — 12.10 так было со шведским сервером. Берём
+		// другой сервер и пробуем ещё раз.
+		p.mu.Lock()
+		bad := p.routeBad
+		p.mu.Unlock()
+		if bad != nil {
+			bad()
+			if px, _ := p.via(ctx, true); px != "" {
+				file, err = p.fetchAudio(ctx, px, url)
+			}
+		}
+	}
+	if err != nil {
+		return "", true, err
+	}
+	return file, true, nil
+}
+
+// Prefetch скачивает звук заранее, пока в эфире ещё играет Spotify.
+//
+// Через обход скачивание идёт до пары минут. Раньше оно шло уже после паузы
+// Spotify — и всё это время в эфире стояла тишина, а панель показывала
+// пустоту. Без обхода скачивать нечего: mpv тянет ролик сам за секунды.
+func (p *Player) Prefetch(ctx context.Context, url string) error {
+	file, tunnel, err := p.download(ctx, url)
+	if err != nil || !tunnel {
+		return err
+	}
+	p.mu.Lock()
+	old := p.preFile
+	p.preURL, p.preFile = url, file
+	p.mu.Unlock()
+	if old != "" && old != file {
+		_ = os.Remove(old)
+	}
 	return nil
 }
 
@@ -600,7 +651,13 @@ func (p *Player) Stop() {
 	p.gen++
 	tmp := p.tmpFile
 	p.tmpFile = ""
+	// Скачанное заранее, но так и не сыгранное (запуск скипнули) — туда же.
+	pre := p.preFile
+	p.preURL, p.preFile = "", ""
 	p.mu.Unlock()
+	if pre != "" && pre != tmp {
+		_ = os.Remove(pre)
+	}
 
 	if tmp != "" {
 		// Windows не даст удалить файл, пока mpv его держит, — удаляем чуть

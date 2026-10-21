@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"songrequest/internal/donations"
@@ -25,14 +26,19 @@ func (s *Server) setupDonations() {
 	s.donations.OnDonation = s.onDonation
 	s.donations.OnStatus = func(name string, connected bool, detail string) {
 		if connected {
-			s.state.SetConnOK(name, detail)
-			return
-		}
-		if detail == "Не настроено" {
-			s.state.SetConnIdle(name, detail)
+			// Единый вид для всех сервисов: «Подключено · имя», а если
+			// сервис имени не отдал — просто «Подключено».
+			text := i18n.T("Подключено")
+			if detail = strings.TrimSpace(detail); detail != "" {
+				text += " · " + detail
+			}
+			s.state.SetConnOK(name, text)
 			return
 		}
 		s.state.SetConnFail(name, detail)
+	}
+	s.donations.OnIdle = func(name string) {
+		s.state.SetConnIdle(name, i18n.T("Не настроено"))
 	}
 
 	keys := secrets.New()
@@ -64,18 +70,24 @@ func (s *Server) onDonation(d donations.Donation) {
 	ctx, cancel := context.WithTimeout(s.baseContext(), resolveTimeout)
 	defer cancel()
 
-	money := fmt.Sprintf("%.0f %s", d.Amount, d.Currency)
+	money := formatMoney(d.Amount, d.Currency)
 
 	if cfg.DonationMin > 0 && d.Amount < cfg.DonationMin {
 		s.log.Info("донат меньше порога заказа",
 			"от", d.Username, "сумма", d.Amount, "порог", cfg.DonationMin)
 		s.state.Notify("info", i18n.F("Донат %s от %s — меньше порога заказа", money, d.Username))
+		// Зритель заплатил и молча ничего не получил — выглядит как поломка.
+		// Одной фразой объясняем, сколько нужно. Порог сравнивается с той же
+		// суммой, что пришла в донате, поэтому и подпись валюты та же.
+		s.say(ctx, i18n.F("@%s, спасибо за донат! Трек заказывается от %s.",
+			d.Username, formatMoney(cfg.DonationMin, d.Currency)))
 		return
 	}
 
 	text := strings.TrimSpace(d.Message)
 	if text == "" {
 		s.state.Notify("info", i18n.F("Донат %s от %s — без сообщения, заказа нет", money, d.Username))
+		s.say(ctx, i18n.F("@%s, спасибо за донат! Чтобы заказать трек, напиши его в сообщении к донату.", d.Username))
 		return
 	}
 
@@ -161,6 +173,18 @@ func (s *Server) enqueueDonation(ctx context.Context, d donations.Donation,
 	})
 }
 
+// formatMoney пишет сумму без лишних нулей: «150», «4.99», а не «5 USD»
+// вместо 4.99. Валюту без кода подписываем «в валюте счёта»: так приходит
+// сумма DonationAlerts в валюте основного счёта стримера.
+func formatMoney(amount float64, currency string) string {
+	n := strconv.FormatFloat(amount, 'f', 2, 64)
+	n = strings.TrimSuffix(strings.TrimRight(n, "0"), ".")
+	if currency = strings.TrimSpace(currency); currency == "" {
+		return n + " " + i18n.T("в валюте счёта")
+	}
+	return n + " " + currency
+}
+
 // handleDonationAlertsLogin начинает вход в DonationAlerts.
 func (s *Server) handleDonationAlertsLogin(w http.ResponseWriter, r *http.Request) {
 	url, err := s.donationAlerts.AuthURL(s.cfg.Get().DonationAlertsClientID, s.addr+"/donations/callback")
@@ -178,20 +202,29 @@ func (s *Server) handleDonationAlertsLogin(w http.ResponseWriter, r *http.Reques
 // читает якорь и присылает ключ обратно.
 func (s *Server) handleDonationAlertsCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+	// Тексты вшиваем в скрипт через JSON — так кавычки в переводе ничего не
+	// сломают. Раньше страница была только по-русски, даже в английском режиме.
+	js := func(text string) string {
+		b, _ := json.Marshal(i18n.T(text))
+		return string(b)
+	}
+	fmt.Fprintf(w, `<!doctype html><html lang="%s"><head><meta charset="utf-8">
 <title>DonationAlerts</title><style>
 body{background:#08090a;color:#f2f4f5;font:16px/1.5 "Segoe UI",system-ui,sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
 div{max-width:520px;padding:0 24px}h1{font-size:22px;margin:0 0 12px}
 p{color:#6f777e;margin:0}</style></head><body>
-<div><h1 id="t">Подключаю…</h1><p id="p">Секунду.</p></div>
+<div><h1 id="t"></h1><p id="p"></p></div>
 <script>
 (async () => {
+  const L = {wait: %s, sec: %s, fail: %s, denied: %s, done: %s, ok: %s, rejected: %s};
+  const t = document.getElementById("t"), p = document.getElementById("p");
+  t.textContent = L.wait; p.textContent = L.sec;
   const hash = new URLSearchParams(location.hash.slice(1));
   const token = hash.get("access_token");
   if (!token) {
-    document.getElementById("t").textContent = "Не получилось";
-    document.getElementById("p").textContent = "DonationAlerts не выдал доступ. Вернись в панель и попробуй ещё раз.";
+    t.textContent = L.fail;
+    p.textContent = L.denied;
     return;
   }
   const r = await fetch("/api/donations/token", {
@@ -199,13 +232,14 @@ p{color:#6f777e;margin:0}</style></head><body>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token }),
   });
-  const ok = r.ok;
-  document.getElementById("t").textContent = ok ? "Готово" : "Не получилось";
-  document.getElementById("p").textContent = ok
-    ? "DonationAlerts подключён. Эту вкладку можно закрыть."
-    : "Приложение не приняло ключ. Загляни в панель.";
+  t.textContent = r.ok ? L.done : L.fail;
+  p.textContent = r.ok ? L.ok : L.rejected;
 })();
-</script></body></html>`)
+</script></body></html>`, i18n.Lang(),
+		js("Подключаю…"), js("Секунду."), js("Не получилось"),
+		js("DonationAlerts не выдал доступ. Вернись в панель и попробуй ещё раз."),
+		js("Готово"), js("DonationAlerts подключён. Эту вкладку можно закрыть."),
+		js("Приложение не приняло ключ. Загляни в панель."))
 }
 
 // handleDonationsToken принимает ключ, вычитанный страницей из якоря.
@@ -236,7 +270,7 @@ func (s *Server) handleDonationsToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDonationAlertsLogout(w http.ResponseWriter, r *http.Request) {
 	s.stopDonationAlerts()
 	s.donationAlerts.Logout()
-	s.state.SetConnIdle("DonationAlerts", "Не настроено")
+	s.state.SetConnIdle("DonationAlerts", i18n.T("Не настроено"))
 	s.state.Notify("info", i18n.T("DonationAlerts отключён"))
 
 	writeJSON(w, map[string]bool{"ok": true})

@@ -194,24 +194,27 @@
       <div class="hint" id="redirect"></div>
       <div class="hint" id="probe-out"></div>
 
-      <label class="field" style="margin-top:16px">
+      <!-- Обход и прокси нужны только там, где Spotify заблокирован. Англоязычным
+           блок показывается свёрнутым (app.js открывает его только для русского),
+           чтобы не пугать VPN-советами тех, кому они не нужны. -->
+      <details class="wxe-more" id="unblock-box" style="margin-top:16px">
+        <summary><span>Обход блокировок — только если Spotify заблокирован в твоей стране</span></summary>
+      <label class="field" style="margin-top:12px">
         <span>Обход блокировок — ключ от VPN или ссылка на подписку</span>
         <input type="password" id="tunnel-key" spellcheck="false" autocomplete="off"
                placeholder="vless://… , trojan://… , ss://… или https://…">
       </label>
       <div class="acts">
-        <button class="act small key" data-do="tunnel-on">Включить обход</button>
-        <button class="act small" data-do="tunnel-check">Проверить обход</button>
+        <button class="act small key" data-do="tunnel-on">Включить / перепроверить</button>
         <button class="act small" data-do="tunnel-off">Выключить</button>
         <button class="act small risky" data-do="tunnel-forget">Забыть ключ</button>
       </div>
       <div class="account" id="tunnel-state"></div>
       <div class="hint">
-        Вставь сюда ключ от своего VPN или ссылку на подписку — приложение само
-        скачает всё нужное, переберёт серверы и оставит тот, через который
-        Spotify отвечает. Никаких отдельных программ и консолей запускать не
-        надо.
-        <br><br>
+        Вставь ключ от своего VPN или ссылку на подписку — приложение само
+        подберёт сервер, через который Spotify отвечает.
+        <details class="wxe-more">
+          <summary><span>подробнее</span></summary>
         <b>Ссылок можно вставить несколько — через пробел.</b> Сервисы подписки
         обычно дают запасные адреса на случай, если основной заблокируют.
         Приложение обходит их по очереди и берёт первый, который ответил. А
@@ -227,9 +230,12 @@
         показывается — ни целиком, ни звёздочками. Если ключ сменился, вставь
         новый поверх; кнопка «Забыть ключ» стирает его совсем.
         <br><br>
-        <b>Вход в Spotify всё равно один раз через VPN.</b> Кнопка «Подключить
-        Spotify» открывает страницу входа, а она идёт мимо обхода. Включи VPN,
-        войди, выключи VPN — дальше приложение живёт на обходе само.
+        <b>Вход в Spotify.</b> При включённом обходе вход открывается в окне
+        приложения, VPN не нужен. Без обхода — включи VPN на время входа.
+        <br><br>
+        <b>«Обход наготове»</b> значит: ключ сохранён, но сейчас Spotify отвечает
+        и без него. Как только перестанет — приложение включит обход само.
+        </details>
       </div>
 
       <label class="field" style="margin-top:16px">
@@ -262,6 +268,7 @@
         надо. Блокируют обычно только адреса, по которым работают приложения
         вроде этого.
       </div>
+      </details>
     </div>
 
     <div class="col">
@@ -411,7 +418,7 @@
       </div>
 
       <label class="field" style="margin-top:16px">
-        <span>Заказ за донат от какой суммы</span>
+        <span>Заказ за донат от какой суммы (в валюте твоего счёта в сервисе)</span>
         <input type="text" id="donation-min" spellcheck="false" autocomplete="off">
       </label>
       <div class="hint">Донаты меньше этой суммы просто показываются в хронике —
@@ -1267,7 +1274,7 @@
       и вернуться к нему потом.</div>
     <div id="setup-rail-steps"></div>
     <div class="rail-tail">
-      <button data-act="finish">закрыть и настроить потом</button>
+      <button data-act="close">закрыть и настроить потом</button>
     </div>
   </aside>
   <div class="setup-body">
@@ -1279,6 +1286,7 @@
 <script src="/static/i18n.js"></script>
 <script src="/static/i18n-panel.js"></script>
 <script src="/static/i18n-setup.js"></script>
+<script src="/static/i18n-audit.js"></script>
 <script src="/static/i18n-widget.js"></script>
 <script src="/static/widget-presets.js"></script>
 <script src="/static/widget-fx.js"></script>

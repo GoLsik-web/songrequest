@@ -32,6 +32,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"intro": s.introShown.CompareAndSwap(false, true),
 		"done":  s.cfg.Get().SetupDone,
+		// Адреса возврата — мастер показывает их для копирования. Берём
+		// отсюда, а не собираем в браузере: сервер знает, где реально слушает.
+		"spotify_redirect":   s.redirectURI(),
+		"donations_redirect": s.addr + "/donations/callback",
 	})
 }
 

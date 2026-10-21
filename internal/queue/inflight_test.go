@@ -15,8 +15,14 @@ func TestInflightSurvivesUntilDone(t *testing.T) {
 	if !ok || got.Title != it.Title {
 		t.Fatalf("незаконченный заказ не нашёлся: %v %+v", ok, got)
 	}
+	// Запись живёт, пока заказ не вернули в очередь: сбой между «взял» и
+	// «поставил обратно» не должен его терять.
+	if again, ok := q.TakeInflight(); !ok || again.Title != it.Title {
+		t.Fatal("незаконченный заказ стёрся до того, как его вернули в очередь")
+	}
+	q.ForgetInflight(got)
 	if _, ok := q.TakeInflight(); ok {
-		t.Fatal("взятый незаконченный заказ отдан второй раз")
+		t.Fatal("забытый незаконченный заказ отдан второй раз")
 	}
 
 	add(t, q, "б", "второй", SourcePoints, false)
@@ -42,5 +48,22 @@ func TestKVJSON(t *testing.T) {
 	q.PutJSON("snapshot", nil)
 	if q.GetJSON("snapshot", &got) {
 		t.Fatal("стёртый снимок всё ещё читается")
+	}
+}
+
+// ForgetInflight не стирает чужую запись: пока заказ прошлого запуска
+// возвращали в очередь, плеер мог уже взять новый.
+func TestForgetInflightKeepsNewer(t *testing.T) {
+	q := newQueue(t)
+	add(t, q, "а", "старый", SourcePoints, false)
+	old, _ := q.Next()
+	add(t, q, "б", "новый", SourcePoints, false)
+	if _, err := q.Next(); err != nil {
+		t.Fatal(err)
+	}
+	q.ForgetInflight(old)
+	got, ok := q.TakeInflight()
+	if !ok || got.Title != "новый" {
+		t.Fatalf("запись нового заказа стёрта: %v %+v", ok, got)
 	}
 }

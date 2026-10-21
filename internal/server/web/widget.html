@@ -890,7 +890,7 @@ html.preview, html.preview body { width: 100%; height: 100%; }
     // бы отвечать на правку исчезновением.
     plan = { hold: 0, every: 0, onChange: true, onPause: false };
     show({
-      title: "Bohemian Rhapsody", artist: "Queen", requester: "zritel",
+      title: "Bohemian Rhapsody", artist: "Queen", requester: document.documentElement.lang === "en" ? "viewer" : "zritel",
       source: "order", cover_url: "", duration_ms: 354000, position_ms: 149000,
     });
   }

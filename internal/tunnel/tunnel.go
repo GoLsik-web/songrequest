@@ -299,15 +299,16 @@ func (t *Tunnel) Start(ctx context.Context, key, prefer, toolPath string) (Statu
 	if err != nil {
 		return Status{}, err
 	}
-	tool, err := t.ensureTool(ctx, toolPath)
-	if err != nil {
-		return Status{}, err
-	}
 
 	t.Stop()
 	order := sortPreferred(servers, prefer, t.badList())
 
-	var lastErr error
+	// Программу обхода качаем только у первого ответившего сервера: если ключ
+	// мёртвый целиком, человеку незачем ждать скачивание ради ошибки «ни один
+	// сервер не ответил».
+	tool := ""
+	tried := 0
+	countryRefused := false
 	for i, s := range order {
 		if i >= maxAttempts {
 			break
@@ -315,17 +316,22 @@ func (t *Tunnel) Start(ctx context.Context, key, prefer, toolPath string) (Statu
 		if err := ctx.Err(); err != nil {
 			return Status{}, err
 		}
+		tried++
 
 		t.log.Info("пробую сервер обхода", "сервер", s.String(), "попытка", i+1)
 		if err := reachable(ctx, s); err != nil {
-			lastErr = err
 			t.log.Warn("сервер обхода не отвечает", "сервер", s.String(), "ошибка", err)
 			continue
+		}
+		if tool == "" {
+			tool, err = t.ensureTool(ctx, toolPath)
+			if err != nil {
+				return Status{}, err
+			}
 		}
 
 		addr, httpAddr, cmd, says, err := t.launch(ctx, tool, s)
 		if err != nil {
-			lastErr = err
 			t.log.Warn("сервер обхода не запустился", "сервер", s.String(), "ошибка", err)
 			continue
 		}
@@ -335,7 +341,9 @@ func (t *Tunnel) Start(ctx context.Context, key, prefer, toolPath string) (Statu
 			check = t.Probe
 		}
 		if err := check(ctx, addr); err != nil {
-			lastErr = err
+			if errs.CodeOf(err) == errs.TunnelCountry {
+				countryRefused = true
+			}
 			t.log.Warn("сервер обхода не прошёл проверку", "сервер", s.String(), "ошибка", err)
 			killAndReap(cmd)
 			continue
@@ -352,11 +360,20 @@ func (t *Tunnel) Start(ctx context.Context, key, prefer, toolPath string) (Statu
 		return t.Status(), nil
 	}
 
-	if lastErr != nil {
-		return Status{}, lastErr
+	// Ошибку последнего сервера человеку не показываем: она про один сервер
+	// из многих и ничего не говорит о том, что делать. Она уже в логе.
+	if countryRefused {
+		return Status{}, errs.Newf(errs.TunnelCountry,
+			"Серверы ключа пускают в интернет, но Spotify отказывает им по стране (проверено %d). "+
+				"1) Возьми в кабинете VPN ключ другой страны (Европа, США). "+
+				"2) Не помогло — выключи обход и включи свой VPN целиком. "+
+				"3) Или поставь Psiphon и впиши его адрес в «Прокси для Spotify» (кнопка «Найти автоматически»).", tried)
 	}
-	return Status{}, errs.New(errs.TunnelCheck,
-		"Ни один сервер из ключа не ответил. Проверь, не кончилась ли подписка у VPN.")
+	return Status{}, errs.Newf(errs.TunnelCheck,
+		"Ни один из %d серверов ключа не пустил к Spotify. "+
+			"1) Проверь, жива ли подписка, и возьми свежий ключ в кабинете VPN. "+
+			"2) Не помогло — выключи обход и включи свой VPN целиком. "+
+			"3) Или поставь Psiphon и впиши его адрес в «Прокси для Spotify» (кнопка «Найти автоматически»).", tried)
 }
 
 // Stop гасит обход. Звать можно сколько угодно раз.
@@ -456,7 +473,7 @@ func (t *Tunnel) resolve(ctx context.Context, key string) ([]Server, bool, error
 	if lastErr != nil {
 		return nil, false, lastErr
 	}
-	return nil, false, errs.New(errs.TunnelSubscription,
+	return nil, false, errs.New(errs.TunnelBadKey,
 		"Не понял, что вставлено в поле ключа: ни ссылки на подписку, ни ключа.")
 }
 
@@ -741,7 +758,7 @@ func CheckSpotify(ctx context.Context, addr string) error {
 	if addr != "" {
 		u, err := url.Parse(addr)
 		if err != nil {
-			return errs.Wrap(errs.TunnelCheck, "Внутренняя ошибка адреса посредника.", err)
+			return errs.Wrap(errs.TunnelCheck, "Сервер обхода сбоит, беру другой.", err)
 		}
 		transport.Proxy = http.ProxyURL(u)
 	}
@@ -763,8 +780,9 @@ func CheckSpotify(ctx context.Context, addr string) error {
 		return errs.New(errs.TunnelCountry,
 			"Через этот сервер Spotify не работает: он считает страну сервера неподходящей.")
 	case resp.StatusCode >= 500:
-		return errs.Newf(errs.TunnelCheck,
-			"Через этот сервер Spotify отвечает ошибкой %d.", resp.StatusCode)
+		// Номер ошибки человеку ничего не скажет — он только в логе.
+		slog.Warn("через сервер обхода Spotify отвечает ошибкой", "код_http", resp.StatusCode)
+		return errs.New(errs.TunnelCheck, "Сервер обхода сбоит, беру другой.")
 	}
 	return nil
 }
@@ -892,7 +910,7 @@ func CheckYouTube(ctx context.Context, addr string) error {
 	if addr != "" {
 		u, err := url.Parse(addr)
 		if err != nil {
-			return errs.Wrap(errs.TunnelCheck, "Внутренняя ошибка адреса посредника.", err)
+			return errs.Wrap(errs.TunnelCheck, "Сервер обхода сбоит, беру другой.", err)
 		}
 		transport.Proxy = http.ProxyURL(u)
 	}

@@ -160,7 +160,22 @@
   // вовсе и человек упрётся в непонятную ошибку на первом же шаге.
 
   const host = location.host;
-  const redirectURI = `http://127.0.0.1:${location.port || 8977}/callback`;
+  // Адреса возврата берутся с сервера (/api/setup): он знает, на каком адресе
+  // реально слушает. Здесь — только запасной вариант до ответа.
+  let redirectURI = `http://127.0.0.1:${location.port || 8977}/callback`;
+  let donationsURI = `http://127.0.0.1:${location.port || 8977}/donations/callback`;
+
+  // tunnelNeeded — Spotify недавно отказал напрямую «не работает из этой
+  // страны». Только тогда шаг обхода важный: у кого Spotify открывается и так,
+  // тому обход не нужен вовсе.
+  const tunnelNeeded = () => {
+    const at = config && config.tunnel_needed_at ? Date.parse(config.tunnel_needed_at) : 0;
+    return at > 0 && Date.now() - at < 7 * 24 * 3600 * 1000;
+  };
+  const tunnelReady = () => {
+    const tn = (state && state.tunnel) || {};
+    return !!(tn.on || tn.standby);
+  };
   const widgetURL = `http://${host}/widget`;
 
   const STEPS = [
@@ -186,7 +201,9 @@
     {
       id: "tunnel",
       name: "Обход блокировок",
-      must: true,
+      // Англоязычным обход не нужен: Spotify у них работает напрямую.
+      hidden: () => en(),
+      must: () => tunnelNeeded(),
       short: "ключ от VPN",
       title: "Обход блокировок",
       why: "Spotify не отвечает приложениям из России. Вставь сюда ключ от своего VPN или ссылку на подписку — приложение само скачает всё нужное, переберёт серверы и оставит тот, через который Spotify работает. Отдельных программ запускать не надо.",
@@ -311,6 +328,8 @@
           <li>${tt(`На странице Spotify нажми <b>Agree</b>`)}</li>
           <li>${tt(`Окно закроется само, а здесь появится твой аккаунт`)}</li>
         </ol>
+        <p class="why"><b>${t("Нужен Spotify Premium:")}</b> ${t("без него Spotify не даёт программам управлять плеером.")}</p>
+        ${!en() && !tunnelReady() ? `<p class="why warn">${t("Обход не включён. Из России страница входа Spotify может не открыться — включи обход (шаг «Обход блокировок») или свой VPN на время входа.")}</p>` : ""}
         <div class="setup-acts">
           <button class="s-btn key" data-act="spotify-login">Подключить Spotify</button>
         </div>
@@ -418,7 +437,8 @@
     {
       id: "reward",
       name: "Награда за баллы",
-      must: true,
+      // Канал без баллов награду не получит никогда — требовать её нечестно.
+      must: () => !noPoints(),
       short: "как зритель заказывает",
       title: "Награда за баллы канала",
       why: "Приложение само создаст на твоём канале награду: зритель тратит баллы, пишет название трека — заказ прилетает сюда. Руками награду создавать нельзя: за чужую награду Twitch не даёт вернуть баллы, если трек не подошёл.",
@@ -456,9 +476,13 @@
         $("su-reward-title").value = (cfg && cfg.reward_title) || t("Заказ трека");
         $("su-reward-cost").value = (cfg && cfg.reward_cost) || 1000;
       },
-      check: (s) => s && s.twitch && s.twitch.reward_ready
-        ? { ok: true, text: t("Награда на канале создана.") }
-        : { ok: false, text: t("Награды пока нет. Она появится сразу после подключения Twitch.") },
+      check: (s) => {
+        if (s && s.twitch && s.twitch.reward_ready) return { ok: true, text: t("Награда на канале создана.") };
+        if (noPoints()) return { ok: true, text: t("На канале нет баллов, шаг пропущен. Заказы за донат работают.") };
+        return { ok: false, text: s && s.twitch && s.twitch.connected
+          ? t("Награды пока нет. Нажми «Сохранить» — приложение создаст её само.")
+          : t("Награды пока нет. Она появится сразу после подключения Twitch.") };
+      },
     },
 
     {
@@ -508,9 +532,14 @@
           <input type="text" id="su-dx" spellcheck="false" autocomplete="off" placeholder="если пользуешься">
         </label>
         <label class="setup-field">
-          <span>Донат от какой суммы считается заказом, ₽</span>
+          <span>Донат от какой суммы считается заказом (в валюте твоего счёта в сервисе)</span>
           <input type="number" id="su-donation-min" min="1" placeholder="100">
         </label>
+        <p class="why">${t("Адрес возврата для приложения DonationAlerts (поле Redirect URL):")}</p>
+        <div class="copyline">
+          <code>${esc(donationsURI)}</code>
+          <button class="s-btn" data-act="copy" data-text="${esc(donationsURI)}">${t("Скопировать")}</button>
+        </div>
         <div class="setup-acts">
           <button class="s-btn key" data-act="save-donations">Сохранить</button>
           <button class="s-btn" data-act="da-login">Подключить DonationAlerts</button>
@@ -536,7 +565,9 @@
     {
       id: "widget",
       name: "Виджет в OBS",
-      must: true,
+      // Проверить отсюда, что адрес правда вставлен в OBS, нельзя — поэтому
+      // шаг не требуем, а засчитываем по нажатию «Скопировать».
+      must: false,
       short: "плашка в кадре",
       title: "Виджет: что играет — на экране",
       why: "Маленькая плашка в углу кадра: обложка, название, артист и кто заказал. Это не отдельная программа, а страница, которую отдаёт само приложение.",
@@ -612,6 +643,14 @@
     },
   ];
 
+  // steps — видимые шаги: часть прячется по языку (обход у англоязычных).
+  const steps = () => STEPS.filter((st) => !(st.hidden && st.hidden()));
+  const mustOf = (st) => (typeof st.must === "function" ? st.must() : st.must);
+  const noPoints = () => {
+    const tw = (state && state.twitch) || {};
+    return !!(tw.connected && !tw.has_points);
+  };
+
   // ── состояние мастера ──────────────────────────────────────────────
 
   let state = null;      // снимок от панели
@@ -672,7 +711,7 @@
   // ── рисование ──────────────────────────────────────────────────────
 
   function railHTML() {
-    return STEPS.map((st, i) => {
+    return steps().map((st, i) => {
       const cls = [
         "rail-step",
         i === at && !finished ? "at" : "",
@@ -689,7 +728,7 @@
 
   function stepHTML(st) {
     return `
-      ${st.noTag ? "" : `<span class="tag ${st.must ? "must" : ""}">${st.must ? t("важный шаг") : t("можно потом")}</span>`}
+      ${st.noTag ? "" : `<span class="tag ${mustOf(st) ? "must" : ""}">${mustOf(st) ? t("важный шаг") : t("можно потом")}</span>`}
       <h1>${esc(t(st.title))}</h1>
       <p class="why">${t(st.why)}</p>
       ${st.art ? `<div class="scheme">${st.art()}</div>` : ""}
@@ -697,13 +736,14 @@
       <div class="setup-foot">
         ${at > 0 ? `<button class="ghost" data-act="back">${t("← назад")}</button>` : ""}
         <span class="spacer"></span>
-        <button class="ghost" data-act="skip">${st.must ? t("пропустить (вернусь потом)") : t("пропустить")}</button>
+        <button class="ghost" data-act="skip">${mustOf(st) ? t("пропустить (вернусь потом)") : t("пропустить")}</button>
         <button class="s-btn key" data-act="next" id="su-next">${t("Дальше")}</button>
       </div>`;
   }
 
   function doneHTML() {
-    const left = STEPS.filter((s) => !done[s.id]);
+    // Необязательные шаги в «незакрытое» не попадают: это не долг.
+    const left = steps().filter((s) => !done[s.id] && mustOf(s));
     return `<div class="setup-done">
       <div class="tick">
         <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor"
@@ -729,17 +769,18 @@
     const box = $("setup");
     $("setup-rail-steps").innerHTML = railHTML();
     const card = $("setup-card");
-    card.innerHTML = finished ? doneHTML() : stepHTML(STEPS[at]);
+    if (at >= steps().length) at = steps().length - 1;
+    card.innerHTML = finished ? doneHTML() : stepHTML(steps()[at]);
     card.classList.remove("out");
     // Перезапуск появления: без сброса анимация второй раз не играет.
     void card.offsetWidth;
 
-    const st = STEPS[at];
+    const st = steps()[at];
     if (!finished && st.fill) {
       try { st.fill(config); } catch { /* поле могло не успеть появиться */ }
     }
     $("setup-progress-line").style.width =
-      Math.round(((finished ? STEPS.length : at) / STEPS.length) * 100) + "%";
+      Math.round(((finished ? steps().length : at) / steps().length) * 100) + "%";
     refresh();
     box.querySelector(".setup-body").scrollTop = 0;
   }
@@ -749,12 +790,15 @@
   // и «Дальше» должно загореться само, без единого нажатия здесь.
   function refresh() {
     if (finished) return;
-    const st = STEPS[at];
+    checkAll();
+    const st = steps()[at];
     const res = st.check(state, config) || { ok: false, text: "" };
     done[st.id] = res.ok;
 
     const line = $("su-check");
     if (line) {
+      // Шаг сдан — старая ошибка больше не правда, стираем её.
+      if (res.ok) line.dataset.bad = "";
       line.className = "check " + (res.ok ? "ok" : line.dataset.bad ? "bad" : "");
       if (line.dataset.bad) {
         line.textContent = line.dataset.bad;
@@ -769,10 +813,18 @@
     const next = $("su-next");
     if (next) {
       next.disabled = false;
-      next.textContent = res.ok ? t("Дальше") : st.must ? t("Дальше (шаг не сдан)") : t("Дальше");
+      next.textContent = res.ok ? t("Дальше") : mustOf(st) ? t("Дальше (шаг не сдан)") : t("Дальше");
       next.classList.toggle("key", res.ok);
     }
     $("setup-rail-steps").innerHTML = railHTML();
+  }
+
+  // checkAll прогоняет проверки всех шагов: иначе дорожка слева показывает
+  // галочки только у тех шагов, где человек уже побывал в этот раз.
+  function checkAll() {
+    for (const st of STEPS) {
+      try { done[st.id] = !!(st.check(state, config) || {}).ok; } catch { done[st.id] = false; }
+    }
   }
 
   // say пишет в строку проверки то, чего в снимке состояния нет: ошибку от
@@ -789,7 +841,7 @@
     const card = $("setup-card");
     card.classList.add("out");
     setTimeout(() => {
-      at = Math.max(0, Math.min(STEPS.length - 1, i));
+      at = Math.max(0, Math.min(steps().length - 1, i));
       finished = false;
       paint();
     }, 170);
@@ -826,17 +878,20 @@
   const acts = {
     back: () => goto(at - 1),
     skip: () => {
-      skipped[STEPS[at].id] = true;
-      if (at === STEPS.length - 1) finish(true);
+      skipped[steps()[at].id] = true;
+      if (at === steps().length - 1) finish(true);
       else goto(at + 1);
     },
     next: () => {
-      if (at === STEPS.length - 1) finish(true);
+      if (at === steps().length - 1) finish(true);
       else goto(at + 1);
     },
     finish: () => { post("/api/setup/done", { done: true }).catch(() => {}); close(); },
+    // «Закрыть и настроить потом» — мастер не пройден, отмечать его
+    // пройденным нельзя: при следующем запуске он должен открыться снова.
+    close: () => close(),
     "go-left": () => {
-      const i = STEPS.findIndex((s) => !done[s.id]);
+      const i = steps().findIndex((s) => !done[s.id] && mustOf(s));
       goto(i < 0 ? 0 : i);
     },
 
@@ -859,8 +914,15 @@
     }),
 
     "save-spotify-id": (btn) => busy(btn, async () => {
-      const ok = await saveConfig({ spotify_client_id: $("su-spotify-id").value.trim() });
-      say(ok ? t("Ключ сохранён.") : t("Не смог сохранить."), !ok);
+      const id = $("su-spotify-id").value.trim();
+      // Client ID у Spotify — ровно 32 знака из цифр и букв a–f. Secret
+      // выглядит так же, поэтому напоминаем про него в любом случае.
+      if (!/^[0-9a-f]{32}$/i.test(id)) {
+        say(t("Не похоже на Client ID: он из 32 знаков — цифры и латинские буквы a–f. Скопируй его заново из Settings."), true);
+        return;
+      }
+      const ok = await saveConfig({ spotify_client_id: id });
+      say(ok ? t("Ключ сохранён. Если вход потом ругается «Invalid client», похоже, вставлен Client secret — нужен Client ID.") : t("Не смог сохранить."), !ok);
       refresh();
     }),
 
@@ -874,7 +936,13 @@
     }),
 
     "save-twitch-id": (btn) => busy(btn, async () => {
-      const ok = await saveConfig({ twitch_client_id: $("su-twitch-id").value.trim() });
+      const id = $("su-twitch-id").value.trim();
+      // У Twitch Client ID — около тридцати латинских букв и цифр без пробелов.
+      if (!/^[a-z0-9]{20,40}$/i.test(id)) {
+        say(t("Не похоже на Client ID Twitch: это около 30 латинских букв и цифр. Скопируй его заново в Manage."), true);
+        return;
+      }
+      const ok = await saveConfig({ twitch_client_id: id });
       say(ok ? t("Ключ сохранён.") : t("Не смог сохранить."), !ok);
       refresh();
     }),
@@ -893,7 +961,10 @@
         reward_title: $("su-reward-title").value.trim() || t("Заказ трека"),
         reward_cost: Number.isFinite(cost) && cost > 0 ? cost : 1000,
       });
-      say(ok ? t("Сохранено. Награду приложение создаст само.") : t("Не смог сохранить."), !ok);
+      const tw = (state && state.twitch) || {};
+      say(!ok ? t("Не смог сохранить.")
+        : tw.connected ? t("Сохранено. Награда появится на канале через пару секунд.")
+          : t("Сохранено. Награду приложение создаст, когда подключишь Twitch."), !ok);
       refresh();
     }),
 
@@ -937,6 +1008,16 @@
     }),
 
     "da-login": (btn) => busy(btn, async () => {
+      // Сначала сохраняем поля: иначе вставленный Client ID не дойдёт до
+      // приложения, и вход откажет «Client ID не вставлен».
+      const min = parseInt($("su-donation-min").value, 10);
+      const saved = await saveConfig({
+        donationalerts_client_id: $("su-da").value.trim(),
+        donatepay_key: $("su-dp").value.trim(),
+        donatex_key: $("su-dx").value.trim(),
+        donation_min: Number.isFinite(min) && min > 0 ? min : 100,
+      });
+      if (!saved) throw new Error(t("Не смог сохранить."));
       const d = await post("/api/donations/login", {});
       if (d && d.url && !d.in_app) window.open(d.url, "_blank", "noopener");
       say(t("Открыл страницу DonationAlerts."));
@@ -984,7 +1065,7 @@
   function presetName(preset) {
     const p = window.widgetPreset ? window.widgetPreset(preset) : null;
     // Неизвестный ключ (оформление из старой версии) не показываем как есть.
-    return p ? `${p.family.name} · ${p.variant.name}` : t("своё оформление");
+    return p ? `${t(p.family.name)} · ${t(p.variant.name)}` : t("своё оформление");
   }
 
   function setupPresets(cfg) {
@@ -1063,6 +1144,19 @@
     openWizard(0);
   };
 
+  // Enter — «Дальше», Esc — закрыть. В выпадающем списке и на кнопке Enter
+  // остаётся своим: там он уже что-то значит.
+  document.addEventListener("keydown", (e) => {
+    if (!open || e.isComposing) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    if (e.key !== "Enter") return;
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag === "BUTTON" || tag === "SELECT" || tag === "TEXTAREA" || tag === "A") return;
+    e.preventDefault();
+    if (finished) acts.finish();
+    else acts.next();
+  });
+
   // Язык сменился (здесь или в панели) — перерисовываем открытый мастер.
   if (window.I18N) window.I18N.onChange(() => { if (open) paint(); });
 
@@ -1080,6 +1174,8 @@
 
     let info = { intro: false, done: true };
     try { info = await (await fetch("/api/setup")).json(); } catch { /* мастер не покажем */ }
+    if (info.spotify_redirect) redirectURI = info.spotify_redirect;
+    if (info.donations_redirect) donationsURI = info.donations_redirect;
 
     await loadConfig();
     // Первый снимок состояния берём сами: панель пришлёт свой по сокету, но

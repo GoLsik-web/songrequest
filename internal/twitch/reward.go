@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 )
 
 // Reward — награда за баллы канала.
@@ -27,9 +28,13 @@ type Reward struct {
 	InputRequired bool `json:"is_user_input_required"`
 }
 
-// rewardPrompt — подсказка, которую зритель видит в окне награды.
-const rewardPrompt = "Напиши артиста и название, ссылку на Spotify, YouTube, " +
-	"Яндекс.Музыку или VK. Если трек не найдётся — баллы вернутся."
+// rewardPrompt — подсказка, которую зритель видит в окне награды. Функция, а
+// не постоянная: текст зависит от языка, а язык меняется на ходу. В
+// английском варианте нет Яндекс.Музыки и VK — за рубежом их не знают.
+func rewardPrompt() string {
+	return i18n.T("Напиши артиста и название, ссылку на Spotify, YouTube, " +
+		"Яндекс.Музыку или VK. Если трек не найдётся — баллы вернутся.")
+}
 
 // playlistPrompt — подсказка у награды за плейлист.
 //
@@ -37,7 +42,7 @@ const rewardPrompt = "Напиши артиста и название, ссыл�
 // на сорок песен и ждёт, что сыграют все сорок. Про одобрение тоже сказано —
 // иначе «оплатил и ничего не происходит» читается как поломка.
 func playlistPrompt(tracks int) string {
-	return fmt.Sprintf(
+	return i18n.F(
 		"Кинь ссылку на плейлист или альбом Spotify либо Яндекс.Музыки. "+
 			"Сыграют первые %d треков, и только после того, как заказ одобрит "+
 			"стример или модератор. Не одобрят — баллы вернутся.", tracks)
@@ -63,7 +68,7 @@ type RewardSpec struct {
 func (c *Client) EnsureReward(ctx context.Context, knownID string) (*Reward, error) {
 	cfg := c.cfg.Get()
 	return c.EnsureRewardSpec(ctx, knownID, RewardSpec{
-		Title: cfg.RewardTitle, Cost: cfg.RewardCost, Prompt: rewardPrompt,
+		Title: localTitle(cfg.RewardTitle, "Заказ трека"), Cost: cfg.RewardCost, Prompt: rewardPrompt(),
 	})
 }
 
@@ -76,10 +81,20 @@ func (c *Client) EnsureReward(ctx context.Context, knownID string) (*Reward, err
 func (c *Client) EnsurePlaylistReward(ctx context.Context, knownID string) (*Reward, error) {
 	cfg := c.cfg.Get()
 	return c.EnsureRewardSpec(ctx, knownID, RewardSpec{
-		Title:  cfg.PlaylistRewardTitle,
+		Title:  localTitle(cfg.PlaylistRewardTitle, "Заказ плейлиста"),
 		Cost:   cfg.PlaylistPrice(),
 		Prompt: playlistPrompt(cfg.PlaylistTrackCount()),
 	})
+}
+
+// localTitle переводит название награды, если стример его не менял: в
+// настройках по умолчанию лежит русское, и англоязычный канал иначе получил бы
+// награду «Заказ трека». Своё название стримера не трогаем.
+func localTitle(title, def string) string {
+	if title == "" || title == def || title == i18n.English(def) {
+		return i18n.T(def)
+	}
+	return title
 }
 
 // EnsureRewardSpec создаёт награду по описанию или подгоняет уже созданную.

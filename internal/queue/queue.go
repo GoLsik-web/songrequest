@@ -58,6 +58,10 @@ type Item struct {
 // ErrEmpty означает, что очередь пуста.
 var ErrEmpty = errors.New("очередь пуста")
 
+// ErrNotFound — заказа с таким номером в очереди уже нет. Чаще всего его
+// только что забрал плеер: тогда возвращать за него баллы нельзя, он играет.
+var ErrNotFound = errors.New("заказа в очереди уже нет")
+
 // Queue — очередь поверх SQLite.
 type Queue struct {
 	db *sql.DB
@@ -248,12 +252,28 @@ func (q *Queue) TakeInflight() (Item, bool) {
 	if err := q.db.QueryRow(`SELECT value FROM kv WHERE key = ?`, inflightKey).Scan(&raw); err != nil {
 		return Item{}, false
 	}
-	q.Done()
 	var it Item
 	if err := json.Unmarshal([]byte(raw), &it); err != nil || it.URI == "" {
+		q.Done()
 		return Item{}, false
 	}
 	return it, true
+}
+
+// ForgetInflight стирает запись о незаконченном заказе — но только если это
+// всё ещё он. Пока заказ из прошлого запуска возвращали в очередь, плеер мог
+// уже взять новый и записать его на то же место; стереть чужую запись значит
+// потерять при следующем сбое уже его.
+func (q *Queue) ForgetInflight(it Item) {
+	var raw string
+	if err := q.db.QueryRow(`SELECT value FROM kv WHERE key = ?`, inflightKey).Scan(&raw); err != nil {
+		return
+	}
+	var cur Item
+	if json.Unmarshal([]byte(raw), &cur) == nil && (cur.ID != it.ID || cur.URI != it.URI) {
+		return
+	}
+	_, _ = q.db.Exec(`DELETE FROM kv WHERE key = ? AND value = ?`, inflightKey, raw)
 }
 
 // PutJSON кладёт значение в kv; nil — стирает ключ.
@@ -307,8 +327,14 @@ func (q *Queue) Get(id int64) (Item, error) {
 
 // Remove убирает заказ.
 func (q *Queue) Remove(id int64) error {
-	_, err := q.db.Exec(`DELETE FROM queue WHERE id = ?`, id)
-	return err
+	res, err := q.db.Exec(`DELETE FROM queue WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Clear очищает очередь и возвращает то, что в ней было, — чтобы вызывающий
@@ -348,8 +374,12 @@ func (q *Queue) MoveTop(id int64) error {
 	if err := tx.QueryRow(`SELECT MIN(position) FROM queue`).Scan(&min); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE queue SET position = ? WHERE id = ?`, int(min.Int64)-1, id); err != nil {
+	res, err := tx.Exec(`UPDATE queue SET position = ? WHERE id = ?`, int(min.Int64)-1, id)
+	if err != nil {
 		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
 	}
 	return tx.Commit()
 }
@@ -363,10 +393,46 @@ func (q *Queue) Reorder(ids []int64) error {
 	}
 	defer tx.Rollback()
 
-	for i, id := range ids {
-		if _, err := tx.Exec(`UPDATE queue SET position = ? WHERE id = ?`, i, id); err != nil {
+	seen := make(map[int64]bool, len(ids))
+	pos := 0
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, err := tx.Exec(`UPDATE queue SET position = ? WHERE id = ?`, pos, id); err != nil {
 			return err
 		}
+		pos++
+	}
+	// Панель могла прислать список неполным: пока зритель тащил заказ, пришёл
+	// новый. Без этого у пропущенных остались бы старые позиции и совпали бы с
+	// новыми — порядок стал бы случайным. Дописываем их в конец, сохраняя их
+	// прежний взаимный порядок.
+	rows, err := tx.Query(`SELECT id FROM queue ORDER BY position, id`)
+	if err != nil {
+		return err
+	}
+	var rest []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		if !seen[id] {
+			rest = append(rest, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range rest {
+		if _, err := tx.Exec(`UPDATE queue SET position = ? WHERE id = ?`, pos, id); err != nil {
+			return err
+		}
+		pos++
 	}
 	return tx.Commit()
 }

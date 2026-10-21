@@ -91,14 +91,14 @@ type Snapshot struct {
 // Describe — короткое описание снимка для панели.
 func (s *Snapshot) Describe() string {
 	if s == nil {
-		return "снимок не снят"
+		return i18n.T("снимок не снят")
 	}
 	if s.Empty {
-		return "в момент снимка ничего не играло"
+		return i18n.T("в момент снимка ничего не играло")
 	}
 	where := s.DeviceName
 	if where == "" {
-		where = "устройство неизвестно"
+		where = i18n.T("устройство неизвестно")
 	}
 	return fmt.Sprintf("%s — %s · %s · %s · %s",
 		s.ArtistName, s.TrackName, mmss(s.PositionMs), s.ContextLabel(), where)
@@ -108,21 +108,21 @@ func (s *Snapshot) Describe() string {
 // это грозит при возврате. Стример видит это в панели ещё до заказа.
 func (s *Snapshot) ContextLabel() string {
 	if s == nil || s.Empty {
-		return "ничего не играло"
+		return i18n.T("ничего не играло")
 	}
 	switch {
 	case s.ContextURI == "":
-		return "без источника — вернём только трек"
+		return i18n.T("без источника — вернём только трек")
 	case strings.HasPrefix(s.ContextURI, "spotify:playlist:"):
-		return "плейлист — вернётся полностью"
+		return i18n.T("плейлист — вернётся полностью")
 	case strings.HasPrefix(s.ContextURI, "spotify:album:"):
-		return "альбом — вернётся полностью"
+		return i18n.T("альбом — вернётся полностью")
 	case strings.HasPrefix(s.ContextURI, "spotify:artist:"):
-		return "радио артиста — вернём только трек"
+		return i18n.T("радио артиста — вернём только трек")
 	case strings.HasPrefix(s.ContextURI, "spotify:collection"):
-		return "любимые треки — вернём только трек"
+		return i18n.T("любимые треки — вернём только трек")
 	default:
-		return s.ContextType + " — вернём только трек"
+		return i18n.F("%s — вернём только трек", s.ContextType)
 	}
 }
 

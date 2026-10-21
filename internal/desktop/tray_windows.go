@@ -41,7 +41,7 @@ func RunTray(o TrayOptions) {
 		}
 
 		открыть := systray.AddMenuItem(i18n.T("Открыть панель"), i18n.T("Показать окно программы"))
-		копия := systray.AddMenuItem(i18n.T("Скопировать адрес виджета для OBS"), o.WidgetURL)
+		копия := systray.AddMenuItem(i18n.T("Скопировать адрес виджета для OBS"), i18n.F("Скопировать адрес: %s", o.WidgetURL))
 		systray.AddSeparator()
 		выход := systray.AddMenuItem(i18n.T("Выход"), i18n.T("Закрыть программу совсем"))
 
@@ -55,6 +55,7 @@ func RunTray(o TrayOptions) {
 					открыть.SetTitle(i18n.T("Открыть панель"))
 					открыть.SetTooltip(i18n.T("Показать окно программы"))
 					копия.SetTitle(i18n.T("Скопировать адрес виджета для OBS"))
+					копия.SetTooltip(i18n.F("Скопировать адрес: %s", o.WidgetURL))
 					выход.SetTitle(i18n.T("Выход"))
 					выход.SetTooltip(i18n.T("Закрыть программу совсем"))
 					tooltip()

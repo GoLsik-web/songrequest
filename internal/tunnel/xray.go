@@ -61,7 +61,13 @@ func (t *Tunnel) ensureTool(ctx context.Context, override string) (string, error
 
 	t.log.Info("качаю программу обхода", "откуда", url)
 	if err := download(ctx, url, own); err != nil {
-		return "", err
+		// Скачать не вышло — даём обходной путь руками, иначе человек упирается
+		// в тупик: без программы обхода нет обхода, а без обхода нет GitHub.
+		// Причину скачивания Describe допишет сам — она во вложенной ошибке.
+		return "", errs.Wrapf(errs.TunnelNoTool, err,
+			"Программу обхода (xray.exe) не скачать. Можно положить программу руками: скачай %s (через VPN или с другого компьютера), "+
+				"достань из архива xray.exe и положи в папку %s. Потом снова включи обход.",
+			url, t.dir)
 	}
 	t.log.Info("программа обхода скачана", "путь", own)
 	return own, nil

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -110,11 +111,17 @@ var chatCommands = map[string]bool{
 	"продолжить": true, "resume": true, "play": true, "очистить": true, "clear": true,
 	"бан": true, "ban": true, "разбан": true, "unban": true, "стоп": true,
 	"stop": true, "старт": true, "start": true, "помощь": true, "help": true,
-	"команды": true,
+	"команды": true, "пауза-трека": true, "паузатрека": true, "стопзаказы": true,
 	// Английские синонимы — работают при любом языке.
 	"song": true, "current": true, "commands": true, "back": true,
 	"playlist": true, "deny": true, "delete": true, "del": true,
 	"bump": true, "unpause": true,
+}
+
+// viewerCommands — то, что можно писать любому зрителю, без прав модератора.
+var viewerCommands = map[string]bool{
+	"очередь": true, "queue": true, "q": true,
+	"помощь": true, "help": true, "команды": true, "commands": true,
 }
 
 // isChatCommand — текст заказа на деле команда чата.
@@ -141,8 +148,27 @@ func (s *Server) onChat(msg twitch.ChatMessage) {
 		actor = msg.Login
 	}
 
+	// Чужие команды (других ботов с тем же знаком) отсекаем до проверки
+	// прав: иначе на каждое «!дискорд» от зрителя шёл запрос к Twitch
+	// «а не модератор ли он».
+	if !chatCommands[cmd] {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(s.baseContext(), 30*time.Second)
 	defer cancel()
+
+	// Справку и очередь можно всем: зритель, который спрашивает «что
+	// играет дальше», ничего не ломает, а молчание в ответ выглядит поломкой.
+	if viewerCommands[cmd] && !msg.CanCommand() {
+		switch cmd {
+		case "очередь", "queue", "q":
+			s.say(ctx, s.queueLine())
+		default:
+			s.say(ctx, helpLine(prefix))
+		}
+		return
+	}
 
 	// В чате отказ молчаливый — спорить со зрителем при всех незачем. А вот в
 	// логе он обязан быть: жалоба «пишу !скип, ничего не происходит» иначе
@@ -244,7 +270,8 @@ func helpLine(prefix string) string {
 			p + "volume 40, " + p + "pause, " + p + "resume, " +
 			p + "playlists, " + p + "approve, " + p + "reject, " +
 			p + "clear, " + p + "ban nick, " + p + "unban nick, " +
-			p + "stop, " + p + "start"
+			p + "stop, " + p + "start. Viewers can use " + p + "queue and " + p +
+			"help; the rest is for moderators."
 	}
 	return "Команды: " + prefix + "очередь, " + prefix + "трек, " + prefix +
 		"скип (можно " + prefix + "скип 2 или " + prefix + "скип название), " +
@@ -252,8 +279,14 @@ func helpLine(prefix string) string {
 		prefix + "громкость 40, " + prefix + "пауза, " + prefix + "продолжить, " +
 		prefix + "плейлисты, " + prefix + "одобрить, " + prefix + "отклонить, " +
 		prefix + "очистить, " + prefix + "бан ник, " + prefix + "разбан ник, " +
-		prefix + "стоп, " + prefix + "старт"
+		prefix + "стоп, " + prefix + "старт. Зрителям доступны " + prefix + "очередь и " +
+		prefix + "помощь, остальное — только модераторам."
 }
+
+// loginRe — так выглядит логин Twitch: 3–25 латинских букв, цифр и «_».
+var loginRe = regexp.MustCompile(`^[a-z0-9_]{3,25}$`)
+
+func validLogin(login string) bool { return loginRe.MatchString(login) }
 
 // cmdName — имя команды для подсказок: русское или английское по языку.
 func cmdName(ru, en string) string {
@@ -320,6 +353,11 @@ func (s *Server) nowLine() string {
 			line += i18n.T(" · на паузе")
 		}
 		return line
+	}
+	// Запуск заказа (скачивание звука с YouTube) тоже даёт Waiting(),
+	// но ждать конца трека тут нечего — говорим, что заказ запускается.
+	if it := s.player.LaunchingItem(); it != nil {
+		return i18n.F("Запускается заказ: %s", artistTitle(it.Artist, it.Title))
 	}
 	if s.player.Waiting() {
 		return i18n.T("Заказ ждёт конца трека канала. Чтобы не ждать — скип")
@@ -670,11 +708,22 @@ func (s *Server) cmdRemove(ctx context.Context, actor string, args []string) {
 
 func (s *Server) cmdBan(ctx context.Context, actor string, args []string) {
 	if len(args) == 0 {
-		s.say(ctx, i18n.F("@%s, нужен ник: бан ник причина", actor))
+		s.say(ctx, i18n.F("@%s, нужен ник: %s ник причина", actor, s.prefix()+cmdName("бан", "ban")))
 		return
 	}
 	login := strings.TrimPrefix(strings.ToLower(args[0]), "@")
 	reason := strings.Join(args[1:], " ")
+
+	// Опечатка вроде «!бан @» или «!бан причина» записывала в бан-лист
+	// мусор, а бан самого канала закрывал заказы стримеру.
+	if !validLogin(login) {
+		s.say(ctx, i18n.F("@%s, «%s» не похоже на ник Twitch", actor, login))
+		return
+	}
+	if ch := s.state.Snapshot().Twitch.Channel; ch != "" && strings.EqualFold(ch, login) {
+		s.say(ctx, i18n.F("@%s, стримера забанить нельзя", actor))
+		return
+	}
 
 	if err := s.banMusic(login, reason); err != nil {
 		s.log.Warn("не забанил", "ошибка", err)
@@ -688,7 +737,7 @@ func (s *Server) cmdBan(ctx context.Context, actor string, args []string) {
 
 func (s *Server) cmdUnban(ctx context.Context, actor string, args []string) {
 	if len(args) == 0 {
-		s.say(ctx, i18n.F("@%s, нужен ник: разбан ник", actor))
+		s.say(ctx, i18n.F("@%s, нужен ник: %s ник", actor, s.prefix()+cmdName("разбан", "unban")))
 		return
 	}
 	login := strings.TrimPrefix(strings.ToLower(args[0]), "@")

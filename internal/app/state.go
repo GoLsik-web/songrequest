@@ -121,6 +121,10 @@ type QueueItem struct {
 	// Двигать и удалять такую строку нечего: в очереди её больше нет,
 	// она у плеера.
 	Waiting bool `json:"waiting"`
+	// Starting — заказ уже запускается: качается звук с YouTube, снимается
+	// снимок Spotify. Это может длиться минуту-другую, и без отметки заказ
+	// пропадал отовсюду — из очереди вынут, «В эфире» пусто.
+	Starting bool `json:"starting"`
 }
 
 // Notice — сообщение для стримера в панели.
@@ -837,7 +841,11 @@ func (s *State) Snapshot() Snapshot {
 		Lang:          i18n.Lang(),
 	}
 	for _, name := range s.order {
-		snap.Connections = append(snap.Connections, s.conns[name])
+		// Подсказку записывают на старте, ещё до выбора языка в мастере, —
+		// переводим при выдаче, иначе после смены языка висит «Не настроено».
+		c := s.conns[name]
+		c.Detail = i18n.T(c.Detail)
+		snap.Connections = append(snap.Connections, c)
 	}
 	if s.now != nil {
 		now := *s.now

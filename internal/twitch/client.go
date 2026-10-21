@@ -17,6 +17,7 @@ import (
 
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/logx"
 	"songrequest/internal/secrets"
 )
@@ -80,13 +81,13 @@ func (u *User) HasChannelPoints() bool {
 func (u *User) StatusLabel() string {
 	switch {
 	case u == nil:
-		return "неизвестно"
+		return i18n.T("неизвестно")
 	case u.Type == "partner":
-		return "партнёр"
+		return i18n.T("партнёр")
 	case u.Type == "affiliate":
-		return "аффилиат"
+		return i18n.T("аффилиат")
 	default:
-		return "обычный канал, баллов нет"
+		return i18n.T("обычный канал, баллов нет")
 	}
 }
 

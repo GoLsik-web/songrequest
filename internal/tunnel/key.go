@@ -246,7 +246,7 @@ func parseVLESS(line string) (Server, error) {
 		return Server{}, err
 	}
 	if link.user == "" {
-		return Server{}, errs.New(errs.TunnelBadKey, "В ключе vless нет опознавательного номера (uuid).")
+		return Server{}, errs.New(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.")
 	}
 	s := Server{
 		Kind:  "vless",
@@ -267,7 +267,7 @@ func parseTrojan(line string) (Server, error) {
 		return Server{}, err
 	}
 	if link.user == "" {
-		return Server{}, errs.New(errs.TunnelBadKey, "В ключе trojan нет пароля.")
+		return Server{}, errs.New(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.")
 	}
 	s := Server{Kind: "trojan", Label: link.label, Host: link.host, Port: link.port, ID: link.user}
 	applyStream(&s, link.query)
@@ -314,7 +314,7 @@ func splitLink(line, scheme string) (link, error) {
 
 	at := strings.LastIndex(rest, "@")
 	if at < 0 {
-		return link{}, errs.Newf(errs.TunnelBadKey, "В ключе %s нет адреса сервера.", scheme)
+		return link{}, errs.New(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.")
 	}
 	out.user = unescape(rest[:at])
 
@@ -350,7 +350,7 @@ func parseShadowsocks(line string) (Server, error) {
 		decoded := decodeSegment(body)
 		at = strings.LastIndex(decoded, "@")
 		if at < 0 {
-			return Server{}, errs.New(errs.TunnelBadKey, "Ключ ss:// записан непонятно.")
+			return Server{}, errs.New(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.")
 		}
 		body = decoded
 	}
@@ -362,7 +362,7 @@ func parseShadowsocks(line string) (Server, error) {
 	}
 	colon := strings.Index(creds, ":")
 	if colon < 0 {
-		return Server{}, errs.New(errs.TunnelBadKey, "В ключе ss:// не разобрать способ шифрования и пароль.")
+		return Server{}, errs.New(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.")
 	}
 
 	return Server{
@@ -400,7 +400,7 @@ func parseVMess(line string) (Server, error) {
 	}
 	port, _ := strconv.Atoi(v.Port.String())
 	if v.Add == "" || port == 0 || v.ID == "" {
-		return Server{}, errs.New(errs.TunnelBadKey, "В ключе vmess не хватает адреса или номера.")
+		return Server{}, errs.New(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.")
 	}
 	aid, _ := strconv.Atoi(v.Aid.String())
 
@@ -511,15 +511,15 @@ func decodeSegment(s string) string {
 func splitHostPort(hostPort string) (string, int, error) {
 	host, portText, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		return "", 0, errs.New(errs.TunnelBadKey, "В ключе не разобрать адрес сервера.")
+		return "", 0, errs.New(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.")
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port <= 0 || port > 65535 {
-		return "", 0, errs.New(errs.TunnelBadKey, "В ключе неверный номер порта.")
+		return "", 0, errs.New(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.")
 	}
 	return host, port, nil
 }
 
 func badKey(kind string, err error) error {
-	return errs.Wrapf(errs.TunnelBadKey, err, "Ключ %s записан непонятно.", kind)
+	return errs.Wrap(errs.TunnelBadKey, "Ключ скопирован не целиком — скопируй его заново одной строкой.", err)
 }

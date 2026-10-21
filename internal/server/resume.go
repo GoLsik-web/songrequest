@@ -6,6 +6,7 @@ import (
 
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/spotify"
 )
 
@@ -43,7 +44,7 @@ func (s *Server) fill(ctx context.Context, cfg config.Config, mode config.Resume
 
 	if mode == config.ResumeNothing {
 		s.state.NotifyWarn(errs.SpotifyRestore,
-			"Вернул трек, но источник восстановить нельзя — после него музыка остановится.")
+			i18n.T("Вернул трек, но источник восстановить нельзя — после него музыка остановится."))
 		return
 	}
 
@@ -68,7 +69,7 @@ func (s *Server) fill(ctx context.Context, cfg config.Config, mode config.Resume
 
 	if queued > 0 {
 		s.log.Info("дозаполнил воспроизведение", "режим", mode, "треков", queued)
-		s.state.Notify("info", "Источник вернуть нельзя, поэтому дальше "+what+".")
+		s.state.Notify("info", i18n.F("Источник вернуть нельзя, поэтому дальше %s.", what))
 	}
 }
 
@@ -98,7 +99,7 @@ func (s *Server) startFresh(ctx context.Context, cfg config.Config,
 			return
 		}
 		s.log.Info("включил запасной вариант", "режим", mode, "источник", uri)
-		s.state.Notify("info", "Возвращать было нечего, поэтому "+what+".")
+		s.state.Notify("info", i18n.F("Возвращать было нечего, поэтому %s.", what))
 		return
 	}
 
@@ -116,7 +117,7 @@ func (s *Server) startFresh(ctx context.Context, cfg config.Config,
 		return
 	}
 	s.log.Info("включил запасной вариант списком", "режим", mode, "треков", len(uris))
-	s.state.Notify("info", "Возвращать было нечего, поэтому "+what+".")
+	s.state.Notify("info", i18n.F("Возвращать было нечего, поэтому %s.", what))
 }
 
 // wholeSource отдаёт источник, который можно включить целиком, — тогда Spotify
@@ -129,14 +130,11 @@ func (s *Server) wholeSource(cfg config.Config, mode config.ResumeFailMode,
 		if cfg.FallbackPlaylistID == "" {
 			return "", ""
 		}
-		name := cfg.FallbackPlaylist
-		if name == "" {
-			name = "запасной плейлист"
-		} else {
-			name = "«" + name + "»"
+		what := i18n.T("играет запасной плейлист")
+		if cfg.FallbackPlaylist != "" {
+			what = i18n.F("играет «%s»", cfg.FallbackPlaylist)
 		}
-		return "spotify:playlist:" + strings.TrimPrefix(cfg.FallbackPlaylistID, "spotify:playlist:"),
-			"играет " + name
+		return "spotify:playlist:" + strings.TrimPrefix(cfg.FallbackPlaylistID, "spotify:playlist:"), what
 
 	case config.ResumeArtistRadio:
 		if snap == nil || snap.ArtistID == "" {
@@ -144,7 +142,7 @@ func (s *Server) wholeSource(cfg config.Config, mode config.ResumeFailMode,
 		}
 		// Контекст артиста Spotify играет сам и не останавливается после
 		// десятка треков, в отличие от списка.
-		return "spotify:artist:" + snap.ArtistID, "играет музыка " + snap.ArtistName
+		return "spotify:artist:" + snap.ArtistID, i18n.F("играет музыка %s", snap.ArtistName)
 	}
 	return "", ""
 }
@@ -157,9 +155,9 @@ func (s *Server) continuation(ctx context.Context, cfg config.Config,
 	switch mode {
 	case config.ResumeFallbackPlaylist:
 		uris, err = s.spotify.PlaylistTrackURIs(ctx, cfg.FallbackPlaylistID, continuationLimit)
-		what = "играет запасной плейлист"
+		what = i18n.T("играет запасной плейлист")
 		if cfg.FallbackPlaylist != "" {
-			what = "играет «" + cfg.FallbackPlaylist + "»"
+			what = i18n.F("играет «%s»", cfg.FallbackPlaylist)
 		}
 
 	case config.ResumeArtistRadio:
@@ -168,7 +166,7 @@ func (s *Server) continuation(ctx context.Context, cfg config.Config,
 				"Не знаю, от какого артиста включать музыку — включать нечего.")
 		}
 		uris, err = s.spotify.ArtistTopTrackURIs(ctx, snap.ArtistID, continuationLimit)
-		what = "играет музыка " + snap.ArtistName
+		what = i18n.F("играет музыка %s", snap.ArtistName)
 
 	default:
 		return nil, "", nil

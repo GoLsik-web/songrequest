@@ -16,6 +16,7 @@ import (
 
 	"songrequest/internal/config"
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 	"songrequest/internal/logx"
 	"songrequest/internal/secrets"
 )
@@ -130,9 +131,9 @@ func (m *Me) PlanLabel() string {
 	case PlanPremium:
 		return "Premium"
 	case PlanFree:
-		return "без подписки"
+		return i18n.T("без подписки")
 	default:
-		return "подписка не определена"
+		return i18n.T("подписка не определена")
 	}
 }
 
@@ -540,7 +541,9 @@ func apiError(statusCode int, path string, data []byte) error {
 	// не имеет, и говорить человеку про Premium тут просто неправда.
 	case contains(e.Error.Message, "unavailable in this country"):
 		return errs.New(errs.SpotifyCountry,
-			"Spotify не работает из этой страны. Если пользуешься VPN — включи его и нажми «Проверить связь».")
+			// Английский текст в словаре — без советов про VPN: там это
+			// почти всегда страна самого аккаунта.
+			"Spotify не работает из этой страны. Вставь ключ VPN в «Обход блокировок» и включи обход.")
 
 	// «Invalid limit» на поиск.
 	//

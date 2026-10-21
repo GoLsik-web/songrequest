@@ -365,7 +365,7 @@
     const marks = [];
     if (l.requester) marks.push(I18N.t("заказал {who}", { who: l.requester }));
     else if (l.source === "own") marks.push(I18N.t("твоя музыка"));
-    if (l.provider === "youtube") marks.push(l.via ? "YouTube · " + l.via : "YouTube");
+    if (l.provider === "youtube") marks.push(l.via ? "YouTube · " + I18N.t(l.via) : "YouTube");
     if (l.at) marks.push(when(l.at));
 
     return `
@@ -407,7 +407,7 @@
           <span class="sep">/</span>
           <span class="where">${now.provider === "youtube" ? "YouTube"
               : now.provider === "spotify" ? "Spotify" : I18N.t("Музыка на компьютере")}${
-            now.via ? " · " + esc(now.via) : ""}${
+            now.via ? " · " + esc(I18N.t(now.via)) : ""}${
             own ? " · " + I18N.t("твоя музыка") : ""}${
             now.uncertain ? " · " + I18N.t("неточное совпадение") : ""}</span>
         </div>
@@ -902,7 +902,7 @@
             <span class="sub">
               ${r.provider === "youtube" ? `<span class="tag miss">YouTube</span>` : ""}
               ${esc(r.requester)}
-              <span class="tag">заиграет сразу после трека стримера</span>
+              <span class="tag">${r.starting ? "запускается…" : "заиграет сразу после трека стримера"}</span>
             </span>
           </span>
           <span class="len">${r.duration_ms > 0 ? mmss(r.duration_ms) : "—"}</span>
@@ -1329,8 +1329,8 @@
       connecting: "Ищу рабочий сервер из твоего ключа. Первый раз — до пары минут.",
       reconnecting: "Сервер отвалился, ищу другой. Заказы подождут.",
       standby: "Spotify сейчас отвечает и без обхода. Перестанет — включу сам.",
-      down: "Что сделать: нажми «Проверить обход». Не помогло — ключ устарел, вставь новый.",
-      off: "Нажми «Включить обход».",
+      down: "Что сделать: нажми «Включить / перепроверить». Не помогло — ключ устарел, вставь новый.",
+      off: "Нажми «Включить / перепроверить».",
     }[t.phase];
     const meaning = meaningRu ? I18N.t(meaningRu) : "";
 
@@ -2486,14 +2486,19 @@
   // панели нет, а без обложки не проверить ни цвета из обложки, ни
   // свечение, ни обложку фоном. Цвета у всех четырёх разные нарочно: так
   // видно, как плашка перекрашивается от трека к треку.
+  const demoEN = () => I18N.lang() === "en";
   const WX_TRACKS = [
-    { title: "Bohemian Rhapsody", artist: "Queen", by: "zritel", len: 354000, at: 149000,
+    // Русские образцы у англоязычного стримера подменяются (геттеры — язык
+    // меняется на ходу, без перезагрузки).
+    { title: "Bohemian Rhapsody", artist: "Queen", get by() { return demoEN() ? "viewer" : "zritel"; }, len: 354000, at: 149000,
       paint: ["#ff6a3d", "#b3125b", "#2a0a3a"], art: "sun" },
-    { title: "Группа крови", artist: "Кино", by: "mikhail", len: 286000, at: 61000,
+    { get title() { return demoEN() ? "Smells Like Teen Spirit" : "Группа крови"; },
+      get artist() { return demoEN() ? "Nirvana" : "Кино"; }, by: "mikhail", len: 286000, at: 61000,
       paint: ["#e8352f", "#5a0b0b", "#0d0606"], art: "stripes" },
     { title: "Everything In Its Right Place", artist: "Radiohead", by: "nastya_k", len: 251000, at: 190000,
       paint: ["#3ad0ff", "#1f47c9", "#081232"], art: "rings" },
-    { title: "Плот", artist: "Юрий Лоза", by: "dobryak2000", len: 232000, at: 35000,
+    { get title() { return demoEN() ? "Take On Me" : "Плот"; },
+      get artist() { return demoEN() ? "a-ha" : "Юрий Лоза"; }, by: "dobryak2000", len: 232000, at: 35000,
       paint: ["#d6f04a", "#2f9e6e", "#0b2a20"], art: "waves" },
   ];
   let wxTrack = 0;
@@ -2761,8 +2766,8 @@
       <span class="fx"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
       <span class="art"></span>
       <span class="text">
-        <span class="title">Группа крови</span>
-        <span class="artist">Кино</span>
+        <span class="title">${esc(WX_TRACKS[1].title)}</span>
+        <span class="artist">${esc(WX_TRACKS[1].artist)}</span>
         <span class="by">${esc(I18N.t("заказал {who}", { who: "mikhail" }))}</span>
         <span class="bar"><i style="width:52%"></i></span>
         <span class="meta"><span class="eq"><i></i><i></i><i></i><i></i><i></i></span></span>
@@ -4293,9 +4298,21 @@
   }
   // Смена языка — полная перерисовка: draw() иначе не тронет блоки, у которых
   // данные не поменялись.
+  // Раздел «Обход блокировок» нужен там, где Spotify заблокирован. Русским
+  // он открыт, англоязычным — свёрнут: VPN-советы им только мешают. Ключ уже
+  // вставлен — открыт при любом языке.
+  function syncUnblock() {
+    const box = $("unblock-box");
+    if (!box) return;
+    const hasKey = !!(lastState && lastState.tunnel && lastState.tunnel.has_key);
+    box.open = I18N.lang() !== "en" || hasKey;
+  }
+  syncUnblock();
+
   I18N.onChange(() => {
     drawn.clear();
     drawLangPick();
+    syncUnblock();
     modsLoaded = false;
     if (!$("settings").hidden && settingsTab === "orders") loadMods();
     if (lastState) render(lastState);

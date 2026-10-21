@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"songrequest/internal/app"
@@ -335,6 +336,10 @@ func (s *Server) StartTunnel(ctx context.Context) {
 	}()
 }
 
+// countryHintAt — когда последний раз подсказывали включить обход при отказе
+// по стране. Время в наносекундах, ноль — ещё не подсказывали.
+var countryHintAt atomic.Int64
+
 // noteSpotifyError решает, не в сервере ли обхода дело.
 //
 // Spotify отвечает «Spotify is unavailable in this country» тем адресам,
@@ -377,8 +382,22 @@ func (s *Server) noteSpotifyError(err error) {
 		// без входа Spotify отвечает и из России, так что предупреждение
 		// выскакивало у всех подряд и только сбивало с толку.
 		s.markTunnelNeeded()
-		if s.cfg.Get().TunnelOn {
+		cfg := s.cfg.Get()
+		if cfg.TunnelOn {
 			s.reviveTunnel("Spotify не работает из этой страны")
+			return
+		}
+		// Обхода нет или он выключен — сам приложение не починит. Говорим,
+		// что делать, но не чаще раза в час: отказы сыплются пачкой.
+		if last := countryHintAt.Load(); time.Since(time.Unix(0, last)) > time.Hour {
+			countryHintAt.Store(time.Now().UnixNano())
+			if cfg.TunnelKeyHint == "" {
+				s.state.NotifyCode("error", string(errs.SpotifyCountry),
+					i18n.T("Spotify не пускает из этой страны. Вставь ключ VPN в «Обход блокировок» и включи обход — или включи свой VPN целиком."))
+			} else {
+				s.state.NotifyCode("error", string(errs.SpotifyCountry),
+					i18n.T("Spotify не пускает из этой страны, а обход выключен. Включи его в «Обход блокировок»."))
+			}
 		}
 		return
 	}
@@ -526,7 +545,11 @@ func (s *Server) reviveTunnel(reason string) bool {
 				// раньше — суета на ровном месте, позже — он уже сам заметил,
 				// что заказы встали, и ищет причину.
 				if attempt == 2 {
-					s.state.NotifyError(err)
+					// Говорим и что приложение не сдалось, и что проверить
+					// самому: голая ошибка читалась как «всё, обход умер».
+					_, why := errs.Describe(err)
+					s.state.NotifyCode("error", string(errs.CodeOf(err)),
+						i18n.F("Обход отвалился и пока не поднимается: %s Приложение продолжает пробовать само. Проверь интернет и не кончилась ли подписка VPN.", why))
 				}
 				continue
 			}

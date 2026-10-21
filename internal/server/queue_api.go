@@ -174,8 +174,11 @@ func (s *Server) handleModLog(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&actor, &action, &target, &at); err != nil {
 			continue
 		}
+		// В базе действие лежит по-русски, как записано. Переводим при выдаче:
+		// так старые записи тоже читаются на выбранном языке. Ник модератора
+		// перевода не найдёт и останется как есть.
 		out = append(out, map[string]any{
-			"actor": actor, "action": action, "target": target, "at": time.Unix(at, 0),
+			"actor": i18n.T(actor), "action": i18n.T(action), "target": target, "at": time.Unix(at, 0),
 		})
 	}
 	writeJSON(w, out)
@@ -249,14 +252,18 @@ func (s *Server) setOrdersPaused(ctx context.Context, on bool) {
 	s.player.SetPaused(on)
 
 	s.mu.Lock()
-	rewardID := s.rewardID
+	// Награда за плейлист тоже тратит баллы — без её паузы зрители платили
+	// за плейлист при остановленном приёме и получали отказ.
+	ids := []string{s.rewardID, s.playlistRewardID}
 	s.mu.Unlock()
-	if rewardID == "" {
-		return
-	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if err := s.twitch.SetRewardPaused(ctx, rewardID, on); err != nil {
-		s.log.Warn("не приостановил награду", "ошибка", err)
+	for _, rewardID := range ids {
+		if rewardID == "" {
+			continue
+		}
+		if err := s.twitch.SetRewardPaused(ctx, rewardID, on); err != nil {
+			s.log.Warn("не приостановил награду", "ошибка", err, "награда", rewardID)
+		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 
 	"songrequest/internal/errs"
+	"songrequest/internal/i18n"
 )
 
 // eventSubURL — адрес WebSocket EventSub. Именно WebSocket, а не webhook:
@@ -293,13 +294,13 @@ func (e *EventSub) pump(ctx context.Context, conn *websocket.Conn, subscribe boo
 			points := len(rewardIDs) > 0
 			switch {
 			case !chatOK && !points:
-				e.status(true, "команды в чате не работают — подключи Twitch заново")
+				e.status(true, i18n.T("команды в чате не работают — подключи Twitch заново"))
 			case !chatOK:
-				e.status(true, "заказы принимаются, но команды в чате не работают")
+				e.status(true, i18n.T("заказы принимаются, но команды в чате не работают"))
 			case !points:
-				e.status(true, "чат подключён, баллов на канале нет")
+				e.status(true, i18n.T("чат подключён, баллов на канале нет"))
 			default:
-				e.status(true, "заказы принимаются")
+				e.status(true, i18n.T("заказы принимаются"))
 			}
 			e.client.log.Info("подписка на события Twitch активна",
 				"наград", len(rewardIDs), "чат", chatOK,

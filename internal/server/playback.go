@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -73,7 +74,7 @@ func (s *Server) setupPlayer(cfg *config.File) {
 	// пишет ту, которая правда.
 	s.player.OnFinished = func(item queue.Item, natural bool) {
 		go func() {
-			who, wantRefund := s.takeSkip()
+			who, wantRefund := s.takeSkip(item.ID)
 			if natural {
 				s.history(item, "played", "")
 			} else {
@@ -190,6 +191,7 @@ func (s *Server) StartPlayer(ctx context.Context) {
 		return
 	}
 	s.recoverInflight(ctx)
+	s.loadYouTubeAsks()
 	// Всё, что лежит в очереди с прошлого запуска, — уже в работе. Отметить
 	// надо до запуска плеера: он сразу вынимает первый заказ из таблицы, и
 	// подхват пропущенных заказов (catchup.go) принимал его за потерянный.
@@ -238,6 +240,25 @@ func (s *Server) syncPlayback() {
 			RawRequest: w.RawRequest,
 			CoverURL:   w.CoverURL,
 			Waiting:    true,
+		})
+	}
+	// Заказ, который запускается, — так же: из очереди вынут, в эфире его
+	// ещё нет. Без строчки панель минуту-другую не показывала ничего.
+	if l := s.player.LaunchingItem(); l != nil && s.player.Now() == nil {
+		view = append(view, app.QueueItem{
+			ID:         l.ID,
+			Source:     l.Source,
+			Requester:  l.Requester,
+			Title:      l.Title,
+			Artist:     l.Artist,
+			Provider:   l.Provider,
+			Via:        l.Via,
+			DurationMs: l.DurationMs,
+			Uncertain:  l.Uncertain,
+			RawRequest: l.RawRequest,
+			CoverURL:   l.CoverURL,
+			Waiting:    true,
+			Starting:   true,
 		})
 	}
 	for _, it := range items {
@@ -429,6 +450,17 @@ func (s *Server) skipCurrent(actor string) {
 func (s *Server) skipPlaying(actor string) (skipResult, error) {
 	now := s.player.Now()
 	if now == nil {
+		// Заказ запускается (качается звук, снимается снимок). Скип здесь —
+		// настоящий скип: запуск отменяется, баллы возвращаются. Раньше
+		// приложение отвечало «ничего не играет», а заказ потом заигрывал.
+		if li := s.player.LaunchingItem(); li != nil {
+			s.setSkip(li.ID, "скипнул "+actor, true)
+			s.rememberSkip(*li, actor)
+			s.modLog(actor, "скипнул", artistTitle(li.Artist, li.Title))
+			s.state.Notify("info", i18n.F("%s скипнул: %s", actor, artistTitle(li.Artist, li.Title)))
+			s.player.Skip()
+			return skipResult{Item: *li, Refunded: li.RedemptionID != ""}, nil
+		}
 		if !s.player.Waiting() {
 			return skipResult{}, errs.New(errs.PlayerIdle, "Сейчас ничего не играет.")
 		}
@@ -441,7 +473,7 @@ func (s *Server) skipPlaying(actor string) (skipResult, error) {
 	// Историю пишет плеер, когда трек действительно закончится: отсюда её
 	// писать нельзя, иначе на один заказ выходит две записи. Оставляем плееру
 	// имя того, кто нажал, и решение про баллы.
-	s.setSkip("скипнул "+actor, true)
+	s.setSkip(now.Item.ID, "скипнул "+actor, true)
 	s.rememberSkip(now.Item, actor)
 
 	s.modLog(actor, "скипнул", artistTitle(now.Item.Artist, now.Item.Title))
@@ -508,27 +540,39 @@ func (s *Server) removeFromQueue(ctx context.Context, id int64, refund bool, act
 		waiting = true
 	}
 
-	// Порядок важен: сначала баллы, потом удаление.
+	// Порядок важен: сначала удаление, потом баллы.
 	//
-	// Раньше заказ сначала выкидывался из очереди, и если Twitch в этот
-	// момент не отвечал, у зрителя не оставалось ни трека, ни баллов, а
-	// повторить было нечем — заказа уже нет. В карточке заказов этот
-	// порядок давно правильный, здесь остался старый.
-	what := "удалил"
-	if refund {
-		what = "удалил и вернул баллы"
-		if !s.refund(ctx, item, "заказ удалён из очереди") {
-			return errs.New(errs.TwitchRefund,
-				"Не смог вернуть баллы, поэтому заказ оставил в очереди. Попробуй ещё раз.")
-		}
-	}
-
+	// Наоборот было опасно: пока Twitch возвращал баллы, плеер успевал
+	// забрать заказ через Next, удаление молча ничего не находило — и трек
+	// играл бесплатно. Удаление само говорит, успело ли оно: если заказа уже
+	// нет, баллы не трогаем.
 	if waiting {
 		if !s.player.DropWaiting(id) {
 			return errs.New(errs.Code(""), "Заказ уже заиграл — его можно только скипнуть.")
 		}
 	} else if err := s.queue.Remove(id); err != nil {
+		if errors.Is(err, queue.ErrNotFound) {
+			return errs.New(errs.Code(""), "Заказ уже заиграл — его можно только скипнуть.")
+		}
 		return err
+	}
+
+	what := "удалил"
+	if refund {
+		what = "удалил и вернул баллы"
+		if !s.refund(ctx, item, "заказ удалён из очереди") {
+			// Twitch не ответил — заказ возвращаем первым, чтобы у зрителя
+			// не пропало и то и другое. Повторить удаление можно сразу.
+			if added, aerr := s.queue.Add(item, false); aerr == nil {
+				_ = s.queue.MoveTop(added.ID)
+			} else {
+				s.log.Error("заказ не вернулся в очередь после неудачного возврата баллов",
+					"трек", artistTitle(item.Artist, item.Title), "ошибка", aerr)
+			}
+			s.syncPlayback()
+			return errs.New(errs.TwitchRefund,
+				"Не смог вернуть баллы, поэтому заказ оставил в очереди. Попробуй ещё раз.")
+		}
 	}
 	s.history(item, "removed", what)
 	s.modLog(actor, what, artistTitle(item.Artist, item.Title))
@@ -582,8 +626,9 @@ func (s *Server) clearQueue(ctx context.Context, refund bool, actor string) erro
 // панели, из чата от модератора или вовсе не прийти — стример переключил
 // музыку руками в самом Spotify. Имя кладём здесь, а забирает его тот, кто
 // пишет историю. Пусто — значит переключили в Spotify.
-func (s *Server) setSkip(who string, refund bool) {
+func (s *Server) setSkip(itemID int64, who string, refund bool) {
 	s.mu.Lock()
+	s.skipItemID = itemID
 	s.skipActor = who
 	s.skipRefund = refund
 	s.mu.Unlock()
@@ -595,12 +640,15 @@ func (s *Server) setSkip(who string, refund bool) {
 // Пустое имя означает, что скипа не было вовсе: музыку переключили в самом
 // Spotify. Баллы в этом случае не возвращаются — заказ, скорее всего, отыграл
 // своё, а приложение просто увидело смену трека раньше конца.
-func (s *Server) takeSkip() (who string, refund bool) {
+func (s *Server) takeSkip(itemID int64) (who string, refund bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	who, refund = s.skipActor, s.skipRefund
-	s.skipActor, s.skipRefund = "", false
-	if who == "" {
+	match := s.skipItemID == itemID
+	s.skipActor, s.skipRefund, s.skipItemID = "", false, 0
+	// Метка от другого заказа — значит её скип не сработал (трек успел
+	// доиграть сам). Чужое имя и чужой возврат сюда не относятся.
+	if who == "" || !match {
 		return "музыку переключили в самом Spotify", false
 	}
 	return who, refund
@@ -650,6 +698,7 @@ func (s *Server) recoverInflight(ctx context.Context) {
 				// Честнее «возвращать нечего» — тогда сработает запасной план.
 				s.player.SetSnapshot(&spotify.Snapshot{CapturedAt: time.Now(), Empty: true})
 			}
+			s.queue.ForgetInflight(item)
 			if s.player.OnFinished != nil {
 				s.player.OnFinished(item, true)
 			}
@@ -661,9 +710,13 @@ func (s *Server) recoverInflight(ctx context.Context) {
 		err = s.queue.MoveTop(added.ID)
 	}
 	if err != nil {
+		// Запись о заказе не стираем: следующий запуск попробует снова.
 		s.log.Warn("не вернул в очередь заказ из прошлого запуска", "ошибка", err)
 		return
 	}
+	// Стираем только теперь, когда заказ снова в очереди: раньше запись
+	// стиралась до Add, и ошибка базы теряла заказ вместе с баллами.
+	s.queue.ForgetInflight(item)
 	s.log.Info("вернул в очередь заказ, оборванный перезапуском", "трек", artistTitle(item.Artist, item.Title))
 	s.state.Notify("info", i18n.F("Заказ «%s» оборвался перезапуском — поставил его первым.", artistTitle(item.Artist, item.Title)))
 

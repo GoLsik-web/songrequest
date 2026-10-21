@@ -100,31 +100,31 @@ type Widget struct {
 	// хотят поменять, не трогая остального.
 	CoverShape string `json:"cover_shape,omitempty"`
 	// CoverGlow — свечение вокруг обложки её же цветом.
-	CoverGlow bool `json:"cover_glow,omitempty"`
+	CoverGlow bool `json:"cover_glow"`
 	// CoverBg — размытая обложка подложкой плашки: плашка каждый трек
 	// перекрашивается сама.
-	CoverBg bool `json:"cover_bg,omitempty"`
+	CoverBg bool `json:"cover_bg"`
 	// Magic — акцент берётся из обложки. Ручной цвет акцента при этом
 	// не действует: два источника одного цвета человек не распутает.
-	Magic bool `json:"magic,omitempty"`
+	Magic bool `json:"magic"`
 
 	// AnimIn и AnimOut — как плашка появляется и уходит. "" — фирменное
 	// движение набора; остальное — общие движения из списка animNames.
-	AnimIn  string `json:"anim_in,omitempty"`
-	AnimOut string `json:"anim_out,omitempty"`
+	AnimIn  string `json:"anim_in"`
+	AnimOut string `json:"anim_out"`
 
 	// Font — шрифт названия поверх набора. Отдельным полем, а не правкой
 	// токена: в имени шрифта бывают кавычки, а их в токены не пускаем.
-	Font string `json:"font,omitempty"`
+	Font string `json:"font"`
 
 	// ShowEq — пляшущие столбики рядом с названием: видно, что музыка
 	// живая, даже когда полоса времени ползёт незаметно.
-	ShowEq bool `json:"show_eq,omitempty"`
+	ShowEq bool `json:"show_eq"`
 	// ShowTime — время трека цифрами: «1:24 / 3:51».
-	ShowTime bool `json:"show_time,omitempty"`
+	ShowTime bool `json:"show_time"`
 	// HideOnPause — убирать плашку, пока трек стоит на паузе. Плашка с
 	// замершей полосой в кадре выглядит как зависший виджет.
-	HideOnPause bool `json:"hide_on_pause,omitempty"`
+	HideOnPause bool `json:"hide_on_pause"`
 
 	// Tweaks — ручная правка поверх набора: значения токенов оформления.
 	// Пустая карта означает «как в наборе». Ключи проверяются при записи,
@@ -139,7 +139,7 @@ type Widget struct {
 	// именем. Style — какой из них выбран сейчас (пусто — ни один): нужно
 	// только панели, чтобы подсветить плитку на полке «Мои».
 	Styles []WidgetStyle `json:"styles,omitempty"`
-	Style  string        `json:"style,omitempty"`
+	Style  string        `json:"style"`
 }
 
 // WidgetMedia — что куда поставлено из своих картинок.
@@ -258,14 +258,14 @@ type WidgetStyle struct {
 
 	Preset     string            `json:"preset"`
 	Tweaks     map[string]string `json:"tweaks,omitempty"`
-	Font       string            `json:"font,omitempty"`
+	Font       string            `json:"font"`
 	CoverShape string            `json:"cover_shape,omitempty"`
-	CoverGlow  bool              `json:"cover_glow,omitempty"`
-	CoverBg    bool              `json:"cover_bg,omitempty"`
-	Magic      bool              `json:"magic,omitempty"`
-	AnimIn     string            `json:"anim_in,omitempty"`
-	AnimOut    string            `json:"anim_out,omitempty"`
-	ShowEq     bool              `json:"show_eq,omitempty"`
+	CoverGlow  bool              `json:"cover_glow"`
+	CoverBg    bool              `json:"cover_bg"`
+	Magic      bool              `json:"magic"`
+	AnimIn     string            `json:"anim_in"`
+	AnimOut    string            `json:"anim_out"`
+	ShowEq     bool              `json:"show_eq"`
 	ShowArt    bool              `json:"show_art"`
 	Opacity    int               `json:"opacity"`
 	Media      WidgetMedia       `json:"media"`
