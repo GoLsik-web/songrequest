@@ -1,105 +1,90 @@
-# songrequest — заказ музыки для Twitch
+# songrequest — song requests for Twitch
 
-**Зрители заказывают песни прямо со стрима, а музыка играет в твоём Spotify.**
+**Your viewers request songs right from the stream, and the music plays in your own Spotify.**
 
-Зритель тратит баллы канала или отправляет донат и пишет название песни.
-Приложение само находит трек, ставит его в очередь и включает в Spotify.
-Очередь закончилась — твоя музыка продолжает играть с того же места, где
-остановилась. На экране стрима появляется красивая плашка «сейчас играет».
+A viewer redeems channel points or sends a donation and types a song name.
+The app finds the track, queues it and plays it in Spotify. When the queue
+runs out, your own music picks up exactly where it stopped. A clean "now
+playing" card shows up on your stream.
 
-[**⬇ Скачать последнюю версию**](../../releases/latest) · Windows 10/11 · бесплатно
+[**⬇ Download the latest version**](../../releases/latest) · Windows 10/11 · free
 
-*English summary below.*
-
----
-
-## Кому это нужно
-
-Стримеру на Twitch, у которого музыка играет через Spotify и который хочет,
-чтобы зрители могли её заказывать, — без ботов, сайтов и подписок.
-
-## Что понадобится
-
-- компьютер с Windows 10 или 11;
-- **Spotify Premium** (без него Spotify не даёт программам управлять музыкой);
-- канал на Twitch (для заказа за баллы — канал компаньона или партнёра);
-- OBS, если нужна плашка на экране.
-
-## Как начать
-
-1. Скачай архив со [страницы выпусков](../../releases/latest) и распакуй.
-2. Запусти `songrequest.exe` — установка не нужна.
-3. Откроется мастер настройки и по шагам проведёт через всё: Spotify, Twitch,
-   награду за баллы, донаты и плашку для OBS. Каждый шаг с картинкой и
-   подсказкой, что нажать.
-
-Дальше приложение тихо живёт в трее возле часов и обновляется по кнопке.
-
-## Что умеет
-
-- **Заказ за баллы канала или донат** (DonationAlerts, DonatePay, DonateX).
-  Можно написать название или кинуть ссылку на Spotify, YouTube,
-  Яндекс.Музыку или VK.
-- **Честно с баллами.** Трек не нашёлся или не подошёл по правилам — баллы
-  возвращаются зрителю сами.
-- **Твоя музыка не теряется.** После заказов Spotify возвращается ровно туда,
-  где ты остановился, вплоть до секунды внутри трека.
-- **Плашка «сейчас играет» для OBS.** 17 стилей с разными цветами, свои
-  картинки и анимации, можно двигать мышью по кадру.
-- **Чего нет в Spotify — сыграет с YouTube.**
-- **Команды в чате** для тебя и модераторов: очередь, скип, громкость, пауза,
-  баны. Бот всегда отвечает, а не молчит.
-- **Заказ целого плейлиста** отдельной наградой — после одобрения стримером
-  или модератором.
-- **Русский и английский** интерфейс.
-- **Обход блокировок внутри.** Если Spotify у тебя не работает напрямую,
-  вставь ключ от своего VPN — через него пойдёт только Spotify, а игра и стрим
-  останутся на обычном интернете.
-
-## Если что-то не работает
-
-У каждой ошибки в панели есть короткий код (например, `SP-04`) и подсказка,
-что делать. Подробные инструкции — в папке [docs](docs). Кнопка «Сохранить лог
-и историю» собирает всё нужное для разбора в один архив; ключи и пароли
-туда не попадают.
+**[Русская версия](README.ru.md)**
 
 ---
 
-## English
+## Who it's for
 
-**songrequest** lets your Twitch viewers request songs with channel points
-or donations, and plays them in your own Spotify. When the queue is done, your
-music resumes exactly where it left off. Includes a customizable "now playing"
-overlay for OBS, chat commands for mods, YouTube fallback and automatic point
-refunds.
+Twitch streamers who play music through Spotify and want viewers to request
+songs — no bots, no websites, no subscriptions.
 
-Requires Windows 10/11 and Spotify Premium. [Download](../../releases/latest),
-unzip, run `songrequest.exe` — a setup wizard walks you through everything.
-Switch the language to English on the first screen.
+## What you need
+
+- Windows 10 or 11;
+- **Spotify Premium** (Spotify doesn't let apps control playback without it);
+- a Twitch channel (Affiliate or Partner for channel points requests);
+- OBS, if you want the on-screen card.
+
+## Getting started
+
+1. Download the archive from the [releases page](../../releases/latest) and unzip it.
+2. Run `songrequest.exe` — nothing to install.
+3. Pick **English** on the first screen. A setup wizard walks you through
+   everything step by step: Spotify, Twitch, the channel points reward,
+   donations and the OBS card.
+
+After that the app sits quietly in the system tray and updates with one click.
+
+## Features
+
+- **Requests for channel points or donations** (DonationAlerts, DonatePay,
+  DonateX). Viewers can type a song name or paste a Spotify, YouTube,
+  Yandex Music or VK link.
+- **Fair with points.** Track not found or not allowed by your rules — the
+  points go back to the viewer automatically.
+- **Your music is never lost.** After the requests, Spotify returns exactly to
+  where you were, down to the second.
+- **"Now playing" card for OBS.** 17 styles with colorways, your own images
+  and animations, drag it anywhere in the frame.
+- **Not on Spotify? It plays from YouTube.**
+- **Chat commands** for you and your mods: queue, skip, volume, pause, bans.
+  The bot always answers instead of staying silent.
+- **Whole-playlist requests** as a separate reward — played after you or a
+  mod approves them.
+- **English and Russian** interface.
+- **Built-in bypass** for countries where Spotify is blocked: paste your VPN
+  key and only Spotify traffic goes through it. Not needed anywhere else —
+  the wizard hides it for English users.
+
+## If something doesn't work
+
+Every error in the panel has a short code (like `SP-04`) and a hint on what to
+do next. The "Save log and history" button packs everything needed for
+troubleshooting into one archive; keys and passwords never go into it.
 
 ---
 
-## Для разработчиков
+## For developers
 
 ```
-go run .                      # своё окно с панелью внутри
-go run . -в-браузере          # без окна, панель в браузере
-go run . -без-браузера        # не открывать ни окна, ни браузера
-go test ./...                 # тесты
-.\build.ps1 -Version X.Y.Z    # сборка dist\songrequest.exe и архива
+go run .                      # app window with the panel inside
+go run . -в-браузере          # no window, panel in your browser
+go run . -без-браузера        # open neither window nor browser
+go test ./...                 # tests
+.\build.ps1 -Version X.Y.Z    # builds dist\songrequest.exe and the zip
 ```
 
-Написано на Go, панель — обычная веб-страница, вшитая в `.exe` вместе со
-шрифтами, поэтому работает без интернета. Панель живёт по адресу
-`http://127.0.0.1:8977`, плашка для OBS — `http://127.0.0.1:8977/widget`.
-Настройки, база и лог лежат в `%APPDATA%\songrequest`.
+Written in Go. The panel is a regular web page embedded in the `.exe`
+together with its fonts, so it works offline. The panel lives at
+`http://127.0.0.1:8977`, the OBS card at `http://127.0.0.1:8977/widget`.
+Settings, database and logs are in `%APPDATA%\songrequest`.
 
-**Обход блокировок** (`internal/tunnel`): ключ VPN (`vless://`, `trojan://`,
-`ss://`, `vmess://`) или ссылка на подписку; приложение само скачивает
-`xray.exe`, перебирает серверы и оставляет тот, через который отвечает
-Spotify. Системный прокси Windows не трогается. Ключ хранится в хранилище
-паролей Windows и не попадает ни в `config.json`, ни в лог.
+**Bypass** (`internal/tunnel`): takes a VPN key (`vless://`, `trojan://`,
+`ss://`, `vmess://`) or a subscription link, downloads `xray.exe`, tries the
+servers and keeps one that Spotify answers through. The Windows system proxy
+is never touched. The key is stored in Windows Credential Manager and never
+ends up in `config.json` or the logs.
 
-**Норма запросов Spotify** — главное ограничение: что играет, читается из
-заголовка окна Spotify, позиция в треке считается локально, играющий заказ
-проверяется раз в 25 секунд, объявленная Spotify пауза соблюдается.
+**Spotify rate limits** are the main constraint: the current track is read from
+the Spotify window title, the position is counted locally, a playing request
+is checked every 25 seconds, and any back-off Spotify announces is respected.
