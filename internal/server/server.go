@@ -331,6 +331,8 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("GET /api/widget/media", s.handleMediaList)
 	mux.HandleFunc("POST /api/widget/media", s.handleMediaUpload)
 	mux.HandleFunc("POST /api/widget/media/{name}/delete", s.handleMediaDelete)
+	mux.HandleFunc("POST /api/widget/sound", s.handleSoundUpload)
+	mux.HandleFunc("POST /api/widget/sound/test", s.handleSoundTest)
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("GET /api/state", s.handleState)
 	mux.HandleFunc("GET /api/setup", s.handleSetup)
@@ -411,6 +413,7 @@ func New(d Deps) (*Server, error) {
 	// Виджет должен получить оформление сразу при подключении, ещё до первой
 	// правки настроек.
 	s.state.SetWidget(s.cfg.Get().Widget)
+	s.state.SetOrderSound(s.cfg.Get().OrderSound)
 
 	s.http = &http.Server{
 		Handler:           s.guard(mux),
@@ -600,6 +603,7 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		incoming.SpotifyProxy = current.SpotifyProxy
 	}
 	incoming.Widget.Normalize()
+	incoming.OrderSound.Normalize()
 	incoming.NormalizeLanguage()
 
 	// Прокси мог измениться — переключаем сразу, не дожидаясь перезапуска.
@@ -649,6 +653,7 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	// Язык — сразу для всего: панель, виджет, трей и ответы в чате.
 	i18n.SetLang(s.cfg.Get().Language)
 	s.state.SetWidget(s.cfg.Get().Widget)
+	s.state.SetOrderSound(s.cfg.Get().OrderSound)
 	s.state.Notify("info", i18n.T("Настройки сохранены"))
 	writeJSON(w, s.cfg.Get())
 }

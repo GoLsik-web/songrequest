@@ -329,6 +329,11 @@ type Snapshot struct {
 	// Widget — оформление виджета. Едет вместе с состоянием, чтобы правка в
 	// панели доезжала до OBS сразу: перезагружать источник не нужно.
 	Widget any `json:"widget"`
+	// OrderSound — звук нового заказа: его играет виджет.
+	OrderSound any `json:"order_sound"`
+	// SoundPing растёт на каждое «Проверить звук» в панели: виджет, увидев
+	// новое число, играет звук без всякого заказа.
+	SoundPing int `json:"sound_ping"`
 	// Lang — язык интерфейса ("ru"/"en"). Виджет и панель по нему
 	// переключаются сразу, без перезагрузки.
 	Lang string `json:"lang"`
@@ -502,6 +507,8 @@ type State struct {
 	bans        []Ban
 	youtube     YouTubeInfo
 	widget      any
+	orderSound  any
+	soundPing   int
 
 	subs map[int]chan struct{}
 	next int
@@ -587,6 +594,22 @@ func (s *State) SetWidget(w any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.widget = w
+	s.notify()
+}
+
+// SetOrderSound запоминает настройки звука нового заказа.
+func (s *State) SetOrderSound(o any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.orderSound = o
+	s.notify()
+}
+
+// SoundTest просит виджет проиграть звук заказа.
+func (s *State) SoundTest() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.soundPing++
 	s.notify()
 }
 
@@ -838,6 +861,8 @@ func (s *State) Snapshot() Snapshot {
 		YouTube:       s.youtube,
 		Tunnel:        s.tunnel,
 		Widget:        s.widget,
+		OrderSound:    s.orderSound,
+		SoundPing:     s.soundPing,
 		Lang:          i18n.Lang(),
 	}
 	for _, name := range s.order {

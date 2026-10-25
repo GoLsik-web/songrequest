@@ -152,7 +152,7 @@ func (s *Server) handleMediaDelete(w http.ResponseWriter, r *http.Request) {
 // них ролик в браузере OBS не зациклится.
 func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !config.MediaName(name) {
+	if !config.MediaName(name) && !config.SoundName(name) {
 		http.NotFound(w, r)
 		return
 	}
@@ -160,4 +160,80 @@ func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 	// получает новое имя. Значит, кэшировать можно навсегда.
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	http.ServeFile(w, r, filepath.Join(s.mediaDir(), name))
+}
+
+// soundMaxBytes — 2 МБ. Звук заказа длится секунду-две, больше ему незачем.
+const soundMaxBytes = 2 << 20
+
+// soundKind узнаёт звук по первым байтам. MP3 без тега ID3 стандартный
+// разборщик не узнаёт, поэтому кадр MPEG проверяем сами.
+func soundKind(body []byte) (string, bool) {
+	switch http.DetectContentType(body) {
+	case "audio/mpeg":
+		return "mp3", true
+	case "audio/wave":
+		return "wav", true
+	case "application/ogg":
+		return "ogg", true
+	}
+	if len(body) > 2 && body[0] == 0xFF && body[1]&0xE0 == 0xE0 {
+		return "mp3", true
+	}
+	return "", false
+}
+
+// handleSoundUpload принимает свой звук нового заказа и сразу ставит его.
+func (s *Server) handleSoundUpload(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, soundMaxBytes))
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			http.Error(w, i18n.T("Звук больше 2 МБ. Возьми короткий, на пару секунд."), http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, i18n.T("Файл не дошёл целиком, попробуйте ещё раз."), http.StatusBadRequest)
+		return
+	}
+	ext, ok := soundKind(body)
+	if !ok {
+		http.Error(w, i18n.T("Это не звук. Подойдут MP3, WAV и OGG."), http.StatusUnsupportedMediaType)
+		return
+	}
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	name := hex.EncodeToString(id[:]) + "." + ext
+	if err := os.MkdirAll(s.mediaDir(), 0o755); err == nil {
+		err = os.WriteFile(filepath.Join(s.mediaDir(), name), body, 0o644)
+	}
+	if err != nil {
+		s.log.Error("сохранение звука заказа", "ошибка", err)
+		http.Error(w, i18n.T("Не получилось сохранить файл."), http.StatusInternalServerError)
+		return
+	}
+	// Прошлый свой звук больше не нужен: держим один.
+	old := s.cfg.Get().OrderSound.File
+	err = s.cfg.Update(func(c *config.Config) {
+		c.OrderSound.File = name
+		c.OrderSound.Sound = "file"
+		c.OrderSound.Normalize()
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if old != "" && old != name && config.SoundName(old) {
+		_ = os.Remove(filepath.Join(s.mediaDir(), old))
+	}
+	s.state.SetOrderSound(s.cfg.Get().OrderSound)
+	writeJSON(w, s.cfg.Get())
+}
+
+// handleSoundTest проигрывает звук в виджете прямо сейчас — проверить
+// громкость в OBS, не дожидаясь заказа.
+func (s *Server) handleSoundTest(w http.ResponseWriter, r *http.Request) {
+	s.state.SoundTest()
+	w.WriteHeader(http.StatusNoContent)
 }

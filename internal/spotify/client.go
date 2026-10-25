@@ -390,7 +390,17 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			// и он не должен превращаться в ошибку на стриме.
 			lastErr = errs.Wrap(errs.SpotifyUnreachable, "Spotify не отвечает. Проверь интернет.", err)
 			c.log.Warn("запрос к Spotify не дошёл", "путь", path, "попытка", attempt, "ошибка", err)
-			if !sleepCtx(ctx, backoff(attempt)) {
+			pause := backoff(attempt)
+			// Посредник не принимает соединение — значит, обход прямо сейчас
+			// меняет сервер: старый уже погашен, новый поднимается секунды
+			// четыре-пять. Обычных пауз (меньше четырёх секунд на все попытки)
+			// на это не хватало, и панель показывала «Spotify не отвечает»,
+			// хотя через секунду всё работало (лог владельца 25.10). Ждём
+			// подольше; адрес посредника перечитывается на каждой попытке.
+			if strings.Contains(err.Error(), "proxyconnect") {
+				pause = 3 * time.Second
+			}
+			if !sleepCtx(ctx, pause) {
 				return lastErr
 			}
 			continue

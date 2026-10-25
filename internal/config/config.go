@@ -192,6 +192,8 @@ type Config struct {
 
 	// Виджет для OBS
 	Widget Widget `json:"widget"`
+	// OrderSound — звук нового заказа в виджете (см. sound.go).
+	OrderSound OrderSound `json:"order_sound"`
 
 	// OBS — связь с OBS через его встроенный сервер WebSocket: источник с
 	// виджетом сам подгоняется под формат кадра. Пароль сюда не пишется —
@@ -252,8 +254,9 @@ func Defaults() Config {
 			Popularity: 0.1,
 			Version:    1.0,
 		},
-		Widget: DefaultWidget(),
-		OBS:    OBS{Host: "127.0.0.1", Port: 4455},
+		Widget:     DefaultWidget(),
+		OrderSound: DefaultOrderSound(),
+		OBS:        OBS{Host: "127.0.0.1", Port: 4455},
 		RejectKeywords: []string{
 			"нарезка", "нарезки", "подкаст", "стрим", "compilation", "mix",
 			"1 hour", "1 час", "10 hours", "podcast", "livestream", "best moments",
@@ -334,6 +337,7 @@ func Load(dir string) (*File, error) {
 	// Конфиг мог быть от прошлой версии или поправлен руками: приводим в
 	// рабочий вид сразу, а не когда виджет уже висит на стриме.
 	f.cfg.Widget.Normalize()
+	f.cfg.OrderSound.Normalize()
 	f.cfg.NormalizeMatching()
 	f.cfg.NormalizeLanguage()
 	return f, nil

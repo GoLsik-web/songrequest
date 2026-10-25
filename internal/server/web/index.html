@@ -443,6 +443,50 @@
          неоткуда — инструкции в docs/ написаны для стримера и про настройку, а
          модератор в них не заглядывает. Показываем ровно то, что уйдёт файлом:
          стример должен видеть, что именно он отправляет. -->
+    <!-- Звук нового заказа (25.10, просьба владельца). Играет виджет в OBS:
+         его слышат и стример, и зрители. -->
+    <div class="col">
+      <div class="kicker">Звук нового заказа</div>
+      <label class="check">
+        <input type="checkbox" id="snd-on">
+        <span>Звенеть, когда заказ встал в очередь</span>
+      </label>
+      <label class="field">
+        <span>Какой звук</span>
+        <select id="snd-name">
+          <option value="ding">Динь</option>
+          <option value="pop">Хлоп</option>
+          <option value="chime">Колокольчики</option>
+          <option value="coin">Монетка</option>
+          <option value="bubble">Пузырь</option>
+          <option value="levelup">Новый уровень</option>
+          <option value="vinyl">Пластинка</option>
+          <option value="soft">Мягкий</option>
+          <option value="file" id="snd-file-opt" hidden>Свой файл</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Громкость <b id="snd-vol-val">60%</b></span>
+        <input type="range" id="snd-vol" min="1" max="100" step="1">
+      </label>
+      <label class="field">
+        <span>Не чаще раза в, секунд</span>
+        <input type="number" id="snd-cool" min="0" max="60" step="1" inputmode="numeric">
+      </label>
+      <div class="acts">
+        <button class="act small" id="snd-listen">Послушать здесь</button>
+        <button class="act small key" id="snd-test">Проверить в OBS</button>
+        <label class="act small">
+          Свой звук…
+          <input type="file" id="snd-upload" accept=".mp3,.wav,.ogg,audio/*" hidden>
+        </label>
+      </div>
+      <div class="hint">Звук играет виджет, поэтому его слышат и зрители.
+        В OBS у источника виджета включи «Управление аудио через OBS» —
+        тогда громкость можно крутить и в микшере. Свой звук: MP3, WAV или
+        OGG до 2 МБ, лучше на секунду-две.</div>
+    </div>
+
     <div class="col wide">
       <div class="kicker">Команды для модераторов</div>
       <div class="hint" style="margin-top:0">Работают у тебя и у модераторов
@@ -561,6 +605,25 @@
         <button class="act small" id="upd-check">Проверить обновления</button>
         <button class="act small key" id="upd-install" hidden>Обновить</button>
         <a class="act small" id="upd-page" target="_blank" rel="noopener" hidden>Открыть страницу выпусков</a>
+      </div>
+    </div>
+
+    <!-- Подсказка про Telegram-бота-компаньона (25.10). Сам бот — отдельная
+         программа, здесь только объяснение и ссылка. -->
+    <div class="col">
+      <div class="kicker">Telegram-бот</div>
+      <div class="hint">
+        Есть бот-компаньон <b>songrequest Recap</b>. После стрима он сам пришлёт
+        итоги: кто что заказывал, вкус чата, номинации зрителей и красивую
+        карточку для канала. А ещё с телефона можно скипнуть трек, поставить
+        паузу или убрать заказ из очереди.
+      </div>
+      <div class="hint">Бот запускается на этом же компьютере, рядом с
+        приложением. Открой его в Telegram и нажми «Старт» — он расскажет, как
+        подключить. Там же кнопка «Поддержка»: вопрос или ошибку можно
+        написать прямо в бота.</div>
+      <div class="acts">
+        <a class="act small key" href="https://t.me/songrequest_wrapped_bot" target="_blank" rel="noopener">Открыть бота в Telegram</a>
       </div>
     </div>
 
@@ -1290,6 +1353,8 @@
 <script src="/static/i18n-widget.js"></script>
 <script src="/static/widget-presets.js"></script>
 <script src="/static/widget-fx.js"></script>
+<script src="/static/order-sound.js"></script>
+<script src="/static/i18n-sound.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/setup.js"></script>
 </body>

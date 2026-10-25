@@ -66,6 +66,7 @@ html.preview, html.preview body { width: 100%; height: 100%; }
 <script src="/static/widget-fx.js"></script>
 <script src="/static/i18n-widget.js"></script>
 <script src="/static/widget-presets.js"></script>
+<script src="/static/order-sound.js"></script>
 <script>
 // Виджет живёт на том же сокете, что и панель: отдельного опроса нет.
 //
@@ -895,6 +896,52 @@ html.preview, html.preview body { width: 100%; height: 100%; }
     });
   }
 
+  // ── звук нового заказа ─────────────────────────────────────────────
+
+  // Новый заказ — тот, кого виджет ещё не видел ни в очереди, ни в эфире.
+  // Первое состояние после подключения только запоминаем: перезапуск OBS
+  // или приложения не должен звенеть за всю очередь разом.
+  let seenOrders = null;
+  let soundPing = null;
+  let lastSound = 0;
+
+  function orderKey(o) {
+    return (o.requester || "") + "|" + (o.title || "") + "|" + (o.artist || "");
+  }
+
+  function ring(cfg, force) {
+    if (!force) {
+      const gap = (cfg.cooldown || 0) * 1000;
+      if (Date.now() - lastSound < gap) return;
+    }
+    lastSound = Date.now();
+    OrderSound.play(cfg);
+  }
+
+  function listenOrders(state) {
+    const cfg = state.order_sound;
+    // В очереди заказ узнаём по номеру: повторный заказ того же трека —
+    // тоже новый заказ. Заодно запоминаем его по названию, чтобы он не
+    // звенел второй раз, когда дойдёт до эфира.
+    const queue = state.queue || [];
+    const keys = queue.map((o) => "#" + o.id);
+    const also = queue.map(orderKey);
+    if (state.now && state.now.source === "order") keys.push(orderKey(state.now));
+
+    if (soundPing !== null && state.sound_ping !== soundPing && cfg) ring(cfg, true);
+    soundPing = state.sound_ping;
+
+    if (seenOrders === null) {
+      seenOrders = new Set(keys.concat(also));
+      return;
+    }
+    const fresh = keys.some((k) => !seenOrders.has(k));
+    keys.concat(also).forEach((k) => seenOrders.add(k));
+    // Помнить вечно незачем: держим только последние заказы.
+    if (seenOrders.size > 500) seenOrders = new Set(keys.concat(also));
+    if (fresh && cfg && cfg.enabled) ring(cfg, false);
+  }
+
   // ── связь ──────────────────────────────────────────────────────────
 
   let delay = 1000;
@@ -915,6 +962,7 @@ html.preview, html.preview body { width: 100%; height: 100%; }
       // предпросмотр в OBS остаётся прежним.
       if (demo) demoTrack(state.widget);
       else render(state);
+      listenOrders(state);
     };
 
     socket.onclose = () => {

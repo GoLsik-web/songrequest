@@ -1430,6 +1430,7 @@
   // playlistsFailed — список не собрался из-за отказа Spotify. Отличать это
   // от «уже собран» нужно, чтобы «Проверить связь» дала второй шанс.
   let playlistsFailed = false;
+  let playlistsRetried = false;
   let redirectShown = false;
 
   // ── Меню разделов ─────────────────────────────────────────
@@ -1604,6 +1605,7 @@
       $("reward-cost").value = config.reward_cost ?? "";
       $("auto-reward").checked = !!config.auto_create_reward;
       fillPlaylistReward();
+      fillSound();
       // Внутри секунды, но человеку понятнее в минутах.
       $("max-minutes").value = Math.round((config.max_track_seconds || 0) / 60) || "";
       $("max-per-user").value = config.max_per_user ?? "";
@@ -1720,6 +1722,13 @@
         // запасной плейлист выбрать нечем до перезагрузки страницы.
         playlistsFailed = true;
         playlistsLoaded = true;
+        // Один повтор сам. Чаще всего отказ ловится ровно в тот момент, когда
+        // обход меняет сервер (25.10: «Авто I» отказал по стране, через пять
+        // секунд «Авто II» уже работал, а красная строка висела до перезапуска).
+        if (!playlistsRetried) {
+          playlistsRetried = true;
+          setTimeout(() => { playlistsLoaded = false; loadPlaylists(); }, 10000);
+        }
         return;
       }
       const chosen = config ? config.fallback_playlist_id : "";
@@ -1732,6 +1741,7 @@
             ? ` · ${p.tracks} ${plural(p.tracks, "трек", "трека", "треков", "track", "tracks")}`
             : ""}</option>`).join("");
       playlistsLoaded = true;
+      playlistsRetried = false;
       refreshModeHints();
     } catch {
       say(I18N.t("Не смог получить список плейлистов"), true);
@@ -2335,6 +2345,75 @@
       }
     };
   }
+
+  // ── звук нового заказа ─────────────────────────────────────────────
+  //
+  // Настройки пишутся целиком в order_sound: поле одно, а частей у него
+  // несколько, и записывать их по одной значило бы затирать соседние.
+
+  function soundCfg() {
+    return Object.assign({ enabled: false, sound: "ding", file: "", volume: 60, cooldown: 3 },
+      (config && config.order_sound) || {});
+  }
+
+  function fillSound() {
+    const o = soundCfg();
+    $("snd-on").checked = !!o.enabled;
+    $("snd-file-opt").hidden = !o.file;
+    $("snd-name").value = o.sound;
+    $("snd-vol").value = o.volume;
+    $("snd-vol-val").textContent = o.volume + "%";
+    $("snd-cool").value = o.cooldown;
+  }
+
+  async function saveSound(patch, el) {
+    if (await saveConfig({ order_sound: Object.assign(soundCfg(), patch) })) {
+      fillSound();
+      markSaved(el);
+    }
+  }
+
+  $("snd-on").onchange = (e) => saveSound({ enabled: e.target.checked }, e.target);
+  $("snd-name").onchange = (e) => {
+    saveSound({ sound: e.target.value }, e.target);
+    OrderSound.play(Object.assign(soundCfg(), { sound: e.target.value }));
+  };
+  live($("snd-vol"), (v) => { $("snd-vol-val").textContent = v + "%"; },
+    (v) => saveSound({ volume: v }, $("snd-vol")));
+  $("snd-cool").onchange = (e) => {
+    const v = parseInt(e.target.value, 10);
+    if (!isFinite(v) || v < 0 || v > 60) {
+      say(I18N.t("Нужно число от {min} до {max}", { min: 0, max: 60 }), true);
+      fillSound();
+      return;
+    }
+    saveSound({ cooldown: v }, e.target);
+  };
+  $("snd-listen").onclick = () => OrderSound.play(soundCfg());
+  $("snd-test").onclick = async () => {
+    try {
+      const r = await fetch("/api/widget/sound/test", { method: "POST" });
+      if (!r.ok) throw new Error();
+      say(I18N.t("Звук ушёл в виджет. Не слышно — проверь, что виджет добавлен в OBS и у него не выключен звук."));
+    } catch {
+      say(I18N.t("Не получилось"), true);
+    }
+  };
+  $("snd-upload").onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const r = await fetch("/api/widget/sound", { method: "POST", body: file });
+      if (!r.ok) throw new Error(await r.text());
+      config = await r.json();
+      fillSound();
+      OrderSound.play(soundCfg());
+      say(I18N.t("Свой звук сохранён и выбран."));
+    } catch (err) {
+      say(err.message || I18N.t("Не получилось"), true);
+    }
+  };
 
   // ── награда за плейлист ────────────────────────────────────────────
   //
