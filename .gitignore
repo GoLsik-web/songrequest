@@ -6,6 +6,12 @@ songrequest
 *.log
 *.exe~
 dist/
+tools/telegram-relay/runtime/
+tools/telegram-relay/__pycache__/
+tools/telegram-relay/telegram-relay.exe
+tools/telegram-relay/telegram-relay.exe.old
+tools/telegram-relay/telegram-relay-next.exe
+tools/telegram-relay/cloudflared.exe
 
 # Рабочие заметки: передача дел между сессиями. Нужны только на этой машине.
 ПРОДОЛЖИТЬ.md

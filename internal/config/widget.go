@@ -110,8 +110,9 @@ type Widget struct {
 
 	// AnimIn и AnimOut — как плашка появляется и уходит. "" — фирменное
 	// движение набора; остальное — общие движения из списка animNames.
-	AnimIn  string `json:"anim_in"`
-	AnimOut string `json:"anim_out"`
+	AnimIn   string `json:"anim_in"`
+	AnimOut  string `json:"anim_out"`
+	AnimSwap string `json:"anim_swap"`
 
 	// Font — шрифт названия поверх набора. Отдельным полем, а не правкой
 	// токена: в имени шрифта бывают кавычки, а их в токены не пускаем.
@@ -270,6 +271,7 @@ type WidgetStyle struct {
 	Magic      bool              `json:"magic"`
 	AnimIn     string            `json:"anim_in"`
 	AnimOut    string            `json:"anim_out"`
+	AnimSwap   string            `json:"anim_swap"`
 	ShowEq     bool              `json:"show_eq"`
 	ShowArt    bool              `json:"show_art"`
 	Opacity    int               `json:"opacity"`
@@ -462,6 +464,11 @@ var positions = map[string]bool{
 // то, чего мы не понимаем. Виджет висит на стриме — он не должен ломаться
 // из-за руками поправленного config.json.
 func (w *Widget) Normalize() {
+	switch w.AnimSwap {
+	case "", "fade", "slide", "zoom", "none":
+	default:
+		w.AnimSwap = ""
+	}
 	if w.Rev < 1 {
 		// Настройки записаны сборкой, которая про «всплывать на смене трека»
 		// ещё не знала. Молча оставить «нет» нельзя: у стримера с настройкой
@@ -583,12 +590,13 @@ func (w *Widget) Normalize() {
 		seen[st.ID] = true
 		probe := Widget{
 			Rev: widgetRev, Preset: st.Preset, Tweaks: st.Tweaks, Font: st.Font,
-			CoverShape: st.CoverShape, AnimIn: st.AnimIn, AnimOut: st.AnimOut,
+			CoverShape: st.CoverShape, AnimIn: st.AnimIn, AnimOut: st.AnimOut, AnimSwap: st.AnimSwap,
 			Opacity: st.Opacity, Media: st.Media, Scale: 1,
 		}
 		probe.Normalize()
 		st.Preset, st.Tweaks, st.Font = probe.Preset, probe.Tweaks, probe.Font
 		st.CoverShape, st.AnimIn, st.AnimOut = probe.CoverShape, probe.AnimIn, probe.AnimOut
+		st.AnimSwap = probe.AnimSwap
 		st.Opacity, st.Media = probe.Opacity, probe.Media
 		styles = append(styles, st)
 	}
@@ -625,6 +633,7 @@ func (w *Widget) ApplyStyle(id string) bool {
 		w.Preset, w.Font, w.CoverShape = st.Preset, st.Font, st.CoverShape
 		w.CoverGlow, w.CoverBg, w.Magic = st.CoverGlow, st.CoverBg, st.Magic
 		w.AnimIn, w.AnimOut, w.ShowEq, w.ShowArt, w.Opacity = st.AnimIn, st.AnimOut, st.ShowEq, st.ShowArt, st.Opacity
+		w.AnimSwap = st.AnimSwap
 		w.Tweaks = map[string]string{}
 		for k, v := range st.Tweaks {
 			w.Tweaks[k] = v

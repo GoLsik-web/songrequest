@@ -589,15 +589,15 @@ func apiError(statusCode int, path string, data []byte) error {
 	// адресу, а не списком треков. Ломается только дозаполнение тишины
 	// после очереди.
 	case statusCode == http.StatusForbidden && strings.Contains(path, "/tracks"):
-		return errs.New(errs.SpotifyNoPremium,
-			"Spotify не отдаёт этому приложению содержимое плейлистов — ни одного, включая свои. Права стримера тут ни при чём, перевходить не нужно. Запасной плейлист всё равно включится целиком; не сработает только дозаполнение тишины после очереди.")
+		return errs.New(errs.SpotifyPlaylistRestricted,
+			"Spotify не разрешил прочитать список треков плейлиста. Воспроизведение целого плейлиста может работать, но автоматически добавить его треки в очередь не получится.")
 
 	case statusCode == http.StatusForbidden:
 		// Про Premium здесь раньше говорилось первым делом — и уводило в
 		// сторону: у тестера Premium есть, а 403 приходил на содержимое
 		// каждого плейлиста. Настоящие причины другие, и Spotify их не
 		// называет, поэтому перечисляем как есть.
-		return errs.New(errs.SpotifyNoPremium,
+		return errs.New(errs.SpotifyForbidden,
 			"Spotify запретил это действие. Причина не в приложении: чаще всего это не выданные при входе права или ограничения самого аккаунта. Если Premium есть — нажми «Сохранить лог и историю» и пришли архив.")
 	case statusCode == http.StatusNotFound && strings.HasPrefix(path, "/me/player"):
 		return errs.New(errs.SpotifyNoDevice,

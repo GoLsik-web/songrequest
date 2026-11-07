@@ -51,7 +51,7 @@ func (s *Server) fill(ctx context.Context, cfg config.Config, mode config.Resume
 	uris, what, err := s.continuation(ctx, cfg, mode, snap)
 	if err != nil {
 		s.log.Warn("не собрал продолжение", "режим", mode, "ошибка", err)
-		s.state.NotifyError(err)
+		s.state.NotifyWarning(err)
 		return
 	}
 

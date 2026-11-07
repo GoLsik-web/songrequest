@@ -176,6 +176,7 @@ html.preview, html.preview body { width: 100%; height: 100%; }
     flag("coverbg", can("coverbg") && w.cover_bg ? "on" : "");
     flag("in", w.anim_in || "");
     flag("out", w.anim_out || "");
+    flag("swap", w.anim_swap || "");
     flag("font", w.font || "");
     flag("eq", w.show_eq ? "on" : "");
     flag("time", w.show_time ? "on" : "");
@@ -600,7 +601,13 @@ html.preview, html.preview body { width: 100%; height: 100%; }
   // 240 мс, у полосы — 130. Держать это расписание вторым списком в коде
   // значило бы однажды разъехаться с ним.
   function swapTrack(fill) {
-    const out = parseFloat(getComputedStyle(card).getPropertyValue("--swap-out")) || 150;
+    clearTimeout(swapTimer);
+    if (card.dataset.swap === "none" || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      card.classList.remove("swap-in", "swap-out");
+      fill();
+      return;
+    }
+    const out = card.dataset.swap ? 200 : (parseFloat(getComputedStyle(card).getPropertyValue("--swap-out")) || 150);
     play("swap-out");
     clearTimeout(swapTimer);
     swapTimer = setTimeout(() => {

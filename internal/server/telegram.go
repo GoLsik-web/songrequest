@@ -43,7 +43,8 @@ func (s *Server) telegramStatus() map[string]any {
 	if s.secrets != nil {
 		_ = s.secrets.GetJSON(telegramKey, &token)
 	}
-	return map[string]any{"settings": s.cfg.Get().Telegram, "has_token": token != "", "connected": s.telegram.Connected, "username": s.telegram.Username, "note": s.telegram.Note}
+	_, linkErr := s.relayLink()
+	return map[string]any{"settings": s.cfg.Get().Telegram, "has_token": token != "", "shared_link": linkErr == nil, "shared_relay_url": SharedRelayURL, "connected": s.telegram.Connected, "username": s.telegram.Username, "note": s.telegram.Note}
 }
 func (s *Server) handleTelegramGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.telegramStatus())
@@ -59,6 +60,25 @@ func (s *Server) handleTelegramSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Token = strings.TrimSpace(in.Token)
+	if in.Mode != "" && in.Mode != "personal" && in.Mode != "shared" {
+		http.Error(w, "Неизвестный способ подключения Telegram", 400)
+		return
+	}
+	if in.Mode == "shared" {
+		current := s.cfg.Get().Telegram
+		in.OwnerID = current.OwnerID
+		in.RelayURL = current.RelayURL
+		if in.Token != "" {
+			http.Error(w, "Для общего бота токен не нужен", 400)
+			return
+		}
+		if in.Enabled {
+			if _, err := s.relayLink(); err != nil || in.OwnerID <= 0 {
+				http.Error(w, "Сначала подключи общий бот кнопкой в приложении", 400)
+				return
+			}
+		}
+	}
 	in.PublishChannel = strings.TrimSpace(in.PublishChannel)
 	if in.OwnerID < 0 || len(in.PublishChannel) > 100 {
 		http.Error(w, "Проверь ID владельца и канал", 400)
@@ -95,7 +115,7 @@ func (s *Server) handleTelegramSet(w http.ResponseWriter, r *http.Request) {
 	}
 	var token string
 	_ = s.secrets.GetJSON(telegramKey, &token)
-	if in.Enabled && token == "" {
+	if in.Enabled && in.Mode != "shared" && token == "" {
 		http.Error(w, "Укажи токен бота", 400)
 		return
 	}
@@ -154,14 +174,15 @@ func (s *Server) watchTelegram(ctx context.Context) {
 			signature = sig
 			s.telegramNote(false, "", "")
 			if cfg.Enabled {
-				var token string
-				if s.secrets != nil {
-					_ = s.secrets.GetJSON(telegramKey, &token)
-				}
-				if token != "" {
-					cancel, done = s.startTelegram(ctx, tg.New(token), cfg)
+				client, err := s.telegramClient(cfg)
+				if err == nil {
+					cancel, done = s.startTelegram(ctx, client, cfg)
 				} else {
-					s.telegramNote(false, "", "Укажи токен и свой Telegram ID")
+					text := "Укажи токен и свой Telegram ID"
+					if cfg.Mode == "shared" {
+						text = "Подключи общий бот кнопкой в приложении"
+					}
+					s.telegramNote(false, "", text)
 				}
 			}
 		}
@@ -176,11 +197,21 @@ func (s *Server) watchTelegram(ctx context.Context) {
 func (s *Server) startTelegram(ctx context.Context, client *tg.Client, cfg config.Telegram) (context.CancelFunc, chan struct{}) {
 	run, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	go func() { defer close(done); s.runTelegram(run, client, cfg) }()
+	go func() {
+		defer close(done)
+		if cfg.Mode == "shared" {
+			s.loadTelegramChat()
+			reportsDone := make(chan struct{})
+			go func() { defer close(reportsDone); s.watchTelegramReports(run, client, cfg) }()
+			defer func() { cancel(); <-reportsDone }()
+		}
+		s.runTelegram(run, client, cfg)
+	}()
 	return cancel, done
 }
 
 func (s *Server) runTelegram(ctx context.Context, c *tg.Client, cfg config.Telegram) {
+	defer c.Close()
 	var me struct {
 		Username string `json:"username"`
 	}
@@ -202,6 +233,14 @@ func (s *Server) runTelegram(ctx context.Context, c *tg.Client, cfg config.Teleg
 		return
 	}
 	// A previous webhook or another process must be fixed explicitly, never deleted silently.
+	if strings.EqualFold(me.Username, "songrequest_wrapped_bot") {
+		s.telegramNote(false, me.Username, errTelegramSupportBot.Error())
+		return
+	}
+	if cfg.Mode != "shared" && strings.EqualFold(me.Username, "songrequest_streamer_bot") {
+		s.telegramNote(false, me.Username, errTelegramSharedBot.Error())
+		return
+	}
 	var hook struct {
 		URL string `json:"url"`
 	}
@@ -223,11 +262,18 @@ func (s *Server) runTelegram(ctx context.Context, c *tg.Client, cfg config.Teleg
 		s.telegramNote(false, me.Username, "У бота включён webhook. Используй отдельного бота для приложения.")
 		return
 	}
-	s.loadTelegramChat()
+	if cfg.Mode != "shared" {
+		s.loadTelegramChat()
+	}
 	pollCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	reportsDone := make(chan struct{})
-	go func() { defer close(reportsDone); s.watchTelegramReports(pollCtx, c, cfg) }()
+	go func() {
+		defer close(reportsDone)
+		if cfg.Mode != "shared" {
+			s.watchTelegramReports(pollCtx, c, cfg)
+		}
+	}()
 	defer func() { stop(); <-reportsDone }()
 	offset := int64(0)
 	if raw, ok, _ := s.db.GetKV("telegram_offset:" + me.Username); ok {
@@ -306,14 +352,22 @@ func tgKeyboard() map[string]any {
 		{tgButton("📜 Заказы", "history"), tgButton("💬 Чат", "chat"), tgButton("🎛 Пульт", "panel")},
 		{tgButton("⏸ Пауза", "pause"), tgButton("▶ Играть", "play"), tgButton("⏭ Скип", "skip")},
 		{tgButton("Очередь", "queue"), tgButton("Закрыть заказы", "close"), tgButton("Открыть заказы", "open")},
+		{tgButton("📁 CSV отчёт", "export"), {"text": "🆘 Поддержка", "url": "https://t.me/songrequest_wrapped_bot?start=support"}},
+		{tgButton("⚙️ Настройки", "settings"), tgButton("Проверить состояние", "status")},
 	}}
 }
 func (s *Server) telegramSend(ctx context.Context, c *tg.Client, chat int64, text string) error {
-	rr := []rune(text)
-	if len(rr) > 3800 {
-		text = string(rr[:3800]) + "\n…"
+	parts := tg.SplitText(text)
+	for index, part := range parts {
+		payload := map[string]any{"chat_id": chat, "text": part}
+		if index == len(parts)-1 {
+			payload["reply_markup"] = tgKeyboard()
+		}
+		if err := c.Call(ctx, "sendMessage", payload, nil); err != nil {
+			return err
+		}
 	}
-	return c.Call(ctx, "sendMessage", map[string]any{"chat_id": chat, "text": text, "reply_markup": tgKeyboard()}, nil)
+	return nil
 }
 func (s *Server) telegramUpdate(ctx context.Context, c *tg.Client, cfg config.Telegram, u tg.Update, started int64) {
 	var msg tg.Message
@@ -325,7 +379,7 @@ func (s *Server) telegramUpdate(ctx context.Context, c *tg.Client, cfg config.Te
 			return
 		}
 		msg = cb.Message
-		if msg.Date < started {
+		if msg.Date < started && telegramMutatingAction(cb.Data) {
 			_ = c.Call(ctx, "answerCallbackQuery", map[string]string{"callback_query_id": cb.ID, "text": "Пульт устарел. Отправь /start заново."}, nil)
 			return
 		}
@@ -336,11 +390,19 @@ func (s *Server) telegramUpdate(ctx context.Context, c *tg.Client, cfg config.Te
 		if msg.Chat.Type != "private" {
 			return
 		}
-		if msg.Text == "/id" {
+		publicFields := strings.Fields(msg.Text)
+		publicCommand := ""
+		if len(publicFields) > 0 {
+			publicCommand = strings.Split(publicFields[0], "@")[0]
+		}
+		if publicCommand == "/id" {
 			_ = c.Call(ctx, "sendMessage", map[string]any{"chat_id": msg.Chat.ID, "text": fmt.Sprintf("Твой Telegram ID: %d", msg.From.ID)}, nil)
 			return
 		}
 		if msg.From.ID != cfg.OwnerID || msg.Chat.ID != cfg.OwnerID {
+			if publicCommand == "/start" || publicCommand == "/help" {
+				_ = c.Call(ctx, "sendMessage", map[string]any{"chat_id": msg.Chat.ID, "text": "Это личный компаньон songrequest. Отправь /id и укажи свой ID в настройках Telegram в приложении на компьютере. Управление доступно только настроенному владельцу. Поддержка: https://t.me/songrequest_wrapped_bot?start=support"}, nil)
+			}
 			return
 		}
 		if msg.Date < started-5 {
@@ -351,6 +413,14 @@ func (s *Server) telegramUpdate(ctx context.Context, c *tg.Client, cfg config.Te
 			return
 		}
 		action = strings.TrimPrefix(strings.Split(fields[0], "@")[0], "/")
+		if action == "history" && len(fields) > 1 {
+			page, err := strconv.Atoi(fields[1])
+			if err != nil || page < 1 || page > 100001 {
+				_ = s.telegramSend(ctx, c, cfg.OwnerID, "Номер страницы должен быть положительным числом.")
+				return
+			}
+			action = fmt.Sprintf("history:%d", page-1)
+		}
 		if action == "who" {
 			q := ""
 			if len(fields) > 1 {
@@ -363,13 +433,50 @@ func (s *Server) telegramUpdate(ctx context.Context, c *tg.Client, cfg config.Te
 		return
 	}
 	text := ""
+	if action == "history" || strings.HasPrefix(action, "history:") {
+		page := 0
+		if action != "history" {
+			value, err := strconv.Atoi(strings.TrimPrefix(action, "history:"))
+			if err != nil || value < 0 || value > 100000 {
+				return
+			}
+			page = value
+		}
+		if err := s.sendTelegramHistory(ctx, c, cfg.OwnerID, page); err != nil {
+			s.telegramNote(false, "", telegramErrorNote(err))
+		}
+		return
+	}
 	switch action {
 	case "start", "help":
-		text = "songrequest Recap\nИтоги эфира, номинации, карточка и пульт музыки.\n/who ник — заказы зрителя. Настройки — в приложении на компьютере."
+		text = "songrequest Recap\n/stats — итоги эфира\n/awards — номинации\n/chat — активность чата\n/card — карточка итогов\n/history — история с перелистыванием\n/who ник — заказы зрителя\n/export — полный CSV-отчёт\n/panel — пульт, /queue — очередь\n/settings — автоитоги и уведомления\n/status — состояние подключения\n/support — написать в поддержку"
+	case "support":
+		text = "Поддержка songrequest: https://t.me/songrequest_wrapped_bot?start=support\nНапиши вопрос боту. Ответ придёт в том же чате."
+	case "status":
+		text = fmt.Sprintf("Приложение songrequest работает.\nID владельца: %d\nАвтоитоги: %s\nУведомления о треках: %s\nКанал: %s", cfg.OwnerID, telegramOnOff(cfg.AutoRecap), telegramOnOff(cfg.NotifyOrders), cfg.PublishChannel)
+	case "settings", "setting:auto", "setting:notify":
+		if action != "settings" {
+			if err := s.cfg.Update(func(v *config.Config) {
+				if action == "setting:auto" {
+					v.Telegram.AutoRecap = !v.Telegram.AutoRecap
+				} else {
+					v.Telegram.NotifyOrders = !v.Telegram.NotifyOrders
+				}
+			}); err != nil {
+				_ = s.telegramSend(ctx, c, cfg.OwnerID, "Не удалось сохранить настройки. Попробуй ещё раз.")
+				return
+			}
+		}
+		updated := s.cfg.Get().Telegram
+		_ = c.Call(ctx, "sendMessage", map[string]any{"chat_id": cfg.OwnerID, "text": "⚙️ Настройки Telegram\nТокен, владелец и канал настраиваются в приложении на компьютере.", "reply_markup": map[string]any{"inline_keyboard": [][]map[string]string{{tgButton("Автоитоги: "+telegramOnOff(updated.AutoRecap), "setting:auto")}, {tgButton("Новые треки: "+telegramOnOff(updated.NotifyOrders), "setting:notify")}, {tgButton("← Меню", "start")}}}}, nil)
+		return
 	case "stats", "awards":
 		text = s.telegramRecap(ctx, action == "awards")
-	case "history":
-		text = s.telegramHistory(ctx, "")
+	case "export":
+		if err := s.sendTelegramExport(ctx, c, cfg.OwnerID); err != nil {
+			s.telegramNote(false, "", telegramErrorNote(err))
+		}
+		return
 	case "chat":
 		text = s.telegramChatText()
 	case "card":
@@ -476,15 +583,22 @@ func (s *Server) telegramHistory(ctx context.Context, who string) string {
 	defer rows.Close()
 	var b strings.Builder
 	b.WriteString("📜 Заказы эфира\n")
+	count := 0
 	for rows.Next() {
 		var user, title, artist, outcome string
 		if rows.Scan(&user, &title, &artist, &outcome) != nil {
 			continue
 		}
 		fmt.Fprintf(&b, "%s: %s — %s (%s)\n", user, artist, title, map[string]string{"played": "сыграно", "skipped": "пропущено", "rejected": "отклонено"}[outcome])
+		count++
 	}
-	if b.Len() < 40 {
+	if rows.Err() != nil {
+		return "История пока недоступна"
+	}
+	if count == 0 {
 		b.WriteString("Пока нет завершённых заказов")
+	} else if count == 40 {
+		b.WriteString("\nПоказаны последние 40 заказов. /export — полный список за эфир.")
 	}
 	return b.String()
 }
@@ -776,20 +890,45 @@ func (s *Server) checkTelegramStream(ctx context.Context, c *tg.Client, cfg conf
 	if pending == "" {
 		return
 	}
+	s.deliverTelegramRecap(ctx, c, cfg, pending)
+}
+
+func (s *Server) deliverTelegramRecap(ctx context.Context, c *tg.Client, cfg config.Telegram, pending string) {
 	// A failed send remains pending and is retried on the next successful status check.
-	call, cancel = context.WithTimeout(ctx, 30*time.Second)
+	call, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	text := s.telegramRecap(call, false)
-	if err := s.telegramSend(call, c, cfg.OwnerID, text); err != nil {
+	ownerKey := fmt.Sprintf("telegram_recap_owner:%d:%s", cfg.OwnerID, pending)
+	ownerSent, _, err := s.db.GetKV(ownerKey)
+	if err != nil {
 		return
 	}
-	if cfg.PublishChannel != "" {
-		picture, err := tg.Card(s.state.Snapshot().Twitch.Channel, strings.Split(text, "\n"))
-		if err == nil {
-			err = c.Photo(call, cfg.PublishChannel, "Итоги эфира · songrequest", picture)
+	if ownerSent != "sent" {
+		if err := s.telegramSend(call, c, cfg.OwnerID, text); err != nil {
+			return
 		}
+		if err := s.db.SetKV(ownerKey, "sent"); err != nil {
+			return
+		}
+	}
+	if cfg.PublishChannel != "" {
+		channelKey := "telegram_recap_channel:" + pending + ":" + cfg.PublishChannel
+		channelSent, _, err := s.db.GetKV(channelKey)
 		if err != nil {
-			s.telegramNote(true, "", "Итоги отправлены владельцу, но карточка не опубликована в канале. Проверь права бота.")
+			return
+		}
+		if channelSent != "sent" {
+			picture, err := tg.Card(s.state.Snapshot().Twitch.Channel, strings.Split(text, "\n"))
+			if err == nil {
+				err = c.Photo(call, cfg.PublishChannel, "Итоги эфира · songrequest", picture)
+			}
+			if err != nil {
+				s.telegramNote(true, "", "Итоги отправлены владельцу, но карточка не опубликована в канале. Проверь права бота.")
+				return
+			}
+			if err := s.db.SetKV(channelKey, "sent"); err != nil {
+				return
+			}
 		}
 	}
 	_ = s.db.SetKV("telegram_live_start", "")

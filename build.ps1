@@ -16,12 +16,23 @@
 param(
     [string]$Version,
     [string]$Flavor,
+    [string]$TelegramRelayURL,
     [switch]$NoZip,
     [switch]$SkipTests
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+if ($TelegramRelayURL) {
+    $relayBuildUri = $null
+    if (-not [Uri]::TryCreate($TelegramRelayURL, [UriKind]::Absolute, [ref]$relayBuildUri) -or
+        $relayBuildUri.Scheme -ne 'https' -or $relayBuildUri.UserInfo -or
+        $relayBuildUri.Query -or $relayBuildUri.Fragment -or $relayBuildUri.AbsolutePath -ne '/') {
+        throw 'TelegramRelayURL должен быть HTTPS-адресом без пути, пароля и параметров.'
+    }
+    $TelegramRelayURL = $relayBuildUri.AbsoluteUri.TrimEnd('/')
+}
 
 # Go мог быть установлен уже после открытия этого окна — подхватываем PATH.
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
@@ -69,6 +80,7 @@ $exe = "dist\$name.exe"
 $env:CGO_ENABLED = "0"
 $ldflags = "-s -w -H=windowsgui -X main.version=$Version"
 if ($Flavor) { $ldflags += " -X main.flavor=$Flavor" }
+if ($TelegramRelayURL) { $ldflags += " -X songrequest/internal/server.SharedRelayURL=$TelegramRelayURL" }
 go build -trimpath -ldflags $ldflags -o $exe .
 if ($LASTEXITCODE -ne 0) { throw "Сборка не удалась." }
 

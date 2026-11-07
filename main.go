@@ -3,9 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,6 +18,7 @@ import (
 	"songrequest/internal/i18n"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -81,6 +85,19 @@ func main() {
 	// только туда. Go без этой строчки свободно переносит главную горутину с
 	// потока на поток — и окно замерло бы, не отвечая на нажатия.
 	runtime.LockOSThread()
+
+	// Окно внешнего входа изолировано от очереди и основной панели:
+	// даже авария WebView2 при закрытии не завершает приложение.
+	if len(os.Args) == 2 && os.Args[1] == "--spotify-auth-window" {
+		var options desktop.AuthOptions
+		if err := json.NewDecoder(io.LimitReader(os.Stdin, 64<<10)).Decode(&options); err != nil {
+			os.Exit(2)
+		}
+		if err := desktop.OpenAuth(options); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 
 	if err := run(); err != nil {
 		// Консоли у приложения больше нет (собирается как обычная программа с
@@ -333,6 +350,7 @@ func run() error {
 // панель этой дорогой не пользуется — вход как открывался в браузере, так и
 // открывается.
 func authOpener(log *logx.Logger, srv *server.Server, dir string) func(string) error {
+	var active atomic.Bool
 	return func(url string) error {
 		proxy := srv.TunnelAddr()
 		if proxy == "" {
@@ -343,19 +361,37 @@ func authOpener(log *logx.Logger, srv *server.Server, dir string) func(string) e
 			log.Warn("не выложил значок приложения", "ошибка", err)
 		}
 		log.Info("открываю вход в Spotify в своём окне")
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		request, err := json.Marshal(desktop.AuthOptions{
+			URL:      url,
+			Title:    i18n.T("Вход в Spotify"),
+			IconPath: icon,
+			// Отдельная папка обязательна: движок делит один браузер между
+			// окнами с общей папкой, и окно входа получило бы соединение
+			// панели — то есть мимо обхода.
+			DataPath: filepath.Join(dir, "webview-вход"),
+			Proxy:    proxy,
+			DonePath: "/callback",
+		})
+		if err != nil {
+			return err
+		}
+		cmd := exec.Command(exe, "--spotify-auth-window")
+		// URL входа и настройки не попадают в командную строку процесса.
+		cmd.Stdin = bytes.NewReader(request)
+		if !active.CompareAndSwap(false, true) {
+			return nil
+		}
+		if err := cmd.Start(); err != nil {
+			active.Store(false)
+			return err
+		}
 		go func() {
-			err := desktop.OpenAuth(desktop.AuthOptions{
-				URL:      url,
-				Title:    i18n.T("Вход в Spotify"),
-				IconPath: icon,
-				// Отдельная папка обязательна: движок делит один браузер между
-				// окнами с общей папкой, и окно входа получило бы соединение
-				// панели — то есть мимо обхода.
-				DataPath: filepath.Join(dir, "webview-вход"),
-				Proxy:    proxy,
-				DonePath: "/callback",
-			})
-			if err != nil {
+			defer active.Store(false)
+			if err := cmd.Wait(); err != nil {
 				log.Warn("окно входа закрылось с ошибкой", "ошибка", err)
 			}
 		}()

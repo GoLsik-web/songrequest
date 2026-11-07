@@ -2,6 +2,8 @@ package config
 
 // Telegram contains only preferences. The token belongs in Windows Credential Manager.
 type Telegram struct {
+	Mode           string `json:"mode"`
+	RelayURL       string `json:"relay_url"`
 	Enabled        bool   `json:"enabled"`
 	OwnerID        int64  `json:"owner_id"`
 	AutoRecap      bool   `json:"auto_recap"`

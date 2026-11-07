@@ -131,12 +131,13 @@
   let sayTimer = null;
   function say(text, bad) {
     status.textContent = text;
-    status.className = bad ? "offline" : "online";
+    const severity = bad === true ? "error" : (typeof bad === "string" ? bad : "info");
+    status.className = severity === "error" ? "offline" : severity === "warn" ? "warning" : "online";
     status.hidden = false;
     // Ошибка висит, пока её не сменят. Сообщение об удаче гаснет само: строка
     // внизу не должна навсегда застревать на «Client ID сохранён».
     clearTimeout(sayTimer);
-    if (!bad) {
+    if (severity !== "error") {
       sayTimer = setTimeout(hush, 6000);
     }
   }
@@ -165,7 +166,7 @@
             body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        say(errLine(d), true);
+        say(errLine(d), d.severity || "error");
         return null;
       }
       return d;
@@ -3181,6 +3182,7 @@
   // ── анимация ───────────────────────────────────────────────────────
 
   function drawAnims(w) {
+    $("wx-swap").value = w.anim_swap || "";
     const chips = (now, out) => WIDGET_ANIMS.map((a) => {
       const name = out ? a.out : a.name;
       return `<button class="wxe-anim${a.id === now ? " on" : ""}" data-anim="${a.id}" title="${esc(I18N.t(a.hint || name))}">
@@ -3204,6 +3206,7 @@
     wxLeaveAndBack();
   };
   $("wx-motion-on").onchange = (e) => saveWidget({ motion: e.target.checked });
+  $("wx-swap").onchange = (e) => saveWidget({ anim_swap: e.target.value });
 
   // ── своё: картинки, ролики, встроенные анимации ───────────────────
 
@@ -3575,14 +3578,14 @@
   // это про сцену, и переключение стиля не должно уводить плашку в другой
   // угол.
   const STYLE_FIELDS = ["preset", "tweaks", "font", "cover_shape", "cover_glow", "cover_bg",
-    "magic", "anim_in", "anim_out", "show_eq", "show_art", "opacity", "media"];
+    "magic", "anim_in", "anim_out", "anim_swap", "show_eq", "show_art", "opacity", "media"];
 
   // Пустое пишем явно: настройки ложатся поверх сохранённых, и поле,
   // которого в присланном нет, осталось бы от прошлого стиля — свой шрифт
   // или форма обложки «прилипали» бы ко всем следующим.
   const STYLE_EMPTY = {
     tweaks: null, font: "", cover_shape: "", cover_glow: false, cover_bg: false,
-    magic: false, anim_in: "", anim_out: "", show_eq: false, show_art: true, opacity: 100,
+    magic: false, anim_in: "", anim_out: "", anim_swap: "", show_eq: false, show_art: true, opacity: 100,
   };
   function lookOf(w) {
     const look = {};
@@ -4258,10 +4261,10 @@
     obsOn = !!d.enabled;
     if (d.port && document.activeElement !== $("obs-port")) $("obs-port").value = d.port;
     const st = $("obs-state");
-    st.className = "obs-state " + (d.level === "ok" ? "ok" : d.level === "fail" ? "fail" : "");
+    st.className = "obs-state " + (d.level === "ok" ? "ok" : d.level === "fail" ? (d.severity === "warn" ? "warn" : "fail") : "");
     $("obs-state-text").textContent =
       d.level === "ok" ? I18N.t("подключено") :
-      d.level === "fail" ? I18N.t("ошибка {code}", { code: d.code || "" }) :
+      d.level === "fail" ? I18N.t(d.severity === "warn" ? "предупреждение {code}" : "ошибка {code}", { code: d.code || "" }) :
       I18N.t("не подключено");
     $("obs-connect").textContent = d.level === "ok" ? I18N.t("Переподключить") : I18N.t("Подключить OBS");
     $("obs-connect").classList.toggle("key", d.level !== "ok");
@@ -4299,6 +4302,12 @@
     // Связь включена раньше — проверяем её тихо, без ожидания.
     if (d.enabled) post("/api/obs/fit").then(obsShow);
   }).catch(() => {});
+  // Щелчок по кнопке перетаскивания открыл бы виджет во вкладке — это не то,
+  setInterval(() => {
+    if (!obsOn || document.hidden) return;
+    fetch("/api/obs").then((r) => r.ok ? r.json() : null).then((d) => { if (d) obsShow(d); }).catch(() => {});
+  }, 10000);
+
   // Щелчок по кнопке перетаскивания открыл бы виджет во вкладке — это не то,
   // что от неё ждут. Её надо тащить мышью.
   $("wx-drag").onclick = (e) => {

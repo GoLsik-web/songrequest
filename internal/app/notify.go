@@ -9,7 +9,16 @@ func (s *State) NotifyError(err error) {
 		return
 	}
 	code, text := errs.Describe(err)
-	s.NotifyCode("error", string(code), text)
+	s.NotifyCode(errs.Severity(err), string(code), text)
+}
+
+// NotifyWarning — операция необязательна, основная работа продолжается.
+func (s *State) NotifyWarning(err error) {
+	if err == nil {
+		return
+	}
+	code, text := errs.Describe(err)
+	s.NotifyCode("warn", string(code), text)
 }
 
 // NotifyWarn показывает предупреждение с кодом.

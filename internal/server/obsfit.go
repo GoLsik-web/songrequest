@@ -115,6 +115,7 @@ func (s *Server) obsStatus() map[string]any {
 		"port":      cfg.OBS.Port,
 		"level":     level,
 		"code":      s.obs.code,
+		"severity":  errs.SeverityCode(errs.Code(s.obs.code)),
 		"error":     s.obs.err,
 		"items":     s.obs.items,
 		"no_source": s.obs.noSource,
@@ -138,6 +139,25 @@ func sameAspect(w1, h1, w2, h2 int) bool {
 }
 
 func (s *Server) handleOBSStatus(w http.ResponseWriter, r *http.Request) {
+	// Статус не должен навсегда оставаться результатом прежнего нажатия.
+	// Проверяем только соединение: сцену и размеры источника не меняем.
+	cfg := s.cfg.Get().OBS
+	if cfg.Enabled {
+		ctx, cancel := context.WithTimeout(r.Context(), obs.Timeout)
+		defer cancel()
+		client, err := obs.Dial(ctx, cfg.Host, cfg.Port, s.obsPassword())
+		if client != nil {
+			client.Close()
+		}
+		s.obs.mu.Lock()
+		if err != nil {
+			code, text := errs.Describe(err)
+			s.obs.level, s.obs.code, s.obs.err = "fail", string(code), text
+		} else if s.obs.code == "" || s.obs.code == string(errs.OBSUnreachable) || s.obs.code == string(errs.OBSAuth) {
+			s.obs.level, s.obs.code, s.obs.err = "ok", "", ""
+		}
+		s.obs.mu.Unlock()
+	}
 	writeJSON(w, s.obsStatus())
 }
 

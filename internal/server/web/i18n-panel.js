@@ -3,6 +3,7 @@
 // читает перевод строки как LF, поэтому ниже добавляется и такой вариант.
 (function () {
   const map = {
+    "предупреждение {code}": "warning {code}",
     "Метка заказа в донате": "Donation song request prefix",
     "Начни сообщение с метки, затем через пробел укажи название трека или ссылку. Без метки донат не станет заказом. Пустое поле возвращает метку !музыка.": "Start the message with the prefix, then a space and the song title or link. Donations without the prefix do not request music. Leaving the field empty restores !музыка.",
     "Лицензии компонентов": "Component licenses",

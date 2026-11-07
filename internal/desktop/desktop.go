@@ -118,7 +118,7 @@ type AuthOptions struct {
 	// него — окно закрывается само.
 	DonePath string
 	// OnDone зовётся, когда окно закрылось.
-	OnDone func()
+	OnDone func() `json:"-"`
 }
 
 // TrayOptions — значок возле часов и его меню.

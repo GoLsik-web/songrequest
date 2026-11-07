@@ -81,7 +81,14 @@ func OpenAuth(o AuthOptions) error {
 	if wv == nil {
 		return fmt.Errorf("%w: окно входа не создалось", ErrNoWebView)
 	}
-	defer wv.Destroy()
+	// Destroy библиотеки только публикует WM_CLOSE. После Run никто уже
+	// не обрабатывает очередь этого окна, поэтому отложенное уничтожение
+	// оставляло живое окно на освобождённом Go-потоке. Уничтожаем синхронно
+	// до выхода из закреплённого UI-потока.
+	hwnd := uintptr(wv.Window())
+	var closeOnce sync.Once
+	closeAuth := func() { closeOnce.Do(func() { procDestroyWindow.Call(hwnd) }) }
+	defer closeAuth()
 
 	setWindowIcon(uintptr(wv.Window()), o.IconPath)
 
@@ -89,9 +96,12 @@ func OpenAuth(o AuthOptions) error {
 	// секунду, чтобы человек успел это прочитать, и закрываем сами: закрывать
 	// окна за людей нехорошо, но здесь окно ровно одноразовое, и оставлять его
 	// висеть — значит собрать те самые лишние окна, от которых уходим.
-	wv.Bind("srAuthDone", func() {
-		wv.Terminate()
-	})
+	if err := wv.Bind("srAuthDone", func() {
+		// Выходим из COM/JS callback прежде, чем уничтожать WebView.
+		wv.Dispatch(closeAuth)
+	}); err != nil {
+		return fmt.Errorf("окно входа: %w", err)
+	}
 	wv.Init(authDoneJS(o.DonePath))
 
 	wv.Navigate(o.URL)

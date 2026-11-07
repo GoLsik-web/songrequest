@@ -2,6 +2,20 @@ package config
 
 import "testing"
 
+func TestTrackTransitionSurvivesStyleSwitch(t *testing.T) {
+	w := DefaultWidget()
+	w.Styles = []WidgetStyle{{ID: "track-fade", Name: "Fade", Preset: "efir/lime", AnimSwap: "fade", Opacity: 100}}
+	w.Normalize()
+	if !w.ApplyStyle("track-fade") || w.AnimSwap != "fade" {
+		t.Fatal("track transition lost when applying a saved style")
+	}
+	w.AnimSwap = "unexpected"
+	w.Normalize()
+	if w.AnimSwap != "" {
+		t.Fatal("invalid transition accepted")
+	}
+}
+
 // Значения ручной настройки попадают в атрибут style страницы виджета.
 // Всё, что не из закрытого списка, обязано выбрасываться: config.json можно
 // поправить руками, а виджет висит на стриме и обязан пережить любую правку.

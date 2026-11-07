@@ -44,7 +44,9 @@ const (
 	// разработчика. Отдельно от SP-08 нарочно: у той пауза меряется
 	// секундами и лечится темпом, у этой — часами, и лечится только
 	// ожиданием. Человеку это разные новости.
-	SpotifyQuota Code = "SP-20"
+	SpotifyQuota              Code = "SP-20"
+	SpotifyPlaylistRestricted Code = "SP-21" // список треков недоступен, воспроизведение возможно
+	SpotifyForbidden          Code = "SP-22" // Spotify запретил действие без точной причины
 
 	// Twitch
 	TwitchNoClientID   Code = "TW-01" // не заполнен client_id Twitch

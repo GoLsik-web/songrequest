@@ -2715,3 +2715,22 @@
   opacity: 0;
   transform: translate(var(--st-x, 0px), var(--st-y, 0px)) scale(.6);
 }
+
+/* Отдельный переход между треками переопределяет фирменные фазы стиля. */
+.card.card[data-swap].swap-out :is(.art, .text, .title, .artist, .by, .bar, .meta),
+.card.card[data-swap].swap-in :is(.art, .text, .title, .artist, .by, .bar, .meta) { animation: none !important; }
+.card.card[data-swap="fade"].swap-out { animation: trackFadeOut 200ms ease-in both !important; }
+.card.card[data-swap="fade"].swap-in { animation: trackFadeIn 300ms ease-out both !important; }
+.card.card[data-swap="slide"].swap-out { animation: trackSlideOut 200ms ease-in both !important; }
+.card.card[data-swap="slide"].swap-in { animation: trackSlideIn 300ms ease-out both !important; }
+.card.card[data-swap="zoom"].swap-out { animation: trackZoomOut 200ms ease-in both !important; }
+.card.card[data-swap="zoom"].swap-in { animation: trackZoomIn 300ms ease-out both !important; }
+@keyframes trackFadeOut { to { opacity: 0; } }
+@keyframes trackFadeIn { from { opacity: 0; } }
+@keyframes trackSlideOut { to { opacity: 0; transform: translateX(-24px); } }
+@keyframes trackSlideIn { from { opacity: 0; transform: translateX(24px); } }
+@keyframes trackZoomOut { to { opacity: 0; transform: scale(.94); } }
+@keyframes trackZoomIn { from { opacity: 0; transform: scale(.94); } }
+@media (prefers-reduced-motion: reduce) {
+  .card.card[data-swap].swap-out, .card.card[data-swap].swap-in { animation: none !important; }
+}

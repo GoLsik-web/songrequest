@@ -631,6 +631,14 @@
 
     <div class="col wide" id="telegram-settings">
       <div class="kicker">Telegram-компаньон</div>
+      <div class="hint">Общий @songrequest_streamer_bot присылает твои отчёты и управляет твоим приложением. Токен не нужен: подключи Telegram и подтверди аккаунт здесь. @songrequest_wrapped_bot — отдельная поддержка.</div>
+      <label class="field"><span>Способ подключения</span><select id="tg-mode"><option value="shared">Общий бот — без токена</option><option value="personal">Свой отдельный бот</option></select></label>
+      <div id="tg-shared">
+        <div class="acts"><button class="act small key" id="tg-pair">Подключить Telegram</button><a class="act small" id="tg-pair-link" hidden target="_blank" rel="noopener">Открыть общего бота</a><button class="act small" id="tg-pair-confirm" hidden>Подтвердить этот аккаунт</button><button class="act small risky" id="tg-pair-revoke" hidden>Отвязать приложение</button></div>
+        <div class="hint" id="tg-pair-status" role="status" aria-live="polite"></div>
+        <details><summary>Адрес подключения</summary><label class="field"><span>Адрес обработчика автора</span><input id="tg-relay-url" type="url" autocomplete="off" spellcheck="false"></label><div class="hint">Общий бот доступен, пока компьютер автора включён и подключён к интернету.</div></details>
+      </div>
+      <div id="tg-personal" hidden>
       <div class="hint">Итоги эфира, номинации, карточка и пульт музыки прямо в приложении. Отдельная программа и Python не нужны.</div>
       <ol class="hint">
         <li>Создай своего бота через <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> и вставь токен ниже.</li>
@@ -639,12 +647,14 @@
       </ol>
       <label class="field"><span>Токен бота</span><input id="tg-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="Токен от BotFather"><span class="hint">Хранится в хранилище паролей Windows. Пустое поле сохраняет прежний токен.</span></label>
       <label class="field"><span>Твой Telegram ID</span><input id="tg-owner" type="text" inputmode="numeric" autocomplete="off"></label>
+      </div>
       <label class="check"><input id="tg-enabled" type="checkbox"> Включить Telegram-компаньона</label>
       <label class="check"><input id="tg-auto" type="checkbox"> Присылать итоги после окончания эфира</label>
       <label class="check"><input id="tg-notify" type="checkbox"> Уведомлять о начале заказанного трека</label>
       <label class="field"><span>Канал для карточки итогов (необязательно)</span><input id="tg-channel" type="text" placeholder="@канал или -100…"><span class="hint">Бот должен быть администратором канала с правом публикации. Карточка публикуется вместе с автоматическими итогами.</span></label>
       <div class="acts"><button class="act small key" id="tg-save">Сохранить Telegram</button><button class="act small risky" id="tg-forget">Отключить и удалить токен</button><a class="act small" id="tg-open" hidden target="_blank" rel="noopener">Открыть своего бота</a></div>
       <div class="state" id="tg-status" role="status" aria-live="polite"></div>
+      <button class="act small" id="tg-test">Отправить тестовое сообщение</button>
       <div class="hint">Доступ к управлению есть только у указанного владельца в личном чате. Приложение должно работать на компьютере. Не запускай того же бота одновременно в другой программе.</div>
       <a class="act small" href="https://t.me/songrequest_wrapped_bot?start=support" target="_blank" rel="noopener">Поддержка</a>
     </div>
@@ -1163,6 +1173,16 @@
           <div class="wxe-label">Уход</div>
           <div class="wxe-anims" id="wx-out"></div>
         </div>
+        <label class="field">
+          <span>Переключение между треками</span>
+          <select id="wx-swap">
+            <option value="">Как в стиле</option>
+            <option value="fade">Плавное затухание</option>
+            <option value="slide">Сдвиг</option>
+            <option value="zoom">Масштаб</option>
+            <option value="none">Без анимации</option>
+          </select>
+        </label>
         <label class="wxe-switch"><input type="checkbox" id="wx-motion-on"><i></i>
           <span><b>Движение</b><small>Живое в покое: крутится пластинка, мерцает неон, пляшут столбики. Сними, если в кадре нужен полный покой.</small></span></label>
       </div>

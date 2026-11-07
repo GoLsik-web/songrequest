@@ -230,7 +230,7 @@ func (c *Client) fillEmptyCounts(ctx context.Context, list []Playlist) {
 		if err := c.do(ctx, http.MethodGet, path, nil, &raw); err != nil {
 			c.log.Warn("не переспросил число треков",
 				"плейлист", list[i].Name, "id", list[i].ID, "ошибка", err)
-			if errs.CodeOf(err) == errs.SpotifyNoPremium {
+			if errs.CodeOf(err) == errs.SpotifyPlaylistRestricted {
 				c.countsForbidden.Store(true)
 				return
 			}

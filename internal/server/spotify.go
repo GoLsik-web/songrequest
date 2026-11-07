@@ -536,7 +536,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
-	writeJSON(w, map[string]string{"code": string(code), "error": text})
+	writeJSON(w, map[string]string{"code": string(code), "error": text, "severity": errs.Severity(err)})
 }
 
 func (s *Server) callbackPage(w http.ResponseWriter, title, text string) {

@@ -15,7 +15,9 @@ import (
 
 type Client struct {
 	Token, BaseURL string
+	RelayKey       string
 	HTTP           *http.Client
+	stream         relayStream
 }
 type APIError struct{ Code, RetryAfter int }
 
@@ -24,13 +26,28 @@ func New(token string) *Client {
 	return &Client{Token: token, BaseURL: "https://api.telegram.org", HTTP: &http.Client{Timeout: 40 * time.Second}}
 }
 
+func NewRelay(baseURL, key string) *Client {
+	c := New("")
+	c.BaseURL = strings.TrimRight(baseURL, "/")
+	c.RelayKey = key
+	c.HTTP.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	return c
+}
+
 // Never return transport errors: their URLs contain the bot token.
 func (c *Client) request(ctx context.Context, method, contentType string, body io.Reader, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/bot"+c.Token+"/"+method, body)
+	endpoint := c.BaseURL + "/bot" + c.Token + "/" + method
+	if c.RelayKey != "" {
+		endpoint = c.BaseURL + "/api/telegram/" + method
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return fmt.Errorf("Telegram: invalid request")
 	}
 	req.Header.Set("Content-Type", contentType)
+	if c.RelayKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.RelayKey)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("Telegram: connection unavailable")
@@ -64,9 +81,20 @@ func (c *Client) Call(ctx context.Context, method string, payload, out any) erro
 	if err != nil {
 		return fmt.Errorf("Telegram: invalid payload")
 	}
+	if c.RelayKey != "" && method == "getUpdates" {
+		return c.relayUpdates(ctx, data, out)
+	}
 	return c.request(ctx, method, "application/json", bytes.NewReader(data), out)
 }
 func (c *Client) Photo(ctx context.Context, chatID, caption string, png []byte) error {
+	return c.upload(ctx, "sendPhoto", "photo", "recap.png", chatID, caption, png)
+}
+
+func (c *Client) Document(ctx context.Context, chatID, caption, filename string, data []byte) error {
+	return c.upload(ctx, "sendDocument", "document", filename, chatID, caption, data)
+}
+
+func (c *Client) upload(ctx context.Context, method, field, filename, chatID, caption string, data []byte) error {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	if err := w.WriteField("chat_id", chatID); err != nil {
@@ -75,17 +103,17 @@ func (c *Client) Photo(ctx context.Context, chatID, caption string, png []byte) 
 	if err := w.WriteField("caption", caption); err != nil {
 		return err
 	}
-	part, err := w.CreateFormFile("photo", "recap.png")
+	part, err := w.CreateFormFile(field, filename)
 	if err != nil {
 		return err
 	}
-	if _, err = part.Write(png); err != nil {
+	if _, err = part.Write(data); err != nil {
 		return err
 	}
 	if err = w.Close(); err != nil {
 		return err
 	}
-	return c.request(ctx, "sendPhoto", w.FormDataContentType(), &buf, nil)
+	return c.request(ctx, method, w.FormDataContentType(), &buf, nil)
 }
 
 type User struct {

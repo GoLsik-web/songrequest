@@ -12,6 +12,7 @@
    альт-табнулся из игры на две секунды, глянул и вернулся. */
 
 :root {
+  --warn: #ffd36e;
   color-scheme: dark;
 
   --bg:      #08090a;
@@ -615,7 +616,7 @@ a.tail-btn { text-decoration: none; }
 }
 .feed .what { min-width: 0; overflow-wrap: anywhere; }
 .feed .lvl-error .what { color: var(--bad); }
-.feed .lvl-warn .what { color: var(--dim); }
+.feed .lvl-warn .what { color: var(--warn); }
 
 .feed .fcode, .feed .wcode {
   font-weight: 700; font-size: var(--t-xs); letter-spacing: var(--track-chip);
@@ -623,7 +624,8 @@ a.tail-btn { text-decoration: none; }
 }
 .feed .fcode { color: var(--bad); border: 1px solid rgba(255, 77, 77, .4); }
 /* Предупреждение — не «хорошо», поэтому не лаймом. */
-.feed .wcode { color: var(--dim); border: 1px solid var(--line-2); }
+.feed .lvl-warn .wcode { color: var(--warn); border: 1px solid rgba(255, 211, 110, .4); }
+.feed .wcode { color: var(--dim); }
 
 /* Повторы схлопнуты в счётчик: пять одинаковых строк подряд — это шум. */
 .feed .times {
@@ -728,7 +730,7 @@ a.tail-btn { text-decoration: none; }
 }
 
 .hint { font-size: 12px; color: var(--dimmer); margin-top: var(--s2); line-height: 1.5; }
-.hint.warn { color: var(--bad); }
+.hint.warn { color: var(--warn); }
 .hint:empty { display: none; }
 
 /* Режимы возврата — не выпадашка, а три строки: настройка редкая и важная,
@@ -795,6 +797,7 @@ footer {
   z-index: 6;
 }
 footer.offline { color: var(--bad); }
+footer.warning { color: var(--warn); }
 footer.online { color: var(--dimmer); }
 /* Сказать нечего — полосы нет. У неё своя подложка и рамка, и пустая она
    выглядит как «что-то тут было, да пропало». */
@@ -1090,7 +1093,7 @@ footer[hidden] { display: none; }
 }
 
 .tag.ok   { color: var(--dim);  border: 1px solid var(--line-2); }
-.tag.warn { color: var(--lime); border: 1px solid var(--lime-lo); }
+.tag.warn { color: var(--warn); border: 1px solid rgba(255, 211, 110, .4); }
 .tag.bad  { color: var(--bad);  border: 1px solid rgba(255, 77, 77, .4); }
 
 /* ── Раздел «Виджет» ───────────────────────────────────────────────────
@@ -1604,6 +1607,8 @@ body.menu-open { overflow: hidden; }
 .obs-state.ok .led { background: var(--lime); }
 .obs-state.fail { color: var(--bad); }
 .obs-state.fail .led { background: var(--bad); }
+.obs-state.warn { color: var(--warn); }
+.obs-state.warn .led { background: var(--warn); }
 .obs-row { display: flex; gap: 8px; }
 .obs-row .field { margin: 0; min-width: 0; }
 .obs-port { flex: 0 0 96px; }
@@ -1612,7 +1617,7 @@ body.menu-open { overflow: hidden; }
 .obs-box .acts { margin: 0; }
 .obs-box .hint { display: block; }
 #obs-note:empty { display: none; }
-#obs-note.warn { color: var(--text); }
+#obs-note.warn { color: var(--warn); }
 
 /* ═══ Редактор виджета ════════════════════════════════════════════════
    Слева кадр, справа вкладки. Кадр не уезжает при прокрутке настроек: ради
