@@ -234,6 +234,15 @@ func Download(ctx context.Context, rel Release, dir string) (string, error) {
 // Порядок именно такой: если что-то пойдёт не так на втором шаге, старый файл
 // ещё цел и его можно вернуть.
 func Apply(exePath, freshPath string) error {
+	// Папка данных и программа могут находиться на разных дисках. Rename
+	// между томами не работает: сначала копируем файл рядом с программой,
+	// полностью закрывая его до подмены работающего exe.
+	staged, err := stageUpdate(filepath.Dir(exePath), freshPath)
+	if err != nil {
+		return errs.Wrap(errs.UpdateApply, "Не получилось подготовить обновление рядом с программой. Проверь свободное место и права на папку.", err)
+	}
+	defer os.Remove(staged)
+
 	old := exePath + ".old"
 	_ = os.Remove(old)
 
@@ -242,7 +251,7 @@ func Apply(exePath, freshPath string) error {
 			"Не получилось заменить программу: файл занят или нет прав на папку. "+
 				"Перенеси программу из «Program Files» в обычную папку и попробуй ещё раз.", err)
 	}
-	if err := os.Rename(freshPath, exePath); err != nil {
+	if err := os.Rename(staged, exePath); err != nil {
 		// Кладём старый файл обратно: без этого программы не останется вовсе.
 		if back := os.Rename(old, exePath); back != nil {
 			return errs.Wrap(errs.UpdateApply,
@@ -251,7 +260,37 @@ func Apply(exePath, freshPath string) error {
 		}
 		return errs.Wrap(errs.UpdateApply, "Обновление не встало на место, вернул прежнюю программу.", err)
 	}
+	_ = os.Remove(freshPath)
 	return nil
+}
+
+func stageUpdate(dir, source string) (path string, err error) {
+	in, err := os.Open(source)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	out, err := os.CreateTemp(dir, ".songrequest-update-*.exe")
+	if err != nil {
+		return "", err
+	}
+	path = out.Name()
+	defer func() {
+		if err != nil {
+			out.Close()
+			os.Remove(path)
+		}
+	}()
+	if _, err = io.Copy(out, in); err != nil {
+		return path, err
+	}
+	if err = out.Sync(); err != nil {
+		return path, err
+	}
+	if err = out.Close(); err != nil {
+		return path, err
+	}
+	return path, nil
 }
 
 // CleanOld убирает отставленный файл прошлой версии. Зовётся при запуске:

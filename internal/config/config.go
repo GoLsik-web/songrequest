@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -126,6 +127,7 @@ type Config struct {
 	DonatePayKey           string  `json:"donatepay_key"`
 	DonateXKey             string  `json:"donatex_key"`
 	DonationMin            float64 `json:"donation_min"` // от какой суммы принимаем заказ
+	DonationPrefix         string  `json:"donation_prefix"`
 
 	// Лимиты заказов
 	MaxTrackSeconds  int  `json:"max_track_seconds"`
@@ -238,6 +240,7 @@ func Defaults() Config {
 		MaxPerUser:          3,
 		DonationPriority:    true,
 		DonationMin:         100,
+		DonationPrefix:      "!музыка",
 		ResumeFail:          ResumeFallbackPlaylist,
 		ResumeDelaySeconds:  1,
 		WaitForCurrent:      true,
@@ -404,6 +407,10 @@ func (f *File) Get() Config {
 // оно перезапуск, поэтому проверяем при каждой записи.
 func (c *Config) NormalizeMatching() {
 	d := Defaults()
+	c.DonationPrefix = strings.TrimSpace(c.DonationPrefix)
+	if c.DonationPrefix == "" {
+		c.DonationPrefix = d.DonationPrefix
+	}
 
 	// Ноль здесь законен — это «выключить звук заказов». А вот отсутствие
 	// поля в старом config.json тоже даёт ноль, и тихий эфир после

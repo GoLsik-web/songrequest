@@ -4,6 +4,7 @@ package i18n
 // с кодом вроде SP-04. Переводятся в момент показа (errs.Error.Text).
 func init() {
 	register(map[string]string{
+		"Не получилось подготовить обновление рядом с программой. Проверь свободное место и права на папку.": "Couldn't prepare the update next to the app. Check free disk space and folder permissions.",
 		// errs: общее
 		"Непонятная ошибка. Загляни в лог приложения.": "Unknown error. Check the app log.",
 		"%s временно сбоит. Попробуй чуть позже.":      "%s is having trouble right now. Try again a bit later.",

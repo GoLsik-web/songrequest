@@ -1593,6 +1593,7 @@
       $("dp-key").value = config.donatepay_key || "";
       $("dx-key").value = config.donatex_key || "";
       $("donation-min").value = config.donation_min ?? "";
+	  $("donation-prefix").value = config.donation_prefix || "!музыка";
       $("command-prefix").value = config.command_prefix || "!";
       $("yt-browser").value = config.youtube_browser || "";
       $("yt-device").value = config.audio_device || "";
@@ -2280,6 +2281,16 @@
       return;
     }
     if (await saveConfig({ donation_min: value })) markSaved(e.target);
+  };
+
+  $("donation-prefix").onchange = async (e) => {
+    const value = e.target.value.trim() || "!музыка";
+    if (await saveConfig({ donation_prefix: value })) {
+      e.target.value = value;
+      markSaved(e.target);
+    } else {
+      e.target.value = config.donation_prefix || "!музыка";
+    }
   };
 
   $("save-twitch-id").onclick = async () => {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"songrequest/internal/donations"
 	"songrequest/internal/errs"
@@ -62,11 +63,15 @@ func (s *Server) StartDonations(ctx context.Context) {
 
 // onDonation превращает донат в заказ.
 //
-// Сообщение к донату — это и есть заказ. Если оно пустое или сумма меньше
+// Сообщение с меткой в начале — заказ. Если запрос пустой или сумма меньше
 // порога, заказа не выйдет, но деньги остаются у стримера: возвращать донат
 // приложение не должно и не умеет.
 func (s *Server) onDonation(d donations.Donation) {
 	cfg := s.cfg.Get()
+	text, marked := donationRequest(d.Message, cfg.DonationPrefix)
+	if !marked {
+		return // Обычный донат: не ищем музыку и не отвечаем как на заказ.
+	}
 	ctx, cancel := context.WithTimeout(s.baseContext(), resolveTimeout)
 	defer cancel()
 
@@ -84,7 +89,6 @@ func (s *Server) onDonation(d donations.Donation) {
 		return
 	}
 
-	text := strings.TrimSpace(d.Message)
 	if text == "" {
 		s.state.Notify("info", i18n.F("Донат %s от %s — без сообщения, заказа нет", money, d.Username))
 		s.say(ctx, i18n.F("@%s, спасибо за донат! Чтобы заказать трек, напиши его в сообщении к донату.", d.Username))
@@ -150,6 +154,24 @@ func (s *Server) onDonation(d donations.Donation) {
 	}
 
 	s.enqueueDonation(ctx, d, text, res.Track, res.Uncertain)
+}
+
+// donationRequest требует отдельную метку в начале, а не совпадение начала
+// слова: «!музыка123» не является командой «!музыка».
+func donationRequest(message, prefix string) (string, bool) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "!музыка"
+	}
+	message = strings.TrimSpace(message)
+	if !strings.HasPrefix(message, prefix) {
+		return "", false
+	}
+	rest := strings.TrimPrefix(message, prefix)
+	if rest != "" && strings.TrimLeftFunc(rest, unicode.IsSpace) == rest {
+		return "", false
+	}
+	return strings.TrimSpace(rest), true
 }
 
 // enqueueDonation ставит в очередь трек, заказанный донатом.

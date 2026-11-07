@@ -169,6 +169,46 @@ func TestApplyTwice(t *testing.T) {
 	}
 }
 
+func TestApplyMissingDownloadLeavesOriginalUntouched(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "songrequest.exe")
+	if err := os.WriteFile(exe, []byte("original"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(exe, filepath.Join(dir, "missing.exe")); err == nil {
+		t.Fatal("missing download accepted")
+	}
+	got, err := os.ReadFile(exe)
+	if err != nil || string(got) != "original" {
+		t.Fatalf("original changed: %q, %v", got, err)
+	}
+	if _, err := os.Stat(exe + ".old"); !os.IsNotExist(err) {
+		t.Fatalf("original was moved before staging: %v", err)
+	}
+}
+
+func TestStageUpdateCopiesIntoDestinationDirectory(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "download.exe")
+	if err := os.WriteFile(source, []byte("downloaded program"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	staged, err := stageUpdate(destination, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(staged) != destination {
+		t.Fatalf("staged on wrong volume: %s", staged)
+	}
+	got, err := os.ReadFile(staged)
+	if err != nil || string(got) != "downloaded program" {
+		t.Fatalf("incomplete copy: %q, %v", got, err)
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Fatalf("download removed before replacement: %v", err)
+	}
+}
+
 func zipOf(t *testing.T, names ...string) []byte {
 	t.Helper()
 	var buf bytes.Buffer

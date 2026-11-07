@@ -427,6 +427,11 @@
         <span>Заказ за донат от какой суммы (в валюте твоего счёта в сервисе)</span>
         <input type="text" id="donation-min" spellcheck="false" autocomplete="off">
       </label>
+	  <label class="field">
+	    <span>Метка заказа в донате</span>
+	    <input type="text" id="donation-prefix" spellcheck="false" autocomplete="off" placeholder="!музыка">
+	  </label>
+	  <div class="hint">Начни сообщение с метки, затем через пробел укажи название трека или ссылку. Без метки донат не станет заказом. Пустое поле возвращает метку !музыка.</div>
       <div class="hint">Донаты меньше этой суммы просто показываются в хронике —
         заказом они не становятся. Деньги в любом случае остаются у тебя.</div>
     </div>
