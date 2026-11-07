@@ -132,6 +132,7 @@ func isChatCommand(text, prefix string) bool {
 
 // onChat разбирает сообщение из чата.
 func (s *Server) onChat(msg twitch.ChatMessage) {
+	s.telegramChat(msg)
 	cfg := s.cfg.Get()
 	prefix := cfg.CommandPrefix
 	if prefix == "" {

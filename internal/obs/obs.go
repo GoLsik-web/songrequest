@@ -52,6 +52,52 @@ func Auth(password, salt, challenge string) string {
 
 // Dial подключается и проходит вход.
 func Dial(ctx context.Context, host string, port int, password string) (*Client, error) {
+	return dial(ctx, host, port, password, 0)
+}
+
+// Подписки на события obs-websocket (поле eventSubscriptions).
+const (
+	EventsScenes     = 1 << 2
+	EventsInputs     = 1 << 3
+	EventsSceneItems = 1 << 7
+	// EventsVolumeMeters — уровни звука всех входов ~20 раз в секунду.
+	// Высокочастотное: OBS шлёт его только тем, кто попросил явно.
+	EventsVolumeMeters = 1 << 16
+)
+
+// DialEvents — соединение только для событий: Next читает их по одному.
+// Запросы по нему не шлём — Call пропускает события, и они бы терялись.
+func DialEvents(ctx context.Context, host string, port int, password string, subs int) (*Client, error) {
+	return dial(ctx, host, port, password, subs)
+}
+
+// Next ждёт следующее событие OBS и возвращает его тип.
+func (c *Client) Next(ctx context.Context) (string, error) {
+	typ, _, err := c.NextEvent(ctx)
+	return typ, err
+}
+
+// NextEvent — то же, что Next, вместе с данными события.
+func (c *Client) NextEvent(ctx context.Context) (string, json.RawMessage, error) {
+	for {
+		var m message
+		if err := wsjson.Read(ctx, c.conn, &m); err != nil {
+			return "", nil, err
+		}
+		if m.Op != 5 {
+			continue
+		}
+		var e struct {
+			Type string          `json:"eventType"`
+			Data json.RawMessage `json:"eventData"`
+		}
+		if json.Unmarshal(m.D, &e) == nil {
+			return e.Type, e.Data, nil
+		}
+	}
+}
+
+func dial(ctx context.Context, host string, port int, password string, subs int) (*Client, error) {
 	if host == "" {
 		host = "127.0.0.1"
 	}
@@ -82,7 +128,7 @@ func Dial(ctx context.Context, host string, port int, password string) (*Client,
 		return nil, errs.Wrap(errs.OBSUnreachable,
 			"OBS не отвечает. Запусти OBS и включи в нём сервер WebSocket.", err)
 	}
-	ident := map[string]any{"rpcVersion": 1, "eventSubscriptions": 0}
+	ident := map[string]any{"rpcVersion": 1, "eventSubscriptions": subs}
 	if hello.D.Auth != nil {
 		if password == "" {
 			c.Close()

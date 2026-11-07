@@ -64,6 +64,12 @@
          после того, как человек нажал «Проверить обновления» и новая версия
          правда нашлась. См. renderUpdate в app.js. -->
     <button class="tail-btn go" id="update-now" hidden></button>
+    <!-- Бот-компаньон: видно мельком, но всегда (просьба владельца 25.10). -->
+    <button class="tail-btn tg" id="telegram-toggle"
+       title="Итоги эфира и пульт в Telegram">
+      <svg aria-hidden="true"><use href="#i-send"></use></svg>
+      бот
+    </button>
     <button class="tail-btn" id="widget-toggle" aria-expanded="false">
       <svg aria-hidden="true"><use href="#i-monitor"></use></svg>
       виджет
@@ -570,6 +576,16 @@
     </div>
 
     <div class="col">
+      <div class="kicker">Заставка</div>
+      <label class="check">
+        <input type="checkbox" id="intro-sound">
+        <span>Звук заставки при запуске</span>
+      </label>
+      <div class="hint">Тихий аккорд, пока программа запускается. Выключи,
+        если запускаешь её уже на стриме и звук попадает в эфир.</div>
+    </div>
+
+    <div class="col">
       <div class="kicker">Подробный журнал</div>
       <label class="check">
         <input type="checkbox" id="verbose-log">
@@ -608,23 +624,24 @@
       </div>
     </div>
 
-    <!-- Подсказка про Telegram-бота-компаньона (25.10). Сам бот — отдельная
-         программа, здесь только объяснение и ссылка. -->
-    <div class="col">
-      <div class="kicker">Telegram-бот</div>
-      <div class="hint">
-        Есть бот-компаньон <b>songrequest Recap</b>. После стрима он сам пришлёт
-        итоги: кто что заказывал, вкус чата, номинации зрителей и красивую
-        карточку для канала. А ещё с телефона можно скипнуть трек, поставить
-        паузу или убрать заказ из очереди.
-      </div>
-      <div class="hint">Бот запускается на этом же компьютере, рядом с
-        приложением. Открой его в Telegram и нажми «Старт» — он расскажет, как
-        подключить. Там же кнопка «Поддержка»: вопрос или ошибку можно
-        написать прямо в бота.</div>
-      <div class="acts">
-        <a class="act small key" href="https://t.me/songrequest_wrapped_bot" target="_blank" rel="noopener">Открыть бота в Telegram</a>
-      </div>
+    <div class="col wide" id="telegram-settings">
+      <div class="kicker">Telegram-компаньон</div>
+      <div class="hint">Итоги эфира, номинации, карточка и пульт музыки прямо в приложении. Отдельная программа и Python не нужны.</div>
+      <ol class="hint">
+        <li>Создай своего бота через <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> и вставь токен ниже.</li>
+        <li>Включи компаньона и сохрани настройки. Открой своего бота и отправь /id: он покажет твой Telegram ID.</li>
+        <li>Впиши свой ID ниже и сохрани ещё раз. Затем нажми «Старт» у бота. Пока ID не указан, управление недоступно.</li>
+      </ol>
+      <label class="field"><span>Токен бота</span><input id="tg-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="Токен от BotFather"><span class="hint">Хранится в хранилище паролей Windows. Пустое поле сохраняет прежний токен.</span></label>
+      <label class="field"><span>Твой Telegram ID</span><input id="tg-owner" type="text" inputmode="numeric" autocomplete="off"></label>
+      <label class="check"><input id="tg-enabled" type="checkbox"> Включить Telegram-компаньона</label>
+      <label class="check"><input id="tg-auto" type="checkbox"> Присылать итоги после окончания эфира</label>
+      <label class="check"><input id="tg-notify" type="checkbox"> Уведомлять о начале заказанного трека</label>
+      <label class="field"><span>Канал для карточки итогов (необязательно)</span><input id="tg-channel" type="text" placeholder="@канал или -100…"><span class="hint">Бот должен быть администратором канала с правом публикации. Карточка публикуется вместе с автоматическими итогами.</span></label>
+      <div class="acts"><button class="act small key" id="tg-save">Сохранить Telegram</button><button class="act small risky" id="tg-forget">Отключить и удалить токен</button><a class="act small" id="tg-open" hidden target="_blank" rel="noopener">Открыть своего бота</a></div>
+      <div class="state" id="tg-status" role="status" aria-live="polite"></div>
+      <div class="hint">Доступ к управлению есть только у указанного владельца в личном чате. Приложение должно работать на компьютере. Не запускай того же бота одновременно в другой программе.</div>
+      <a class="act small" href="https://t.me/songrequest_wrapped_bot?start=support" target="_blank" rel="noopener">Поддержка</a>
     </div>
 
     <div class="col">
@@ -640,6 +657,7 @@
           <svg aria-hidden="true"><use href="#i-download"></use></svg>
           Сохранить лог и историю
         </a>
+        <a class="act small" href="/static/licenses.txt" target="_blank" rel="noopener">Лицензии компонентов</a>
       </div>
 
   </div>
@@ -652,6 +670,7 @@
      второй проигрыватель в одном месте: что играет, как решать, куда звук. -->
 <!-- Язык — отдельным разделом меню: иностранный стример не должен искать
      переключатель на русском в глубине настроек. -->
+
 <section class="panel" id="language" hidden>
   <div class="grid">
     <div class="col">
@@ -998,6 +1017,12 @@
           <div class="wxe-fams wxe-mine" id="wx-mine"></div>
         </div>
 
+        <!-- Бесплатное оформление под сцену OBS — panel-scenes.js -->
+        <div class="wxe-group" id="wx-scenes">
+          <div class="wxe-label">Стиль под сцену OBS <span class="wxe-note">переключил сцену — плашка сама сменила вид</span></div>
+          <div id="wx-scenes-body"></div>
+        </div>
+
         <div class="wxe-group" id="wx-gallery-home">
           <div class="wxe-label">Готовые стили <span class="wxe-note">наведи — примерится в кадре</span></div>
         </div>
@@ -1319,15 +1344,6 @@
 
 <!-- Заставка. Показывается один раз за запуск приложения (не за загрузку
      страницы, иначе она играла бы на каждое F5) и уходит сама. -->
-<div class="intro" id="intro" hidden>
-  <div class="intro-inner">
-    <div class="intro-eq"><i></i><i></i><i></i><i></i><i></i></div>
-    <h1><span>Заказ</span> <span>музыки</span></h1>
-    <div class="sub">зрители заказывают — играет твой Spotify</div>
-    <div class="line"></div>
-  </div>
-</div>
-
 <!-- Мастер первой настройки. Слева дорожка шагов, справа один шаг за раз. -->
 <div class="setup" id="setup" hidden>
   <div class="setup-progress"><i id="setup-progress-line"></i></div>
@@ -1356,6 +1372,8 @@
 <script src="/static/order-sound.js"></script>
 <script src="/static/i18n-sound.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/panel-scenes.js"></script>
+<script src="/static/panel-telegram.js"></script>
 <script src="/static/setup.js"></script>
 </body>
 </html>

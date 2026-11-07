@@ -37,6 +37,9 @@ func TestInstructionsQuoteRealLabels(t *testing.T) {
 
 	for _, doc := range docs {
 		name := filepath.Base(doc)
+		if !strings.HasPrefix(name, "Инструкция-") && !strings.HasPrefix(name, "Чек-лист-") {
+			continue // Design references do not describe labels in this application.
+		}
 		if !strings.HasSuffix(name, ".html") && !strings.HasSuffix(name, ".txt") {
 			continue
 		}

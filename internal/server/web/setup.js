@@ -69,40 +69,17 @@
   }
 
   // ── заставка ───────────────────────────────────────────────────────
-
-  const INTRO_MS = 3000;
-
-  function playIntro() {
-    return new Promise((done) => {
-      const box = $("intro");
-      if (!box) return done();
-
-      box.hidden = false;
-      let closed = false;
-      const close = () => {
-        if (closed) return;
-        closed = true;
-        box.classList.add("gone");
-        // Ждём, пока доиграет исчезновение, и только потом убираем совсем:
-        // hidden посреди перехода — это моргание вместо ухода.
-        setTimeout(() => { box.hidden = true; done(); }, 460);
-      };
-
-      // Пропустить можно щелчком по заставке или клавишей Escape.
-      //
-      // Отдельной кнопки «пропустить интро» больше нет: она висела в углу
-      // заставки и была единственным что ни есть элементом управления на экране,
-      // который должен быть просто красивым. Закрывается заставка и без неё:
-      // щелчком куда угодно, Escape или сама по себе через INTRO_MS.
-      // Enter и пробел сюда намеренно не входят: приложение запускают, не
-      // выходя из игры, и случайное нажатие пробела не должно ни закрывать
-      // заставку, ни проваливаться дальше — на кнопку первого шага настройки.
-      box.onclick = (e) => { if (e.target === box || e.target.closest(".intro-inner")) close(); };
-      const key = (e) => { if (e.key === "Escape") close(); };
-      document.addEventListener("keydown", key, { once: true });
-      setTimeout(close, INTRO_MS);
-    });
-  }
+  //
+  // Саму заставку — пластинку на прозрачном фоне — показывает программа,
+  // ещё до этой страницы (internal/desktop/splash_windows.go). Странице
+  // остаётся две вещи: сказать, что она загрузилась (srPageReady), и мягко
+  // проявиться, пока круглое окно раскрывается в прямоугольник (srReveal).
+  window.srReveal = (ms) => {
+    const root = document.documentElement;
+    root.style.setProperty("--reveal-ms", (ms || 750) + "ms");
+    root.classList.add("reveal");
+    setTimeout(() => root.classList.remove("reveal"), (ms || 750) + 900);
+  };
 
   // ── рисованные схемы ───────────────────────────────────────────────
   //
@@ -1184,7 +1161,7 @@
       try { state = await (await fetch("/api/state")).json(); } catch { /* переживём */ }
     }
 
-    if (info.intro) await playIntro();
+    if (typeof window.srPageReady === "function") window.srPageReady();
     if (!info.done) openWizard(0);
   }
 

@@ -140,6 +140,11 @@ type Widget struct {
 	// только панели, чтобы подсветить плитку на полке «Мои».
 	Styles []WidgetStyle `json:"styles,omitempty"`
 	Style  string        `json:"style"`
+
+	// SceneStyles — свой стиль для сцены OBS: сцена → id стиля.
+	// Переключил сцену «Начало» — плашка сама надела стиль заставки.
+	// Ключ "" — стиль для всех остальных сцен; нет его — остаётся как есть.
+	SceneStyles map[string]string `json:"scene_styles,omitempty"`
 }
 
 // WidgetMedia — что куда поставлено из своих картинок.
@@ -591,7 +596,42 @@ func (w *Widget) Normalize() {
 		styles = nil
 	}
 	w.Styles = styles
+	// стили по сценам — только на существующие стили и без мусора
+	if len(w.SceneStyles) > 0 {
+		ok := map[string]bool{}
+		for _, st := range w.Styles {
+			ok[st.ID] = true
+		}
+		clean := map[string]string{}
+		for scene, id := range w.SceneStyles {
+			if ok[id] && len(scene) <= 256 && len(clean) < 100 {
+				clean[scene] = id
+			}
+		}
+		w.SceneStyles = clean
+	}
 	if !seen[w.Style] {
 		w.Style = ""
 	}
+}
+
+// ApplyStyle надевает на плашку свой стиль id — то же, что щелчок по его
+// плитке в панели. false — такого стиля нет.
+func (w *Widget) ApplyStyle(id string) bool {
+	for _, st := range w.Styles {
+		if st.ID != id {
+			continue
+		}
+		w.Preset, w.Font, w.CoverShape = st.Preset, st.Font, st.CoverShape
+		w.CoverGlow, w.CoverBg, w.Magic = st.CoverGlow, st.CoverBg, st.Magic
+		w.AnimIn, w.AnimOut, w.ShowEq, w.ShowArt, w.Opacity = st.AnimIn, st.AnimOut, st.ShowEq, st.ShowArt, st.Opacity
+		w.Tweaks = map[string]string{}
+		for k, v := range st.Tweaks {
+			w.Tweaks[k] = v
+		}
+		w.Media = st.Media
+		w.Style = id
+		return true
+	}
+	return false
 }

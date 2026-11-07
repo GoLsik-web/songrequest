@@ -389,7 +389,7 @@ func fitMaximized(hwnd, lp uintptr) bool {
 		X: mi.RcWork.Right - mi.RcWork.Left + edge.Right - edge.Left,
 		Y: mi.RcWork.Bottom - mi.RcWork.Top + edge.Bottom - edge.Top,
 	}
-	info.MinTrackSize = point{X: minWidth, Y: minHeight}
+	info.MinTrackSize = point{X: minTrackW.Load(), Y: minTrackH.Load()}
 	return true
 }
 

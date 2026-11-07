@@ -27,6 +27,7 @@ const (
 
 // Config — всё, что стример может настроить. Поля с тегом json попадают в файл.
 type Config struct {
+	Telegram Telegram `json:"telegram"`
 	// Локальный сервер
 	Port int `json:"port"` // 0 = выбрать свободный порт
 
@@ -194,6 +195,9 @@ type Config struct {
 	Widget Widget `json:"widget"`
 	// OrderSound — звук нового заказа в виджете (см. sound.go).
 	OrderSound OrderSound `json:"order_sound"`
+	// IntroSound — звук заставки при запуске. Выключают те, кто запускает
+	// программу уже посреди стрима.
+	IntroSound bool `json:"intro_sound"`
 
 	// OBS — связь с OBS через его встроенный сервер WebSocket: источник с
 	// виджетом сам подгоняется под формат кадра. Пароль сюда не пишется —
@@ -256,6 +260,7 @@ func Defaults() Config {
 		},
 		Widget:     DefaultWidget(),
 		OrderSound: DefaultOrderSound(),
+		IntroSound: true,
 		OBS:        OBS{Host: "127.0.0.1", Port: 4455},
 		RejectKeywords: []string{
 			"нарезка", "нарезки", "подкаст", "стрим", "compilation", "mix",

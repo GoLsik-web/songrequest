@@ -15,6 +15,7 @@
 package desktop
 
 import (
+	"bytes"
 	_ "embed"
 	"os"
 	"path/filepath"
@@ -61,6 +62,11 @@ type Options struct {
 	// нашей. Запасной путь на случай, если со своей полосой что-то пойдёт не
 	// так на чужой Windows: флаг -рамка-windows.
 	SystemFrame bool
+	// Splash — открыть окно маленькой заставкой и раскрыть его, когда
+	// страница позовёт srSplashDone (см. splash_windows.go).
+	Splash bool
+	// SplashSound — играть ли звук заставки.
+	SplashSound bool
 	// OnHide зовётся, когда окно спряталось в трей: панель об этом стоит
 	// сказать в лог, иначе «программа пропала» выглядит как поломка.
 	OnHide func()
@@ -76,7 +82,7 @@ func IconFile(dir string) (string, error) {
 	path := filepath.Join(dir, "icon.ico")
 	// Переписываем только если файла нет или он другой: лишняя запись при
 	// каждом запуске изнашивает диск и мешает Windows кэшировать значок.
-	if old, err := os.ReadFile(path); err == nil && len(old) == len(iconICO) {
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, iconICO) {
 		return path, nil
 	}
 	if err := os.WriteFile(path, iconICO, 0o644); err != nil {

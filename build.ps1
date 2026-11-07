@@ -46,6 +46,8 @@ if (-not $Version) {
     }
 }
 
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "THIRD_PARTY_NOTICES.txt") -Destination (Join-Path $PSScriptRoot "internal\server\web\licenses.txt")
+
 if (-not $SkipTests) {
     Write-Host "Тесты…" -ForegroundColor Cyan
     go test ./...
@@ -75,11 +77,19 @@ Write-Host "Готово: $exe ($size МБ, версия $Version)" -ForegroundC
 
 if (-not $NoZip) {
     $zip = "dist\$name-$Version.zip"
-    $staging = "dist\_pack"
+    $distRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "dist"))
+    $staging = [System.IO.Path]::GetFullPath((Join-Path $distRoot "_pack"))
+    if (-not $staging.StartsWith($distRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Папка упаковки находится вне dist."
+    }
+    if ((Test-Path -LiteralPath $staging) -and ((Get-Item -LiteralPath $staging -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw "Папка упаковки не должна быть ссылкой."
+    }
     Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
     Copy-Item $exe $staging
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "THIRD_PARTY_NOTICES.txt") -Destination $staging
     # Инструкций в архиве больше нет.
     #
     # Раньше рядом с программой лежало семь файлов: пять инструкций в HTML и

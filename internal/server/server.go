@@ -66,12 +66,13 @@ type Secrets interface {
 
 // Server — HTTP-сервер панели.
 type Server struct {
-	state   *app.State
-	cfg     *config.File
-	log     *logx.Logger
-	spotify *spotify.Client
-	twitch  *twitch.Client
-	db      *store.DB
+	telegram telegramState
+	state    *app.State
+	cfg      *config.File
+	log      *logx.Logger
+	spotify  *spotify.Client
+	twitch   *twitch.Client
+	db       *store.DB
 	// tunnel — обход блокировок внутри приложения. Пусто в сборках, где его
 	// нет: тогда остаётся ручное поле «Прокси для Spotify».
 	tunnel  *tunnel.Tunnel
@@ -323,9 +324,13 @@ func New(d Deps) (*Server, error) {
 	}
 
 	mux := http.NewServeMux()
+	mux.Handle("GET /favicon.ico", http.RedirectHandler("/static/favicon.svg", http.StatusTemporaryRedirect))
+	mux.HandleFunc("GET /api/telegram", s.handleTelegramGet)
+	mux.HandleFunc("POST /api/telegram", s.handleTelegramSet)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(sub)))
 	mux.HandleFunc("GET /{$}", s.page(sub, "index.html"))
 	mux.HandleFunc("GET /widget", s.page(sub, "widget.html"))
+	mux.HandleFunc("GET /api/obs/scenes", s.handleOBSScenes)
 	mux.HandleFunc("GET /cover", s.handleCover)
 	mux.HandleFunc("GET /media/{name}", s.handleMedia)
 	mux.HandleFunc("GET /api/widget/media", s.handleMediaList)
@@ -439,9 +444,15 @@ func (s *Server) baseContext() context.Context {
 
 // Serve обслуживает запросы до отмены контекста.
 func (s *Server) Serve(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	s.mu.Lock()
 	s.ctx = ctx
 	s.mu.Unlock()
+	var background sync.WaitGroup
+	background.Add(2)
+	go func() { defer background.Done(); s.watchWidgetScenes(ctx) }()
+	go func() { defer background.Done(); s.watchTelegram(ctx) }()
 
 	go func() {
 		<-ctx.Done()
@@ -451,6 +462,8 @@ func (s *Server) Serve(ctx context.Context) error {
 	}()
 
 	err := s.http.Serve(s.ln)
+	cancel()
+	background.Wait()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -602,6 +615,7 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		!r.URL.Query().Has("proxy") {
 		incoming.SpotifyProxy = current.SpotifyProxy
 	}
+	incoming.Telegram = current.Telegram // Managed only through the validated Telegram endpoint.
 	incoming.Widget.Normalize()
 	incoming.OrderSound.Normalize()
 	incoming.NormalizeLanguage()
@@ -618,7 +632,7 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	donatePayChanged := incoming.DonatePayKey != current.DonatePayKey
 	donateXChanged := incoming.DonateXKey != current.DonateXKey
 
-	if err := s.cfg.Update(func(c *config.Config) { *c = incoming }); err != nil {
+	if err := s.cfg.Update(func(c *config.Config) { incoming.Telegram = c.Telegram; *c = incoming }); err != nil {
 		s.log.Error("сохранение настроек", "ошибка", err)
 		http.Error(w, i18n.T("не смог сохранить настройки"), http.StatusInternalServerError)
 		return

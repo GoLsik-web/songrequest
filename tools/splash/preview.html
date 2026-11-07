@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Заставка — варианты</title>
+<link rel="stylesheet" href="../../internal/server/web/fonts/fonts.css">
+<style>
+  :root { --lime: #c8f751; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: Manrope, sans-serif; color: #f2f4f5; }
+  /* Подложка «рабочий стол»: заставка прозрачная, и это должно быть видно. */
+  body {
+    background:
+      radial-gradient(60% 80% at 20% 20%, #2b4a7a 0%, transparent 60%),
+      radial-gradient(50% 70% at 85% 75%, #6b2f5e 0%, transparent 60%),
+      linear-gradient(135deg, #1b2440, #2a1a33);
+  }
+  body.plain { background: #3a3f45; }
+  .icons { position: fixed; left: 18px; top: 18px; display: grid; gap: 22px; opacity: .8; }
+  .icons div { width: 54px; text-align: center; font-size: 11px; }
+  .icons i { display: block; width: 44px; height: 44px; margin: 0 auto 6px; border-radius: 10px; background: rgba(255,255,255,.18); }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+  .bar {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: center;
+    background: rgba(8,9,10,.82); backdrop-filter: blur(10px);
+    border: 1px solid #282c30; border-radius: 12px; padding: 8px; z-index: 2;
+  }
+  button { font: 600 13px Manrope, sans-serif; color: #c9d0d6; background: #15181a; border: 1px solid #282c30;
+    border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+  button.on { color: #0d1204; background: var(--lime); border-color: var(--lime); }
+  label { font-size: 12px; color: #99a1a8; display: flex; gap: 6px; align-items: center; padding: 0 6px; }
+</style>
+</head>
+<body>
+<div class="icons"><div><i></i>Корзина</div><div><i></i>OBS</div><div><i></i>Discord</div><div><i></i>Steam</div></div>
+<canvas id="c"></canvas>
+<div class="bar" id="bar">
+  <label><input type="checkbox" id="snd" checked> звук</label>
+  <label><input type="checkbox" id="slow"> медленно ×4</label>
+  <label><input type="checkbox" id="plain"> серый фон</label>
+  <button id="again">↻ ещё раз</button>
+</div>
+<script src="splash.js"></script>
+<script>
+(function () {
+  const c = document.getElementById("c"), ctx = c.getContext("2d");
+  const bar = document.getElementById("bar");
+  let cur = 0, start = 0, played = false;
+
+  Splash.variants.forEach((v, i) => {
+    const b = document.createElement("button");
+    b.textContent = (i + 1) + ". " + v.name;
+    b.onclick = () => { cur = i; restart(); };
+    bar.insertBefore(b, bar.children[i]);
+    v.btn = b;
+  });
+  document.getElementById("again").onclick = restart;
+  document.getElementById("plain").onchange = (e) => document.body.classList.toggle("plain", e.target.checked);
+
+  function size() {
+    const d = devicePixelRatio || 1;
+    c.width = innerWidth * d; c.height = innerHeight * d;
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+  }
+  addEventListener("resize", size);
+  size();
+
+  function restart() {
+    Splash.variants.forEach((v, i) => v.btn.classList.toggle("on", i === cur));
+    start = performance.now();
+    played = false;
+    if (document.getElementById("snd").checked && !document.getElementById("slow").checked) sound(Splash.variants[cur].hit);
+  }
+
+  function frame(now) {
+    const slow = document.getElementById("slow").checked ? 4 : 1;
+    let t = (now - start) / 1000 / slow;
+    // Финальный кадр держим секунду — потом по кругу.
+    if (t > Splash.T_END + 1.2) { restart(); t = 0; }
+    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    Splash.variants[cur].render(ctx, Math.min(t, Splash.T_END), innerWidth, innerHeight);
+    requestAnimationFrame(frame);
+  }
+
+  // Звук: тёплый аккорд, искорка на «ударе» и выдох на раскрытии окна.
+  let ac;
+  function sound(hit) {
+    try { ac = ac || new AudioContext(); } catch { return; }
+    ac.resume();
+    Splash.sound(ac, hit);
+  }
+
+  // ?v=0&t=1.6 — один неподвижный кадр (для проверки снимком).
+  const q = new URLSearchParams(location.search);
+  if (q.has("t")) {
+    bar.style.display = "none";
+    const still = () => {
+      size();
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
+      Splash.variants[+q.get("v") || 0].render(ctx, +q.get("t"), innerWidth, innerHeight);
+      document.title = "drawn";
+    };
+    still();
+    document.fonts.ready.then(still);
+    addEventListener("resize", still);
+    setTimeout(still, 300);
+    return;
+  }
+  document.fonts.ready.then(() => { restart(); requestAnimationFrame(frame); });
+})();
+</script>
+</body>
+</html>

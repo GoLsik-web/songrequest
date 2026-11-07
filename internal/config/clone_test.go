@@ -69,3 +69,27 @@ func TestCloneIsDeep(t *testing.T) {
 		t.Fatal("копия не глубокая")
 	}
 }
+
+func TestSceneStylesAreIsolatedAndReplaceable(t *testing.T) {
+	c := Defaults()
+	c.Widget.SceneStyles = map[string]string{"Intro": "a", "Game": "b"}
+	copy := c.Clone()
+	copy.Widget.SceneStyles["Intro"] = "changed"
+	if c.Widget.SceneStyles["Intro"] != "a" {
+		t.Fatal("clone mutated original scene styles")
+	}
+	merged, err := MergeJSON(c, []byte(`{"widget":{"scene_styles":{"Game":"b"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := merged.Widget.SceneStyles["Intro"]; exists {
+		t.Fatal("deleted scene assignment returned")
+	}
+	if len(c.Widget.SceneStyles) != 2 {
+		t.Fatal("merge mutated original")
+	}
+	cleared, err := MergeJSON(c, []byte(`{"widget":{"scene_styles":{}}}`))
+	if err != nil || len(cleared.Widget.SceneStyles) != 0 {
+		t.Fatal("cannot clear scene styles", err)
+	}
+}

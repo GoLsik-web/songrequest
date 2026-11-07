@@ -1,14 +1,15 @@
 module songrequest
 
-go 1.26
+go 1.26.10
 
 require (
 	fyne.io/systray v1.12.2
 	github.com/coder/websocket v1.8.15
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/sys v0.47.0
-	golang.org/x/text v0.41.0
+	golang.org/x/image v0.47.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/text v0.43.0
 	modernc.org/sqlite v1.57.0
 )
 

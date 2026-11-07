@@ -1600,6 +1600,7 @@
     $("yt-volume-val").textContent = ($("yt-volume").value) + "%";
       fillYouTubeMode();
       $("verbose-log").checked = !!config.verbose_log;
+      $("intro-sound").checked = config.intro_sound !== false;
 
       $("reward-title").value = config.reward_title || "";
       $("reward-cost").value = config.reward_cost ?? "";
@@ -1660,17 +1661,23 @@
   // быть открыта до того, как приложение нашло прокси само), и сервер такое
   // пустое значение не применяет. Чтобы прокси действительно убрать, панель
   // обязана сказать об этом прямо.
-  async function saveConfig(patch, query = "") {
+  let configSaveQueue = Promise.resolve();
+  function saveConfig(patch, query = "") {
+    const task = configSaveQueue.then(() => persistConfig(patch, query));
+    configSaveQueue = task.catch(() => false);
+    return task;
+  }
+  async function persistConfig(patch, query) {
     try {
-      const current = await (await fetch("/api/config")).json();
-      Object.assign(current, patch);
       const r = await fetch("/api/config" + query, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(current),
+        body: JSON.stringify(patch),
       });
       if (!r.ok) throw new Error();
+      const optimisticWidget = config && config.widget;
       config = await r.json();
+      if (wxPending > (patch.widget ? 1 : 0) && optimisticWidget) config.widget = optimisticWidget;
       refreshModeHints();
       // Цена плейлиста считается от цены трека и числа треков, то есть от
       // соседних полей. Без пересчёта здесь стример менял цену трека и видел
@@ -2143,6 +2150,12 @@
   }
 
   $("log-toggle").onclick = () => toggleLog();
+  $("telegram-toggle").onclick = () => {
+    openSection("settings");
+    document.querySelector('[data-tab="misc"]').click();
+    $("telegram-settings").scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+
   // Хронику открывают, чтобы разобраться по ходу стрима: застывший на
   // моменте открытия список для этого бесполезен.
   setInterval(() => {
@@ -2291,6 +2304,9 @@
       }
     };
   });
+  $("intro-sound").onchange = async (e) => {
+    if (await saveConfig({ intro_sound: e.target.checked })) markSaved(e.target);
+  };
   $("verbose-log").onchange = async (e) => {
     if (await saveConfig({ verbose_log: e.target.checked })) {
       say(e.target.checked
@@ -2406,7 +2422,9 @@
     try {
       const r = await fetch("/api/widget/sound", { method: "POST", body: file });
       if (!r.ok) throw new Error(await r.text());
+      const optimisticWidget = config && config.widget;
       config = await r.json();
+      if (wxPending > (patch.widget ? 1 : 0) && optimisticWidget) config.widget = optimisticWidget;
       fillSound();
       OrderSound.play(soundCfg());
       say(I18N.t("Свой звук сохранён и выбран."));
@@ -2789,6 +2807,10 @@
 
   // Настройки виджета лежат одним блоком: сливаем поверх текущего, а не
   // собираем заново, иначе каждая правка стирала бы остальные.
+  // Для panel-scenes.js: читать и сохранять виджет тем же путём, что и редактор.
+  window.SongWidget = { get: () => widget(), save: (patch) => saveWidget(patch) };
+  let wxPending = 0;
+  let wxServerSig = "";
   async function saveWidget(patch) {
     const next = Object.assign({}, widget(), patch);
     // В режиме настройки своего стиля каждая правка вида сразу пишется и в
@@ -2804,9 +2826,13 @@
     // правка (колесо после перетаскивания) бралась бы из старых настроек
     // и затирала только что сделанное.
     if (config) config.widget = next;
-    const ok = await saveConfig({ widget: next });
-    drawWidget();
-    return ok;
+    wxPending++;
+    try {
+      const ok = await saveConfig({ widget: next });
+      drawWidget();
+      document.dispatchEvent(new Event("widget-change"));
+      return ok;
+    } finally { wxPending--; }
   }
 
   // Ползунки двигают образец сразу, а на диск пишут по отпусканию: иначе
@@ -3649,7 +3675,9 @@
       openEdit(st.id);
       return;
     }
-    if (e.target.closest("[data-new-style]")) { openStyleForm(true); return; }
+    if (e.target.closest("[data-new-style]")) {
+      openStyleForm(true); return;
+    }
     const tile = e.target.closest("[data-style]");
     if (!tile) return;
     const st = (w.styles || []).find((s) => s.id === tile.dataset.style);
@@ -4287,6 +4315,15 @@
 
   function render(s) {
     lastState = s;
+    if (config && s.widget && !wxPending) {
+      const nextSig = JSON.stringify(s.widget);
+      if (nextSig !== wxServerSig) {
+        wxServerSig = nextSig;
+        config.widget = s.widget;
+        if (!$("widget").hidden) drawWidget();
+        document.dispatchEvent(new Event("widget-change"));
+      }
+    }
     // Язык сменили в другом окне или в мастере — догоняем. setLang сам
     // вызовет перерисовку через onChange.
     if (s.lang && s.lang !== I18N.lang()) {

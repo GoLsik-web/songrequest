@@ -6,7 +6,15 @@ package i18n
 func init() {
 	register(map[string]string{
 		// Окно, трей, запуск.
-		"Заказ музыки":                  "Song Requests",
+		"Заказ музыки": "Song Requests",
+		"OBS не запущен. Открой его — подключусь сам.":                                                                                                      "OBS isn't running. Open it and I'll connect by myself.",
+		"В OBS выключен сервер WebSocket. Нажми «Подключить» — включу его сам, потом открой OBS.":                                                           "The WebSocket server is off in OBS. Press “Connect” and I'll turn it on, then open OBS.",
+		"В OBS выключен сервер WebSocket. Закрой OBS и нажми «Подключить» — включу его сам.":                                                                "The WebSocket server is off in OBS. Close OBS and press “Connect” — I'll turn it on.",
+		"OBS просит пароль, а в его настройках другой. В OBS: Сервис → Настройки сервера WebSocket → «Показать данные подключения» — скопируй пароль сюда.": "OBS asks for a password that differs from its saved settings. In OBS: Tools → WebSocket Server Settings → “Show Connect Info” — copy the password here.",
+		"OBS запущен, но не отвечает. Подожди, пока он загрузится, и нажми «Подключить».":                                                                   "OBS is running but not responding. Wait for it to load and press “Connect”.",
+		"Сервер WebSocket в OBS выключен. Закрой OBS и нажми ещё раз — включу его сам.":                                                                     "The WebSocket server in OBS is off. Close OBS and press again — I'll turn it on.",
+		"Не получилось включить сервер в OBS. Включи сам: Сервис → Настройки сервера WebSocket.":                                                            "Couldn't turn on the server in OBS. Turn it on yourself: Tools → WebSocket Server Settings.",
+		"Включил сервер WebSocket в OBS. Теперь открой OBS и нажми «Подключить» ещё раз.":                                                                   "Turned on the WebSocket server in OBS. Now open OBS and press “Connect” again.",
 		"%s — не запустилось":           "%s failed to start",
 		"%s\n\nПодробности в логе:\n%s": "%s\n\nDetails are in the log:\n%s",
 		"Непонятная ошибка.":            "Unknown error.",
@@ -77,15 +85,17 @@ func init() {
 		"Запомнил: %s": "Saved: %s",
 		"Прокси не нужен — до Spotify доходит напрямую.": "No proxy needed: Spotify is reachable directly.",
 		"прямое соединение работает":                     "direct connection works",
-		"Прокси найден и включён: %s (%s)":               "Proxy found and enabled: %s (%s)",
 		"обход внутри приложения":                        "built-in bypass",
 		"Порт %d был занят, панель работает на %s. В настройках приложения Spotify адрес для возврата должен быть ровно %s": "Port %d was busy, so the panel is running on %s. In your Spotify app settings, the redirect URI must be exactly %s",
 		"Сначала нажми «Запомнить состояние».": "First click \"Remember state\".",
 
 		// Twitch.
-		"Открой %s и введи код %s":         "Open %s and enter the code %s",
-		"Twitch подключён":                 "Twitch connected",
-		"Награда «%s» готова, стоит %d %s": "Reward \"%s\" is ready, costs %d %s",
+		"Открой %s и введи код %s":                      "Open %s and enter the code %s",
+		"Twitch подключён":                              "Twitch connected",
+		"ключ не подходит: подпись не сходится":         "the key doesn't fit: signature mismatch",
+		"Подключи Twitch — ключ проверяется по каналу.": "Connect Twitch \u2014 the key is checked against your channel.",
+		"Ключ выписан на канал {c}, а вошёл {l}.":       "The key is for channel {c}, but {l} is signed in.",
+		"Награда «%s» готова, стоит %d %s":              "Reward \"%s\" is ready, costs %d %s",
 		"Доступ к Twitch кончается через %d %s — нажми «Подключить Twitch» ещё раз, это займёт минуту.": "Twitch access expires in %d %s. Click \"Connect Twitch\" again; it takes a minute.",
 		"часть возможностей": "some features",
 		"команды в чате":     "chat commands",

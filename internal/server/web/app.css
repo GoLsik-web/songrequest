@@ -223,6 +223,10 @@ button { font-family: Manrope, system-ui, sans-serif; color: inherit; }
 .tail-btn:hover { color: var(--text); background: var(--hover); }
 .tail-btn:active { transform: translateY(1px); }
 .tail-btn.active { color: var(--lime); }
+/* Ссылка на бота — та же кнопка, только тише остальных: видно, но не зовёт. */
+a.tail-btn { text-decoration: none; }
+.tail-btn.tg { opacity: .7; }
+.tail-btn.tg:hover { opacity: 1; color: #6fc3ff; }
 .tail-btn svg { width: 14px; height: 14px; }
 
 .ver {
@@ -2332,3 +2336,17 @@ body.menu-open { overflow: hidden; }
 /* В режиме своей картинки кадр подсвечен: мышь двигает картинку. */
 .wxe-stage.media-mode { box-shadow: 0 0 0 1px var(--lime), 0 0 0 4px rgba(200, 247, 81, .12); }
 .wxe-stage.media-mode .wxe-hit { cursor: move; }
+
+.scene-styles { display: grid; gap: var(--s1); margin-bottom: var(--s2); }
+.scene-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) 0; border-bottom: 1px solid var(--line); font-size: var(--t-sm); }
+.scene-row > span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.scene-row > span i { font-style: normal; font-size: 11px; color: var(--lime); margin-left: var(--s1); }
+.scene-row.rest > span { color: var(--dim); }
+.scene-row select { flex: 0 0 220px; background: var(--bg); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 8px; }
+
+@media (max-width: 560px) { .scene-row { flex-wrap: wrap; } .scene-row select { flex: 1 1 100%; min-width: 0; } }
+
+#telegram-settings { max-width: 760px; scroll-margin-top: 100px; }
+#telegram-settings .hint a { color: var(--lime); }
+#telegram-settings ol { padding-left: 20px; }
+#telegram-settings input[type="text"], #telegram-settings input[type="password"] { max-width: 540px; }

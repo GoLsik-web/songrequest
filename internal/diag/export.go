@@ -129,6 +129,8 @@ func sanitizeConfig(data []byte, red *logx.Redactor) []byte {
 	for key, value := range raw {
 		str, _ := value.(string)
 		switch {
+		case key == "telegram":
+			raw[key] = "(настройки Telegram скрыты)"
 		case key == "spotify_proxy":
 			raw[key] = hideProxyPassword(str)
 		case strings.HasSuffix(key, "client_id"):

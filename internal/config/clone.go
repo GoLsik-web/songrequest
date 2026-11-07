@@ -18,6 +18,7 @@ func (c Config) Clone() Config {
 	out.RejectKeywords = slices.Clone(c.RejectKeywords)
 	out.TunnelBad = maps.Clone(c.TunnelBad)
 	out.Widget.Tweaks = maps.Clone(c.Widget.Tweaks)
+	out.Widget.SceneStyles = maps.Clone(c.Widget.SceneStyles)
 	if c.Widget.Styles != nil {
 		out.Widget.Styles = make([]WidgetStyle, len(c.Widget.Styles))
 		for i, st := range c.Widget.Styles {
@@ -39,8 +40,9 @@ func MergeJSON(base Config, data []byte) (Config, error) {
 		RejectKeywords json.RawMessage `json:"reject_keywords"`
 		TunnelBad      json.RawMessage `json:"tunnel_bad"`
 		Widget         *struct {
-			Tweaks json.RawMessage `json:"tweaks"`
-			Styles json.RawMessage `json:"styles"`
+			SceneStyles json.RawMessage `json:"scene_styles"`
+			Tweaks      json.RawMessage `json:"tweaks"`
+			Styles      json.RawMessage `json:"styles"`
 		} `json:"widget"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
@@ -54,6 +56,9 @@ func MergeJSON(base Config, data []byte) (Config, error) {
 		out.TunnelBad = nil
 	}
 	if probe.Widget != nil {
+		if probe.Widget.SceneStyles != nil {
+			out.Widget.SceneStyles = nil
+		}
 		if probe.Widget.Tweaks != nil {
 			out.Widget.Tweaks = nil
 		}

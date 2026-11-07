@@ -34,5 +34,22 @@
     "Бот запускается на этом же компьютере, рядом с приложением. Открой его в Telegram и нажми «Старт» — он расскажет, как подключить. Там же кнопка «Поддержка»: вопрос или ошибку можно написать прямо в бота.":
       "The bot runs on this same computer, next to the app. Open it in Telegram and press “Start” — it explains how to connect. There is also a “Support” button: you can send a question or a bug report right to the bot.",
     "Открыть бота в Telegram": "Open the bot in Telegram",
+
+    // кнопка бота и заставка
+    "Итоги эфира и пульт в Telegram": "Stream recap and remote in Telegram",
+    "бот": "bot",
+    "Заставка": "Splash screen",
+    "Звук заставки при запуске": "Splash sound on startup",
+    "Тихий аккорд, пока программа запускается. Выключи, если запускаешь её уже на стриме и звук попадает в эфир.":
+      "A quiet chord while the app starts. Turn it off if you launch it mid-stream and the sound ends up on air.",
+    "запуск": "starting",
+    "обход блокировок работает": "bypass is working",
+    "обход блокировок": "bypass",
+    "Spotify · {who}": "Spotify · {who}",
+    "Spotify не подключён": "Spotify not connected",
+    "Twitch · {who}": "Twitch · {who}",
+    "Twitch не подключён": "Twitch not connected",
+    "виджет для OBS готов": "OBS widget ready",
+    "готово": "ready",
   });
 })();

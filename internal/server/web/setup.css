@@ -101,130 +101,39 @@ body.has-titlebar .status-bar { top: 38px; }
    объяснений, поэтому он красный, как везде. */
 .win-btn.close:hover { background: rgba(255, 77, 77, .16); color: var(--bad); }
 
-/* ── Заставка ───────────────────────────────────────────────────────────
-   Показывается при каждом запуске приложения и уходит сама через три секунды.
-   Её задача — занять те секунды, пока приложение поднимает обход, проверяет
-   вход и подтягивает состояние: пустая панель в этот момент выглядит как
-   поломка. Пропустить можно в любой момент. */
+/* ── Раскрытие после заставки ─────────────────────────────────────────
+   Пластинка заставки становится окном: окно появляется кругом на её месте и
+   раскрывается в прямоугольник (internal/desktop/splash_windows.go). Пока
+   оно растёт, по краю гаснет лаймовый кант пластинки, а панель проявляется
+   чуть позже — сначала форма, потом содержимое. */
 
-.intro {
+html.reveal::after {
+  content: "";
   position: fixed;
   inset: 0;
-  z-index: 200;
-  background: var(--bg);
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  transition: opacity .45s var(--ease);
-}
-
-.intro.gone { opacity: 0; pointer-events: none; }
-
-/* Своё display перебивает встроенное правило браузера для hidden, поэтому
-   прячем руками. Без этой строчки заставка оставалась на экране навсегда во
-   всех запусках, кроме первого, — и вместо панели человек видел заставку. */
-.intro[hidden] { display: none; }
-
-/* Лаймовое зарево из центра: единственное пятно цвета на всём экране. */
-.intro::before {
-  content: "";
-  position: absolute;
-  width: 900px;
-  height: 900px;
+  z-index: 1000;
+  pointer-events: none;
+  border: 3px solid var(--lime);
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(200, 247, 81, .13), transparent 62%);
-  animation: intro-glow 3.4s var(--ease) forwards;
+  box-shadow: inset 0 0 28px rgba(200, 247, 81, .55);
+  animation: reveal-rim var(--reveal-ms, 750ms) cubic-bezier(.16, 1, .3, 1) forwards;
 }
 
-@keyframes intro-glow {
-  0%   { transform: scale(.4); opacity: 0; }
-  35%  { opacity: 1; }
-  100% { transform: scale(1.25); opacity: .45; }
+@keyframes reveal-rim {
+  60%  { opacity: .8; }
+  to   { border-radius: 10px; border-width: 1px; opacity: 0; }
 }
 
-.intro-inner {
-  position: relative;
-  text-align: center;
-  padding: 0 var(--s6);
+html.reveal body > * {
+  animation: reveal-in .6s var(--ease) calc(var(--reveal-ms, 750ms) * .35) both;
 }
 
-/* Полоски-эквалайзер: программа про музыку, и это видно за полсекунды. */
-.intro-eq {
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  gap: 6px;
-  height: 54px;
-  margin-bottom: var(--s6);
+@keyframes reveal-in {
+  from { opacity: 0; transform: translateY(8px) scale(.99); }
 }
 
-.intro-eq i {
-  width: 6px;
-  border-radius: 3px;
-  background: var(--lime);
-  transform-origin: bottom;
-  animation: eq-bounce 1.1s var(--ease) infinite;
-  opacity: 0;
-}
-
-.intro-eq i:nth-child(1) { height: 22px; animation-delay: .00s; }
-.intro-eq i:nth-child(2) { height: 40px; animation-delay: .12s; }
-.intro-eq i:nth-child(3) { height: 54px; animation-delay: .24s; }
-.intro-eq i:nth-child(4) { height: 34px; animation-delay: .36s; }
-.intro-eq i:nth-child(5) { height: 18px; animation-delay: .48s; }
-
-@keyframes eq-bounce {
-  0%   { transform: scaleY(.25); opacity: .5; }
-  50%  { transform: scaleY(1);   opacity: 1; }
-  100% { transform: scaleY(.25); opacity: .5; }
-}
-
-.intro h1 {
-  margin: 0;
-  font-size: clamp(30px, 6vw, 54px);
-  letter-spacing: -.02em;
-  line-height: 1.05;
-}
-
-/* Заголовок собирается по словам: так глаз успевает прочитать название, а не
-   получает его целиком вместе со всем остальным. */
-.intro h1 span {
-  display: inline-block;
-  opacity: 0;
-  transform: translateY(14px);
-  animation: rise .6s var(--ease) forwards;
-}
-
-.intro h1 span:nth-child(2) { animation-delay: .12s; }
-
-@keyframes rise {
-  to { opacity: 1; transform: none; }
-}
-
-.intro .sub {
-  margin-top: var(--s4);
-  color: var(--dim);
-  font-size: var(--t-md);
-  opacity: 0;
-  animation: rise .6s var(--ease) .34s forwards;
-}
-
-.intro .line {
-  width: 0;
-  height: 2px;
-  margin: var(--s6) auto 0;
-  background: var(--lime);
-  border-radius: 2px;
-  animation: intro-line 3s linear .2s forwards;
-}
-
-@keyframes intro-line {
-  to { width: 220px; }
-}
-
-/* Кто просил не мельтешить — тому не мельтешим. */
 @media (prefers-reduced-motion: reduce) {
-  .intro *, .intro::before { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  html.reveal::after, html.reveal body > * { animation-duration: .01ms !important; }
 }
 
 /* ── Мастер настройки ───────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import (
 
 // ChatMessage — сообщение из чата канала.
 type ChatMessage struct {
+	Emotes      int
 	Login       string
 	DisplayName string
 	Text        string
@@ -137,7 +138,10 @@ func (e *EventSub) handleChat(payload []byte) {
 			ChatterUserLogin  string `json:"chatter_user_login"`
 			ChatterUserName   string `json:"chatter_user_name"`
 			Message           struct {
-				Text string `json:"text"`
+				Text      string `json:"text"`
+				Fragments []struct {
+					Type string `json:"type"`
+				} `json:"fragments"`
 			} `json:"message"`
 			Badges []struct {
 				SetID string `json:"set_id"`
@@ -152,6 +156,11 @@ func (e *EventSub) handleChat(payload []byte) {
 		Login:       p.Event.ChatterUserLogin,
 		DisplayName: p.Event.ChatterUserName,
 		Text:        cleanInput(p.Event.Message.Text),
+	}
+	for _, fragment := range p.Event.Message.Fragments {
+		if fragment.Type == "emote" {
+			msg.Emotes++
+		}
 	}
 	// Значки — самый надёжный признак прав: они приходят вместе с сообщением,
 	// и лишний запрос к API на каждое слово в чате делать не нужно.

@@ -66,6 +66,13 @@ troubleshooting into one archive; keys and passwords never go into it.
 
 ## For developers
 
+The free Telegram companion is built in: **Settings → Other → Telegram companion**.
+Create a bot with @BotFather, save its token and enable the integration. Send `/id` to your bot,
+enter that owner ID in the app, save again and send `/start`. No Python installation is needed.
+It provides stream recaps, awards, chat statistics, shareable cards, history and music controls.
+Keep the desktop app running; do not run the same bot in another program at the same time.
+Custom widget styles and per-scene OBS styles are free, without license keys.
+
 ```
 go run .                      # app window with the panel inside
 go run . -в-браузере          # no window, panel in your browser

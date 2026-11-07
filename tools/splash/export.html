@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../internal/server/web/fonts/fonts.css">
+</head>
+<body>
+<!-- Разрезает «Пластинку» на прозрачные кадры и записывает звук.
+     Запуск: chrome --headless --dump-dom export.html; кадры уходят в DOM
+     строками data:image/png, их забирает tools/splash/pack.py. -->
+<canvas id="c" width="1000" height="700"></canvas>
+<pre id="out"></pre>
+<script src="splash.js"></script>
+<script>
+(async function () { try {
+  await document.fonts.load("600 42px Unbounded");
+  await document.fonts.load("500 14px Manrope");
+  const FPS = 50, END = 2.56;
+  const c = document.getElementById("c"), ctx = c.getContext("2d");
+  const v = Splash.variants.find((x) => x.id === "vinyl");
+  const lines = [];
+  for (let i = 0; i * (1 / FPS) <= END; i++) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, 1000, 700);
+    v.render(ctx, i / FPS, 1000, 700);
+    lines.push("F " + c.toDataURL("image/png"));
+  }
+  // Звук — тем же синтезом, что в превью, только в файл.
+  const sr = 44100, oc = new OfflineAudioContext(2, sr * 4, sr);
+  Splash.sound(oc, v.hit);
+  const buf = await oc.startRendering();
+  const L = buf.getChannelData(0), R = buf.getChannelData(1);
+  const pcm = new Int16Array(L.length * 2);
+  for (let i = 0; i < L.length; i++) {
+    pcm[2 * i] = Math.max(-1, Math.min(1, L[i])) * 32767;
+    pcm[2 * i + 1] = Math.max(-1, Math.min(1, R[i])) * 32767;
+  }
+  let bin = "";
+  const bytes = new Uint8Array(pcm.buffer);
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  lines.push("S " + btoa(bin));
+  await fetch("http://127.0.0.1:8765/out", { method: "POST", body: lines.join("\n") });
+  document.title = "done";
+  } catch (e) {
+    document.title = "ERR " + e.message;
+    fetch("http://127.0.0.1:8765/out", { method: "POST", body: "ERR " + e.message + "\n" + e.stack });
+  }
+})();
+</script>
+</body>
+</html>

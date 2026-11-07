@@ -5,6 +5,7 @@ package desktop
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 
@@ -40,6 +41,14 @@ type Window struct {
 	// quitting отличает «человек нажал крестик» (прячем в трей) от «выходим
 	// по-настоящему» (окно уничтожается и цикл сообщений заканчивается).
 	quitting atomic.Bool
+
+	// splashing — идёт заставка, окно ещё не встало на место; pageReady
+	// закрывается, когда страница загрузилась (srPageReady).
+	splashing atomic.Bool
+	pageReady chan struct{}
+	readyOnce sync.Once
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 // Open создаёт окно и загружает в него панель.
@@ -64,21 +73,50 @@ func Open(opts Options) (*Window, error) {
 		geom = Geometry{Width: defWidth, Height: defHeight}
 	}
 
+	// Заставка крутится в своём потоке, пока движок страницы поднимается.
+	// Само окно на это время — точка в один пиксель, спрятанная сразу после
+	// создания: библиотека показывает окно раньше, чем страница загрузилась.
+	var sp *splash
+	to := targetRect(geom)
+	if opts.Splash && !opts.SystemFrame {
+		sp = startSplash(opts.SplashSound, point{(to.Left + to.Right) / 2, (to.Top + to.Bottom) / 2})
+	}
+	winW, winH := uint(geom.Width), uint(geom.Height)
+	if sp != nil {
+		winW, winH = 1, 1
+		minTrackW.Store(1)
+		minTrackH.Store(1)
+	}
+
 	wv := webview.NewWithOptions(webview.WebViewOptions{
 		DataPath:  opts.DataPath,
 		AutoFocus: true,
 		WindowOptions: webview.WindowOptions{
 			Title:  opts.Title,
-			Width:  uint(geom.Width),
-			Height: uint(geom.Height),
+			Width:  winW,
+			Height: winH,
 			Center: geom.X == 0 && geom.Y == 0,
 		},
 	})
 	if wv == nil {
+		if sp != nil {
+			sp.fadeOut()
+		}
+		minTrackW.Store(minWidth)
+		minTrackH.Store(minHeight)
 		return nil, fmt.Errorf("%w: окно не создалось", ErrNoWebView)
 	}
 
-	w := &Window{opts: opts, wv: wv, hwnd: uintptr(wv.Window())}
+	w := &Window{opts: opts, wv: wv, hwnd: uintptr(wv.Window()), pageReady: make(chan struct{}), closed: make(chan struct{})}
+	if sp != nil {
+		procShowWindow.Call(w.hwnd, swHide)
+		w.splashing.Store(true)
+		// Спрятанное окно сразу встаёт в свой итоговый размер: страница
+		// успеет разложиться, пока крутится заставка.
+		minTrackW.Store(minWidth)
+		minTrackH.Store(minHeight)
+		w.setRect(to)
+	}
 	w.prev = setWindowProc(w.hwnd, windows.NewCallback(w.wndProc))
 
 	// Своя полоса заголовка вместо системной.
@@ -95,7 +133,12 @@ func Open(opts Options) (*Window, error) {
 	}
 
 	wv.SetSize(minWidth, minHeight, webview.HintMin)
-	w.place(geom)
+	if sp != nil {
+		go w.reveal(sp, geom, to)
+	} else {
+		w.place(geom)
+	}
+	wv.Bind("srPageReady", func() { w.readyOnce.Do(func() { close(w.pageReady) }) })
 	setWindowIcon(w.hwnd, opts.IconPath)
 
 	// Ссылки наружу отдаём обычному браузеру.
@@ -161,7 +204,7 @@ const openExternalJS = `
 `
 
 // Run крутит цикл сообщений окна и возвращается только после выхода.
-func (w *Window) Run() { w.wv.Run() }
+func (w *Window) Run() { defer w.closeOnce.Do(func() { close(w.closed) }); w.wv.Run() }
 
 // Show достаёт окно обратно из трея. Можно звать из любой горутины: работа
 // делается в потоке окна через Dispatch.
@@ -181,6 +224,7 @@ func (w *Window) Show() {
 // Quit закрывает окно и заканчивает цикл сообщений: после этого Run вернётся.
 func (w *Window) Quit() {
 	w.quitting.Store(true)
+	w.closeOnce.Do(func() { close(w.closed) })
 	w.wv.Dispatch(func() {
 		w.remember()
 		// Прячем окно сразу: дальше приложение ещё гасит mpv и снимает паузу
@@ -245,7 +289,9 @@ func (w *Window) tellMaximized() {
 
 // remember отдаёт наружу текущий размер и положение окна.
 func (w *Window) remember() {
-	if w.opts.OnGeometry == nil {
+	// Размер заставки — не размер окна: запомнить его значило бы открыть
+	// программу в следующий раз открыткой.
+	if w.opts.OnGeometry == nil || w.splashing.Load() {
 		return
 	}
 	if g, ok := w.geometry(); ok {

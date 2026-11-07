@@ -66,29 +66,33 @@ func (s *Server) handlePlayerPause(w http.ResponseWriter, r *http.Request) {
 func (s *Server) holdPlayer(w http.ResponseWriter, r *http.Request, on bool) {
 	ctx, cancel := playerCtx(r)
 	defer cancel()
+	if err := s.setPlayerHold(ctx, on); err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true, "paused": on})
+}
+
+func (s *Server) setPlayerHold(ctx context.Context, on bool) error {
 
 	// Играет заказ — командуем очередью. Играет свой плейлист — Spotify
 	// напрямую. Раньше второй ветки не было вовсе, и в панели между заказами
 	// не показывалось ни одной кнопки: см. internal/server/owncontrol.go.
 	if s.player == nil || s.player.Now() == nil {
 		if !s.ownPlaying() {
-			s.fail(w, errs.New(errs.PlayerIdle, "Сейчас ничего не играет."))
-			return
+			return errs.New(errs.PlayerIdle, "Сейчас ничего не играет.")
 		}
 		if err := s.holdOwn(ctx, on); err != nil {
-			s.fail(w, err)
-			return
+			return err
 		}
-		writeJSON(w, map[string]bool{"ok": true, "paused": on})
-		return
+		return nil
 	}
 
 	if err := s.player.Hold(ctx, on); err != nil {
-		s.fail(w, err)
-		return
+		return err
 	}
 	s.syncPlayback()
-	writeJSON(w, map[string]bool{"ok": true, "paused": on})
+	return nil
 }
 
 // handlePlayerNext — «следующий».

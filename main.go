@@ -251,12 +251,16 @@ func run() error {
 	srv.WarnIfPortChanged()
 
 	// Панель уходит в фон: главный поток теперь занят окном программы.
+	serveDone := make(chan struct{})
 	go func() {
+		defer close(serveDone)
 		if err := srv.Serve(ctx); err != nil {
 			log.Error("панель управления остановилась", "ошибка", err)
 			state.Notify("error", i18n.F("Панель управления остановилась: %s", err.Error()))
 		}
 	}()
+	// Finish Telegram/OBS workers before the deferred database close.
+	defer func() { shutdown(); <-serveDone }()
 
 	// Отставленный файл прошлой версии удаляем только когда новая версия
 	// доказала, что живёт: панель ответила. Раньше .old удалялся первой
@@ -441,6 +445,8 @@ func openWindow(d uiDeps, icon string) (*desktop.Window, error) {
 		DataPath:    filepath.Join(d.dir, "webview"),
 		Geometry:    desktop.Geometry{X: g.X, Y: g.Y, Width: g.Width, Height: g.Height, Maximized: g.Maximized},
 		SystemFrame: d.sysFrame,
+		Splash:      true,
+		SplashSound: d.cfg.Get().IntroSound,
 		OnGeometry: func(g desktop.Geometry) {
 			// Пишем на диск в стороне от потока окна: запись файла посреди
 			// перетаскивания окна дёргала бы картинку.
@@ -589,6 +595,12 @@ func waitForPrevious(log *logx.Logger, port int) *desktop.Lock {
 // lockName — имя мьютекса единственной копии. У пробной сборки своё: она
 // нарочно живёт рядом с рабочей.
 func lockName() string {
+	// SONGREQUEST_SANDBOX — копия для проверок со своей папкой данных: со
+	// своим знаком она не путает себя с рабочей копией владельца и
+	// открывает своё окно.
+	if tag := os.Getenv("SONGREQUEST_SANDBOX"); tag != "" {
+		return `Local\` + appName() + "-" + tag
+	}
 	return `Local\` + appName()
 }
 
